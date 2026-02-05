@@ -6,9 +6,9 @@ import React, {
   ReactNode,
   Component,
 } from "react";
-import { TransmittalTemplate } from "./components/NewReportTemplate";
-import { FloatingAccount } from "./components/FloatingAccount";
-import { parseTransmittalDocument } from "./services/geminiService";
+import { TransmittalTemplate } from "../NewReportTemplate";
+import { FloatingAccount } from "../FloatingAccount";
+import { parseTransmittalDocument } from "../../services/geminiService";
 import {
   listFilesInFolder,
   extractFolderIdFromLink,
@@ -16,10 +16,10 @@ import {
   listDriveFiles,
   checkDriveAccess,
   clearGoogleToken,
-} from "./services/googleDriveService";
-import { useFileProcessing, resizeImage } from "./hooks/useFileProcessing";
-import { generateTransmittalDocx } from "./services/docxGenerator";
-import { signIn, signOut, useSession } from "./lib/auth-client";
+} from "../../services/googleDriveService";
+import { useFileProcessing, resizeImage } from "../../hooks/useFileProcessing";
+import { generateTransmittalDocx } from "../../services/docxGenerator";
+import { signIn, signOut, useSession } from "../../lib/auth-client";
 import {
   AppData,
   TransmittalItem,
@@ -27,7 +27,8 @@ import {
   ReceivedBy,
   FooterNotes,
   HistoryItem,
-} from "./types";
+  SenderInfo,
+} from "../../types";
 import * as mammoth from "mammoth";
 
 // Add type declaration
@@ -65,6 +66,26 @@ const formatTime24hTo12h = (time24h: string): string => {
   const hour12 = hours % 12 === 0 ? 12 : hours % 12;
   const ampm = hours >= 12 ? "PM" : "AM";
   return `${hour12}:${minutes} ${ampm}`;
+};
+
+type AgencyPreset = {
+  id: string;
+  label: string;
+  sender: SenderInfo;
+  updatedAt: string;
+};
+
+type DbAgency = {
+  id: string;
+  name: string;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  website: string | null;
+  telephoneNumber: string | null;
+  contactNumber: string | null;
+  email: string | null;
+  logoBase64: string | null;
+  updatedAt: string;
 };
 
 const parseTimeTo24h = (value: string): string => {
@@ -207,6 +228,178 @@ const ExpandingTextarea = ({
       placeholder={placeholder}
       rows={1}
     />
+  );
+};
+
+const AgencyPresetModal = ({
+  isOpen,
+  onClose,
+  draft,
+  onChange,
+  onLogoUpload,
+  onSave,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  draft: SenderInfo;
+  onChange: (next: SenderInfo) => void;
+  onLogoUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onSave: () => void;
+}) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[102] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
+      <div className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 border border-white">
+        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+          <div>
+            <h3 className="text-2xl font-black text-slate-800 font-display">
+              Add Agency / Brand
+            </h3>
+            <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-bold">
+              Save presets for quick reuse
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-10 h-10 rounded-full bg-white shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-all"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="p-8 space-y-5">
+          <div className="flex items-center gap-4">
+            <div className="w-20 h-20 rounded-3xl border border-slate-200 bg-white shadow-sm flex items-center justify-center overflow-hidden">
+              {draft.logoBase64 ? (
+                <img
+                  src={draft.logoBase64}
+                  alt="Agency logo"
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">
+                  Logo
+                </span>
+              )}
+            </div>
+            <div className="flex-1">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                Upload Logo
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={onLogoUpload}
+                className="block w-full mt-1 text-xs font-semibold text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-2xl file:border-0 file:text-[10px] file:font-black file:uppercase file:tracking-widest file:bg-slate-900 file:text-white hover:file:bg-slate-800"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                Agency Name
+              </label>
+              <input
+                className="input-field"
+                value={draft.agencyName}
+                onChange={(e) =>
+                  onChange({ ...draft, agencyName: e.target.value })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                Address Line 1
+              </label>
+              <input
+                className="input-field"
+                value={draft.addressLine1}
+                onChange={(e) =>
+                  onChange({ ...draft, addressLine1: e.target.value })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                Address Line 2
+              </label>
+              <input
+                className="input-field"
+                value={draft.addressLine2}
+                onChange={(e) =>
+                  onChange({ ...draft, addressLine2: e.target.value })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                Website
+              </label>
+              <input
+                className="input-field"
+                value={draft.website}
+                onChange={(e) =>
+                  onChange({ ...draft, website: e.target.value })
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  Telephone
+                </label>
+                <input
+                  className="input-field"
+                  value={draft.telephone}
+                  onChange={(e) =>
+                    onChange({ ...draft, telephone: e.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  Mobile
+                </label>
+                <input
+                  className="input-field"
+                  value={draft.mobile}
+                  onChange={(e) =>
+                    onChange({ ...draft, mobile: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                Email
+              </label>
+              <input
+                className="input-field"
+                value={draft.email}
+                onChange={(e) => onChange({ ...draft, email: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-4 pt-2">
+            <button
+              onClick={onClose}
+              className="flex-1 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onSave}
+              disabled={!draft.agencyName.trim()}
+              className="flex-[2] py-4 bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg hover:bg-emerald-500 disabled:opacity-50 transition-all active:scale-95"
+            >
+              Save Agency
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -566,6 +759,7 @@ const createInitialData = (history: HistoryItem[]): AppData => ({
       "For documentation purposes, please return the signed transmittal form to our office via email or courier at your earliest convenience.",
   },
   notes: "",
+  agencyId: null,
   items: [],
 });
 
@@ -659,6 +853,13 @@ const AppContent: React.FC = () => {
   const printRef = useRef<HTMLDivElement>(null);
   const [logoInputKey, setLogoInputKey] = useState(0);
 
+  const [agencies, setAgencies] = useState<DbAgency[]>([]);
+  const [selectedAgencyId, setSelectedAgencyId] = useState<string>("");
+  const [isAgencyModalOpen, setIsAgencyModalOpen] = useState(false);
+  const [agencyDraft, setAgencyDraft] = useState<SenderInfo>(
+    () => createInitialData([]).sender,
+  );
+
   const getFileTimestamp = () =>
     new Date()
       .toISOString()
@@ -677,6 +878,27 @@ const AppContent: React.FC = () => {
     loadHistoryFromDb();
   }, [session?.user?.id]);
 
+  const loadAgenciesFromDb = async () => {
+    if (!session?.user || !apiBaseUrl) return;
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/agencies`, {
+        credentials: "include",
+      });
+      if (!response.ok) return;
+      const payload = await response.json().catch(() => ({}));
+      const list = Array.isArray(payload.agencies)
+        ? (payload.agencies as DbAgency[])
+        : [];
+      setAgencies(list);
+    } catch (error) {
+      console.error("Failed to load agencies", error);
+    }
+  };
+
+  useEffect(() => {
+    loadAgenciesFromDb();
+  }, [session?.user?.id]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -689,6 +911,32 @@ const AppContent: React.FC = () => {
     }
   }, [history]);
 
+  useEffect(() => {
+    const id = data.agencyId ? String(data.agencyId) : "";
+    if (id) setSelectedAgencyId(id);
+  }, [data.agencyId]);
+
+  useEffect(() => {
+    if (!selectedAgencyId) return;
+    const agency = agencies.find((a) => a.id === selectedAgencyId);
+    if (!agency) return;
+    setData((prev) => ({
+      ...prev,
+      agencyId: agency.id,
+      sender: {
+        agencyName: agency.name || "",
+        addressLine1: agency.addressLine1 || "",
+        addressLine2: agency.addressLine2 || "",
+        website: agency.website || "",
+        mobile: agency.contactNumber || "",
+        telephone: agency.telephoneNumber || "",
+        email: agency.email || "",
+        logoBase64: agency.logoBase64 || null,
+      },
+    }));
+    setLogoInputKey((prev) => prev + 1);
+  }, [selectedAgencyId, agencies]);
+
   const mapDbTransmittalToAppData = (transmittal: any): AppData => {
     const projectData = transmittal.project || {};
     const senderData = transmittal.sender || {};
@@ -699,6 +947,7 @@ const AppContent: React.FC = () => {
       value.startsWith("TR-FP-") ? value.slice("TR-FP-".length) : value;
 
     return {
+      agencyId: transmittal.agencyId || transmittal.agency?.id || null,
       recipient: {
         to: primaryRecipient?.recipientName || "",
         email: primaryRecipient?.recipientAgencyEmail || "",
@@ -1082,6 +1331,78 @@ const AppContent: React.FC = () => {
       alert(`Logo Error: ${err.message}`);
     } finally {
       setLogoInputKey((prev) => prev + 1);
+    }
+  };
+
+  const handleAgencyLogoUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const base64 = await resizeImage(file, 400);
+      setAgencyDraft((prev) => ({
+        ...prev,
+        logoBase64: `data:image/jpeg;base64,${base64}`,
+      }));
+    } catch (err: any) {
+      alert(`Logo Error: ${err.message}`);
+    } finally {
+      e.target.value = "";
+    }
+  };
+
+  const openAgencyModal = () => {
+    setAgencyDraft({ ...data.sender });
+    setIsAgencyModalOpen(true);
+  };
+
+  const saveAgencyPreset = async () => {
+    if (!session?.user || !apiBaseUrl) return;
+    const name = agencyDraft.agencyName.trim();
+    if (!name) return;
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/agencies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          agency: {
+            name,
+            addressLine1: agencyDraft.addressLine1 || null,
+            addressLine2: agencyDraft.addressLine2 || null,
+            website: agencyDraft.website || null,
+            telephoneNumber: agencyDraft.telephone || null,
+            contactNumber: agencyDraft.mobile || null,
+            email: agencyDraft.email || null,
+            logoBase64: agencyDraft.logoBase64 || null,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Failed to save agency");
+      }
+
+      const payload = await response.json().catch(() => ({}));
+      const saved = payload?.agency as DbAgency | undefined;
+      if (saved?.id) {
+        await loadAgenciesFromDb();
+        setSelectedAgencyId(saved.id);
+        setData((prev) => ({
+          ...prev,
+          agencyId: saved.id,
+          sender: { ...agencyDraft, agencyName: name },
+        }));
+      }
+
+      setIsAgencyModalOpen(false);
+    } catch (error: any) {
+      console.error("Save agency failed:", error);
+      setStatusMsg(error.message || "Failed to save agency");
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 3000);
     }
   };
 
@@ -1689,6 +2010,33 @@ const AppContent: React.FC = () => {
               <h2 className="text-xs font-black text-slate-800 uppercase tracking-[0.2em]">
                 Sender Branding
               </h2>
+
+              <div className="flex flex-col sm:flex-row gap-3 items-end">
+                <div className="flex-1 space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    Saved Agencies
+                  </label>
+                  <select
+                    className="input-field"
+                    value={selectedAgencyId}
+                    onChange={(e) => setSelectedAgencyId(e.target.value)}
+                  >
+                    <option value="">Select agency...</option>
+                    {agencies.map((agency) => (
+                      <option key={agency.id} value={agency.id}>
+                        {agency.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={openAgencyModal}
+                  className="h-[52px] px-5 rounded-2xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-lg hover:bg-slate-800 transition-all"
+                >
+                  Add
+                </button>
+              </div>
+
               <div className="flex flex-col items-center gap-6 p-6 bg-slate-50 rounded-[40px] border border-slate-200/60">
                 <div
                   className="relative group cursor-pointer"
@@ -2184,7 +2532,6 @@ const AppContent: React.FC = () => {
         onClose={() => setIsPreviewModalOpen(false)}
         html={docxPreviewHtml}
       />
-
       <DriveFileModal
         isOpen={isDriveModalOpen}
         onClose={() => setIsDriveModalOpen(false)}
@@ -2202,6 +2549,14 @@ const AppContent: React.FC = () => {
         onToggle={handleDriveToggle}
         onToggleAll={handleDriveToggleAll}
         onAddSelected={handleDriveAddSelected}
+      />
+      <AgencyPresetModal
+        isOpen={isAgencyModalOpen}
+        onClose={() => setIsAgencyModalOpen(false)}
+        draft={agencyDraft}
+        onChange={setAgencyDraft}
+        onLogoUpload={handleAgencyLogoUpload}
+        onSave={saveAgencyPreset}
       />
 
       <FloatingAccount

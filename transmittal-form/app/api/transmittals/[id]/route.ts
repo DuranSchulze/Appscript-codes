@@ -51,6 +51,20 @@ export async function PUT(
       );
     }
 
+    const agencyId = data.agencyId ? String(data.agencyId) : null;
+    if (agencyId) {
+      const agency = await db.agency.findFirst({
+        where: { id: agencyId, userId: session.user.id },
+        select: { id: true },
+      });
+      if (!agency) {
+        return NextResponse.json(
+          { error: "Invalid agency" },
+          { status: 400 },
+        );
+      }
+    }
+
     const project = {
       ...(data.project || {}),
       transmittalNumber: ensureDbTransmittalPrefix(data.project?.transmittalNumber),
@@ -68,6 +82,7 @@ export async function PUT(
       where: { id: transmittalId },
       data: {
         notes: data.notes || "",
+        agencyId,
         handDelivery: Boolean(data.transmissionMethod?.personalDelivery),
         pickUp: Boolean(data.transmissionMethod?.pickUp),
         courier: Boolean(data.transmissionMethod?.grabLalamove),
@@ -111,24 +126,6 @@ export async function PUT(
                 fileSource: item.fileSource || null,
               }))
             : [],
-        },
-        agency: {
-          upsert: {
-            create: {
-              name: data.sender?.agencyName || "",
-              website: data.sender?.website || null,
-              telephoneNumber: data.sender?.telephone || null,
-              contactNumber: data.sender?.mobile || null,
-              email: data.sender?.email || null,
-            },
-            update: {
-              name: data.sender?.agencyName || "",
-              website: data.sender?.website || null,
-              telephoneNumber: data.sender?.telephone || null,
-              contactNumber: data.sender?.mobile || null,
-              email: data.sender?.email || null,
-            },
-          },
         },
       },
       include: {

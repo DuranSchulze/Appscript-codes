@@ -1,7 +1,3 @@
 "use client";
 
-import { App } from "@/App";
-
-export default function ClientApp() {
-  return <App />;
-}
+export { App as default } from "@/components/main/App";

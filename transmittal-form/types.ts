@@ -70,6 +70,7 @@ export interface AppData {
   receivedBy: ReceivedBy;
   footerNotes: FooterNotes;
   notes: string;
+  agencyId?: string | null;
   transmissionMethod: {
     personalDelivery: boolean;
     pickUp: boolean;
