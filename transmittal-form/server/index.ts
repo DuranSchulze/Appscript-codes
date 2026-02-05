@@ -9,6 +9,28 @@ const app = express();
 const port = Number(process.env.PORT) || 8000;
 const SEND_API_TOKEN = process.env.SEND_API_TOKEN;
 
+const stripTransmittalPrefix = (value: string) =>
+  value.startsWith("TR-FP-") ? value.slice("TR-FP-".length) : value;
+
+const ensureDbTransmittalPrefix = (value: string) => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  return trimmed.startsWith("TR-FP-") ? trimmed : `TR-FP-${trimmed}`;
+};
+
+const mapTransmittalForApi = (transmittal: any) => {
+  if (!transmittal) return transmittal;
+  const project = (transmittal.project || {}) as any;
+  const nextProject = {
+    ...project,
+    transmittalNumber: stripTransmittalPrefix(String(project.transmittalNumber || "")),
+  };
+  return {
+    ...transmittal,
+    project: nextProject,
+  };
+};
+
 app.use(
   cors({
     origin: ["http://localhost:3000"],
@@ -51,7 +73,9 @@ app.get("/api/export-transmittals", async (req, res) => {
 
     const rows = transmittals.flatMap((t) => {
       const project = (t.project || {}) as any;
-      const transmittalNo = String(project.transmittalNumber || "");
+      const transmittalNo = stripTransmittalPrefix(
+        String(project.transmittalNumber || ""),
+      );
       const date = String(project.date || "");
 
       const primaryRecipient = t.recipients?.[0];
@@ -179,6 +203,13 @@ app.put("/api/transmittals/:id", async (req, res) => {
       return res.status(400).json({ error: "Missing transmittal data" });
     }
 
+    const project = {
+      ...(data.project || {}),
+      transmittalNumber: ensureDbTransmittalPrefix(
+        data.project?.transmittalNumber,
+      ),
+    };
+
     const existing = await prisma.transmittal.findFirst({
       where: { id: transmittalId, userId: session.user.id },
     });
@@ -199,7 +230,7 @@ app.put("/api/transmittals/:id", async (req, res) => {
         projectNumber: data.project?.projectNumber || null,
         engagementRefNumber: data.project?.engagementRef || null,
         projectPurpose: data.project?.purpose || null,
-        project: data.project || {},
+        project,
         sender: data.sender || {},
         receivedBy: data.receivedBy || {},
         footerNotes: data.footerNotes || {},
@@ -261,7 +292,7 @@ app.put("/api/transmittals/:id", async (req, res) => {
       },
     });
 
-    return res.json({ transmittal });
+    return res.json({ transmittal: mapTransmittalForApi(transmittal) });
   } catch (error: any) {
     console.error("Update transmittal error:", error);
     return res.status(500).json({ error: error.message });
@@ -283,6 +314,13 @@ app.post("/api/transmittals", async (req, res) => {
       return res.status(400).json({ error: "Missing transmittal data" });
     }
 
+    const project = {
+      ...(data.project || {}),
+      transmittalNumber: ensureDbTransmittalPrefix(
+        data.project?.transmittalNumber,
+      ),
+    };
+
     const transmittal = await prisma.transmittal.create({
       data: {
         userId: session.user.id,
@@ -295,7 +333,7 @@ app.post("/api/transmittals", async (req, res) => {
         projectNumber: data.project?.projectNumber || null,
         engagementRefNumber: data.project?.engagementRef || null,
         projectPurpose: data.project?.purpose || null,
-        project: data.project || {},
+        project,
         sender: data.sender || {},
         receivedBy: data.receivedBy || {},
         footerNotes: data.footerNotes || {},
@@ -346,7 +384,7 @@ app.post("/api/transmittals", async (req, res) => {
       },
     });
 
-    return res.json({ transmittal });
+    return res.json({ transmittal: mapTransmittalForApi(transmittal) });
   } catch (error: any) {
     console.error("Save transmittal error:", error);
     return res.status(500).json({ error: error.message });
@@ -372,7 +410,9 @@ app.get("/api/transmittals", async (req, res) => {
       },
     });
 
-    return res.json({ transmittals });
+    return res.json({
+      transmittals: transmittals.map(mapTransmittalForApi),
+    });
   } catch (error: any) {
     console.error("Load transmittals error:", error);
     return res.status(500).json({ error: error.message });

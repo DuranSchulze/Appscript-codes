@@ -500,14 +500,17 @@ const DocxPreviewModal = ({
 
 const getNextTransmittalNumber = (history: HistoryItem[]) => {
   const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const prefix = `TR-FP-${dateStamp}-`;
+  const prefix = `${dateStamp}-`;
+  const stripPrefix = (value: string) =>
+    value.startsWith("TR-FP-") ? value.slice("TR-FP-".length) : value;
   const suffixes = history
     .map((item) => item.transmittalNumber)
+    .map(stripPrefix)
     .filter((number) => number.startsWith(prefix))
     .map((number) => Number(number.slice(prefix.length)))
     .filter((value) => !Number.isNaN(value));
   const next = suffixes.length ? Math.max(...suffixes) + 1 : 1;
-  return `${prefix}${String(next).padStart(3, "0")}`;
+  return `${prefix}${String(next).padStart(4, "0")}`;
 };
 
 const createInitialData = (history: HistoryItem[]): AppData => ({
@@ -597,6 +600,7 @@ const AppContent: React.FC = () => {
   const [activeTransmittalId, setActiveTransmittalId] = useState<string | null>(
     null,
   );
+  const [showPreview, setShowPreview] = useState(false);
 
   const [columnWidths, setColumnWidths] = useState({
     qty: 55,
@@ -605,6 +609,28 @@ const AppContent: React.FC = () => {
     remarks: 100,
   });
   const [isDriveReady, setIsDriveReady] = useState(false);
+  const [previewScale, setPreviewScale] = useState(1);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (previewContainerRef.current) {
+        const containerWidth = previewContainerRef.current.offsetWidth;
+        // 8.5in is roughly 816px. We add some padding buffer.
+        const targetWidth = 850;
+        if (containerWidth < targetWidth) {
+          const newScale = (containerWidth - 32) / targetWidth; // 32px padding
+          setPreviewScale(Math.max(0.3, Math.min(1, newScale)));
+        } else {
+          setPreviewScale(1);
+        }
+      }
+    };
+
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [showPreview]); // Re-calculate when preview is shown
 
   const { data: session, isPending } = useSession();
   const apiBaseUrl = import.meta.env.VITE_BETTER_AUTH_URL;
@@ -654,6 +680,8 @@ const AppContent: React.FC = () => {
     const receivedBy = transmittal.receivedBy || {};
     const footerNotes = transmittal.footerNotes || {};
     const primaryRecipient = transmittal.recipients?.[0];
+    const stripPrefix = (value: string) =>
+      value.startsWith("TR-FP-") ? value.slice("TR-FP-".length) : value;
 
     return {
       recipient: {
@@ -671,22 +699,24 @@ const AppContent: React.FC = () => {
         engagementRef:
           projectData.engagementRef || transmittal.engagementRefNumber || "",
         purpose: projectData.purpose || transmittal.projectPurpose || "",
-        transmittalNumber: projectData.transmittalNumber || "",
+        transmittalNumber: stripPrefix(
+          String(projectData.transmittalNumber || ""),
+        ),
         department: projectData.department || "",
         date: projectData.date || "",
         timeGenerated: projectData.timeGenerated || "",
       },
       items: Array.isArray(transmittal.items)
         ? transmittal.items.map((item: any) => ({
-          id: item.id,
-          qty: item.qty || "",
-          noOfItems: item.noOfItems || "",
-          documentNumber: item.documentNumber || "",
-          description: item.description || "",
-          remarks: item.remarks || "",
-          fileType: item.fileType || undefined,
-          fileSource: item.fileSource || undefined,
-        }))
+            id: item.id,
+            qty: item.qty || "",
+            noOfItems: item.noOfItems || "",
+            documentNumber: item.documentNumber || "",
+            description: item.description || "",
+            remarks: item.remarks || "",
+            fileType: item.fileType || undefined,
+            fileSource: item.fileSource || undefined,
+          }))
         : [],
       sender: {
         agencyName: senderData.agencyName || "",
@@ -1327,19 +1357,86 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col lg:flex-row h-screen bg-slate-100 overflow-hidden font-sans selection:bg-brand-500/20">
-      <div className="w-full lg:w-[420px] bg-white/80 backdrop-blur-xl border-r border-slate-200/60 flex flex-col h-full shadow-2xl z-20 overflow-hidden">
+    <div className="flex flex-col lg:flex-row h-screen bg-slate-100 overflow-hidden font-sans selection:bg-brand-500/20 relative">
+      {/* Mobile Toggle Button */}
+      <div className="lg:hidden absolute bottom-6 right-6 z-50 flex gap-2">
+        <button
+          onClick={() => setShowPreview(!showPreview)}
+          className="w-14 h-14 bg-slate-900 text-white rounded-full shadow-2xl flex items-center justify-center hover:bg-slate-800 transition-all active:scale-95"
+        >
+          {showPreview ? (
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+              ></path>
+            </svg>
+          ) : (
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+              ></path>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+              ></path>
+            </svg>
+          )}
+        </button>
+      </div>
+
+      <div
+        className={`${showPreview ? "hidden" : "flex"} w-full lg:flex lg:w-[420px] bg-white/80 backdrop-blur-xl border-r border-slate-200/60 flex-col h-full shadow-2xl z-20 overflow-hidden absolute inset-0 lg:static`}
+      >
         <div className="p-8 border-b border-slate-100 bg-white/40">
           <div className="flex justify-between items-center mb-1">
             <h1 className="font-display font-black text-2xl text-slate-900 tracking-tighter">
               Smart Transmittal
             </h1>
-            <button
-              onClick={handleSignOut}
-              className="text-[9px] font-black text-slate-400 hover:text-slate-700 uppercase tracking-widest"
-            >
-              Sign out
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowPreview(true)}
+                className="lg:hidden text-slate-400 hover:text-brand-600 transition-colors"
+                title="Minimize Sidebar"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2.5"
+                    d="M19 9l-7 7-7-7"
+                  ></path>
+                </svg>
+              </button>
+              <button
+                onClick={handleSignOut}
+                className="text-[9px] font-black text-slate-400 hover:text-slate-700 uppercase tracking-widest"
+              >
+                Sign out
+              </button>
+            </div>
           </div>
           <div className="flex justify-between items-center mt-1">
             <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
@@ -1466,10 +1563,10 @@ const AppContent: React.FC = () => {
                     >
                       <svg
                         className="w-4 h-4 text-slate-400"
-                        viewBox="0 0 24 24"
                         fill="currentColor"
+                        viewBox="0 0 24 24"
                       >
-                        <path d="M7.71 3.5L1.15 15l3.43 6 6.55-11.5M9.73 15L6.3 21h13.12l3.43-6M18.74 15l-6.55-11.5H5.44L12 15" />
+                        <path d="M7.71 3.5L1.15 15l2.86 5L10.57 8.5 7.71 3.5zm1.43 0l6.86 11.5h5.71l-6.86-11.5H9.14zm7.14 12.5H3.43l-2.28 4h13.71l2.28-4z" />
                       </svg>
                       Browse Drive
                     </button>
@@ -2033,9 +2130,15 @@ const AppContent: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 h-full overflow-auto bg-slate-200 p-8 flex justify-center custom-scrollbar">
-        <div className="w-full max-w-[8.5in] transition-all duration-700 ease-out-expo transform origin-top shadow-[0_40px_100px_rgba(0,0,0,0.15)] rounded-sm">
-          <div id="print-container">
+      <div
+        ref={previewContainerRef}
+        className={`${showPreview ? "flex" : "hidden"} lg:flex flex-1 h-full overflow-hidden bg-slate-200 p-4 lg:p-8 justify-center custom-scrollbar w-full absolute inset-0 lg:static z-10 flex-col items-center`}
+      >
+        <div
+          className="transition-all duration-300 ease-out origin-top shadow-[0_40px_100px_rgba(0,0,0,0.15)] rounded-sm"
+          style={{ transform: `scale(${previewScale})` }}
+        >
+          <div id="print-container" className="bg-white">
             <TransmittalTemplate
               data={data}
               onUpdateItem={updateItem}
