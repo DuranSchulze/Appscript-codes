@@ -678,15 +678,15 @@ const AppContent: React.FC = () => {
       },
       items: Array.isArray(transmittal.items)
         ? transmittal.items.map((item: any) => ({
-            id: item.id,
-            qty: item.qty || "",
-            noOfItems: item.noOfItems || "",
-            documentNumber: item.documentNumber || "",
-            description: item.description || "",
-            remarks: item.remarks || "",
-            fileType: item.fileType || undefined,
-            fileSource: item.fileSource || undefined,
-          }))
+          id: item.id,
+          qty: item.qty || "",
+          noOfItems: item.noOfItems || "",
+          documentNumber: item.documentNumber || "",
+          description: item.description || "",
+          remarks: item.remarks || "",
+          fileType: item.fileType || undefined,
+          fileSource: item.fileSource || undefined,
+        }))
         : [],
       sender: {
         agencyName: senderData.agencyName || "",
@@ -1308,11 +1308,6 @@ const AppContent: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100 font-sans">
         <div className="bg-white border border-slate-200 rounded-[36px] shadow-2xl w-full max-w-lg p-10 text-center">
-          <div className="w-16 h-16 rounded-2xl bg-brand-600 text-white flex items-center justify-center mx-auto mb-6 shadow-lg shadow-brand-200">
-            <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 2a10 10 0 00-3.17 19.48c.5.09.68-.22.68-.48 0-.24-.01-.87-.01-1.7-2.78.6-3.37-1.34-3.37-1.34-.45-1.14-1.1-1.45-1.1-1.45-.9-.62.07-.61.07-.61 1 .07 1.52 1.03 1.52 1.03.9 1.52 2.36 1.08 2.94.83.09-.65.35-1.08.63-1.33-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.26.1-2.63 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0112 6.8c.85 0 1.7.11 2.5.33 1.9-1.29 2.74-1.02 2.74-1.02.55 1.37.2 2.38.1 2.63.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85 0 1.33-.01 2.4-.01 2.72 0 .26.18.58.69.48A10 10 0 0012 2z" />
-            </svg>
-          </div>
           <h1 className="text-2xl font-black text-slate-900 font-display">
             Sign in to continue
           </h1>
