@@ -4,13 +4,23 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { PrismaClient } from "@prisma/client";
 import { withAccelerate } from "@prisma/extension-accelerate";
 
+const parseOrigins = (value: string | undefined, fallback: string[]) => {
+  const items = String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length ? items : fallback;
+};
+
 export const prisma = new PrismaClient({
   accelerateUrl: process.env.DATABASE_URL,
 }).$extends(withAccelerate());
 
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL,
-  trustedOrigins: ["http://localhost:3000"],
+  trustedOrigins: parseOrigins(process.env.BETTER_AUTH_TRUSTED_ORIGINS, [
+    "http://localhost:3000",
+  ]),
   database: prismaAdapter(prisma, { provider: "postgresql" }),
   account: {
     accountLinking: {

@@ -9,6 +9,14 @@ const app = express();
 const port = Number(process.env.PORT) || 8000;
 const SEND_API_TOKEN = process.env.SEND_API_TOKEN;
 
+const parseOrigins = (value: string | undefined, fallback: string[]) => {
+  const items = String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length ? items : fallback;
+};
+
 const stripTransmittalPrefix = (value: string) =>
   value.startsWith("TR-FP-") ? value.slice("TR-FP-".length) : value;
 
@@ -33,7 +41,7 @@ const mapTransmittalForApi = (transmittal: any) => {
 
 app.use(
   cors({
-    origin: ["http://localhost:3000"],
+    origin: parseOrigins(process.env.CORS_ORIGINS, ["http://localhost:3000"]),
     credentials: true,
   })
 );
