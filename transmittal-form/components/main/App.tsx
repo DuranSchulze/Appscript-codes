@@ -805,7 +805,7 @@ const AppContent: React.FC = () => {
     qty: 55,
     noOfItems: 65,
     documentNumber: 130,
-    remarks: 100,
+    remarks: 150, // Increased from 100 to 150
   });
   const [isDriveReady, setIsDriveReady] = useState(false);
   const [previewScale, setPreviewScale] = useState(1);

@@ -78,7 +78,7 @@ const ComboBox = ({ value, onChange, options, className = "" }: { value: string,
                 </svg>
             </button>
             {isOpen && (
-                <div className="absolute left-0 top-full mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg z-[100] max-h-40 overflow-y-auto">
+                <div className="absolute left-0 top-full mt-1 min-w-[200px] w-max bg-white border border-slate-200 rounded-lg shadow-lg z-[100] max-h-40 overflow-y-auto">
                     {options.map((option) => (
                         <div
                             key={option}
