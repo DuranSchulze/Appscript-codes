@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { TransmittalTemplate } from "../NewReportTemplate";
 import { FloatingAccount } from "../FloatingAccount";
+import { BulkAddModal } from "../BulkAddModal";
 import { parseTransmittalDocument } from "../../services/geminiService";
 import {
   listFilesInFolder,
@@ -548,69 +549,6 @@ const DriveFileModal = ({
   );
 };
 
-const BulkAddModal = ({
-  isOpen,
-  onClose,
-  onAdd,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onAdd: (text: string) => void;
-}) => {
-  const [text, setText] = useState("");
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 border border-white">
-        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-          <div>
-            <h3 className="text-2xl font-black text-slate-800 font-display">
-              Bulk Import
-            </h3>
-            <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-bold">
-              Paste spreadsheet rows here
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-10 h-10 rounded-full bg-white shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-all"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="p-8">
-          <textarea
-            className="w-full h-64 p-6 bg-slate-50 border border-slate-200 rounded-3xl font-mono text-xs focus:ring-4 focus:ring-brand-500/10 focus:border-brand-500 outline-none transition-all placeholder-slate-300"
-            placeholder="Qty, Doc Number, Description, Remarks..."
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            autoFocus
-          />
-          <div className="mt-8 flex gap-4">
-            <button
-              onClick={onClose}
-              className="flex-1 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                onAdd(text);
-                setText("");
-                onClose();
-              }}
-              disabled={!text.trim()}
-              className="flex-[2] py-4 bg-slate-900 text-white rounded-2xl font-bold shadow-xl hover:bg-slate-800 disabled:opacity-50 transition-all active:scale-95"
-            >
-              Import List
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const DocxPreviewModal = ({
   isOpen,
   onClose,
@@ -972,15 +910,15 @@ const AppContent: React.FC = () => {
       },
       items: Array.isArray(transmittal.items)
         ? transmittal.items.map((item: any) => ({
-          id: item.id,
-          qty: item.qty || "",
-          noOfItems: item.noOfItems || "",
-          documentNumber: item.documentNumber || "",
-          description: item.description || "",
-          remarks: item.remarks || "",
-          fileType: item.fileType || undefined,
-          fileSource: item.fileSource || undefined,
-        }))
+            id: item.id,
+            qty: item.qty || "",
+            noOfItems: item.noOfItems || "",
+            documentNumber: item.documentNumber || "",
+            description: item.description || "",
+            remarks: item.remarks || "",
+            fileType: item.fileType || undefined,
+            fileSource: item.fileSource || undefined,
+          }))
         : [],
       sender: {
         agencyName: senderData.agencyName || "",
@@ -1217,21 +1155,49 @@ const AppContent: React.FC = () => {
       },
     ]);
 
-  const handleBulkAdd = (text: string) => {
-    const lines = text.split("\n").filter((line) => line.trim() !== "");
-    const newItems: TransmittalItem[] = lines.map((line) => {
-      const parts = line.split(/[,\t;]/).map((p) => p.trim());
-      return {
-        id: Date.now().toString() + Math.random(),
-        qty: parts[0] || "1",
-        noOfItems: "0",
-        documentNumber: parts[1] || "",
-        description: parts[2] || (parts.length === 1 ? parts[0] : ""),
-        remarks: parts[3] || "",
-        fileType: "link",
-      };
-    });
-    addItems(newItems);
+  const handleBulkImportDriveLink = async (link: string) => {
+    const folderId = extractFolderIdFromLink(link);
+    if (!folderId) {
+      const msg = "Invalid Google Drive folder link.";
+      setStatusMsg(msg);
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 5000);
+      throw new Error(msg);
+    }
+
+    if (!isDriveReady) {
+      const msg = "Drive access not available. Please sign in again.";
+      setStatusMsg(msg);
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 5000);
+      throw new Error(msg);
+    }
+
+    try {
+      setStatusMsg("Listing Drive files...");
+      setStatusType("info");
+      const files = await listFilesInFolder(folderId);
+      addItems(
+        files.map((f) => ({
+          id: f.id,
+          qty: "1",
+          noOfItems: "1",
+          documentNumber: "DRIVE",
+          description: f.name.replace(/\.[^/.]+$/, ""),
+          remarks: "Via Drive Folder",
+          fileType: "gdrive",
+          fileSource: `https://drive.google.com/file/d/${f.id}/view`,
+        })),
+      );
+      setStatusMsg(`Fetched ${files.length} files from Drive.`);
+      setStatusType("info");
+      setTimeout(() => setStatusMsg(""), 3000);
+    } catch (e: any) {
+      setStatusMsg("Error: " + e.message);
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 5000);
+      throw e;
+    }
   };
 
   const updateItem = (
@@ -2499,7 +2465,11 @@ const AppContent: React.FC = () => {
       >
         <div
           className="transition-all duration-300 ease-out origin-top shadow-[0_40px_100px_rgba(0,0,0,0.15)] rounded-sm shrink-0"
-          style={{ transform: `scale(${previewScale})`, width: '816px', marginBottom: '200px' }}
+          style={{
+            transform: `scale(${previewScale})`,
+            width: "816px",
+            marginBottom: "200px",
+          }}
         >
           <div id="print-container" className="bg-white min-h-[1056px]">
             <TransmittalTemplate
@@ -2525,7 +2495,7 @@ const AppContent: React.FC = () => {
       <BulkAddModal
         isOpen={isBulkModalOpen}
         onClose={() => setIsBulkModalOpen(false)}
-        onAdd={handleBulkAdd}
+        onImportDriveLink={handleBulkImportDriveLink}
       />
       <DocxPreviewModal
         isOpen={isPreviewModalOpen}

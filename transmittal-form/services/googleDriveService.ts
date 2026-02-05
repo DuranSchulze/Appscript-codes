@@ -74,25 +74,43 @@ export const listFilesInFolder = async (folderId: string): Promise<Array<{name: 
 
     try {
         const query = `'${folderId}' in parents and trashed = false`;
-        const url = new URL('https://www.googleapis.com/drive/v3/files');
-        url.searchParams.append('pageSize', '100');
-        url.searchParams.append('fields', 'files(id, name, mimeType)');
-        url.searchParams.append('q', query);
+        const allFiles: Array<{ name: string; id: string; mimeType: string }> = [];
+        let pageToken: string | undefined;
 
-        const response = await fetch(url.toString(), {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Content-Type': 'application/json'
+        do {
+            const url = new URL('https://www.googleapis.com/drive/v3/files');
+            url.searchParams.append('pageSize', '1000');
+            url.searchParams.append('fields', 'nextPageToken, files(id, name, mimeType)');
+            url.searchParams.append('q', query);
+            url.searchParams.append('supportsAllDrives', 'true');
+            url.searchParams.append('includeItemsFromAllDrives', 'true');
+            if (pageToken) url.searchParams.append('pageToken', pageToken);
+
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                let errorDetails = '';
+                try {
+                    const errorJson = await response.json();
+                    errorDetails = errorJson?.error?.message ? `: ${errorJson.error.message}` : '';
+                } catch {
+                    // ignore JSON parsing errors
+                }
+                throw new Error(`Drive API Error: ${response.status} ${response.statusText}${errorDetails}`);
             }
-        });
 
-        if (!response.ok) {
-            throw new Error(`Drive API Error: ${response.status} ${response.statusText}`);
-        }
+            const data = await response.json();
+            allFiles.push(...(data.files || []));
+            pageToken = data.nextPageToken;
+        } while (pageToken);
 
-        const data = await response.json();
-        return data.files || [];
+        return allFiles;
 
     } catch (err: any) {
         console.error("Error listing files", err);
