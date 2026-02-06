@@ -1,14 +1,20 @@
-import React, {
-  useState,
-  useRef,
-  useEffect,
-  ErrorInfo,
-  ReactNode,
-  Component,
-} from "react";
+"use client";
+
+import React, { useState, useRef, useEffect } from "react";
 import { TransmittalTemplate } from "../NewReportTemplate";
 import { FloatingAccount } from "../FloatingAccount";
-import { BulkAddModal } from "../BulkAddModal";
+import { BulkAddModal } from "../modals/BulkAddModal";
+import { AgencyPresetModal } from "../modals/AgencyPresetModal";
+import { DriveFileModal } from "../modals/DriveFileModal";
+import { DocxPreviewModal } from "../modals/DocxPreviewModal";
+import { ErrorBoundary } from "../ErrorBoundary";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { parseTransmittalDocument } from "../../services/geminiService";
 import {
   listFilesInFolder,
@@ -38,15 +44,6 @@ declare global {
     html2pdf: any;
     html2canvas: any;
   }
-}
-
-interface ErrorBoundaryProps {
-  children?: ReactNode;
-}
-
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error: Error | null;
 }
 
 const formatTime24hTo12h = (time24h: string): string => {
@@ -137,71 +134,6 @@ const parseTimeTo24h = (value: string): string => {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 };
 
-/**
- * Standard Error Boundary to catch rendering failures.
- * Fixed "this.props" visibility by extending the imported Component explicitly.
- */
-class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState = { hasError: false, error: null };
-
-  constructor(props: ErrorBoundaryProps) {
-    super(props);
-  }
-
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("Uncaught Error:", error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6 font-sans">
-          <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-lg w-full text-center border border-slate-200">
-            <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
-              <svg
-                className="w-10 h-10"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                ></path>
-              </svg>
-            </div>
-            <h2 className="text-2xl font-black text-slate-800 mb-2 font-display">
-              Dashboard Error
-            </h2>
-            <p className="text-slate-500 mb-8 px-4 leading-relaxed">
-              The application encountered a rendering issue. This is usually
-              temporary.
-            </p>
-            <div className="bg-slate-50 p-4 rounded-xl text-left mb-8 overflow-auto max-h-40 border border-slate-100">
-              <code className="text-[10px] text-red-500 font-mono break-all">
-                {this.state.error?.message || "Internal Component Error"}
-              </code>
-            </div>
-            <button
-              onClick={() => window.location.reload()}
-              className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl active:scale-95"
-            >
-              Reload Workspace
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 const ExpandingTextarea = ({
   value,
   onChange,
@@ -221,411 +153,14 @@ const ExpandingTextarea = ({
     }
   }, [value]);
   return (
-    <textarea
+    <Textarea
       ref={textareaRef}
-      className={`input-field overflow-hidden resize-none min-h-[44px] ${className}`}
+      className={`overflow-hidden resize-none min-h-[44px] ${className}`}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       rows={1}
     />
-  );
-};
-
-const AgencyPresetModal = ({
-  isOpen,
-  onClose,
-  draft,
-  onChange,
-  onLogoUpload,
-  onSave,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  draft: SenderInfo;
-  onChange: (next: SenderInfo) => void;
-  onLogoUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onSave: () => void;
-}) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[102] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 border border-white">
-        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-          <div>
-            <h3 className="text-2xl font-black text-slate-800 font-display">
-              Add Agency / Brand
-            </h3>
-            <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-bold">
-              Save presets for quick reuse
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-10 h-10 rounded-full bg-white shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-all"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="p-8 space-y-5">
-          <div className="flex items-center gap-4">
-            <div className="w-20 h-20 rounded-3xl border border-slate-200 bg-white shadow-sm flex items-center justify-center overflow-hidden">
-              {draft.logoBase64 ? (
-                <img
-                  src={draft.logoBase64}
-                  alt="Agency logo"
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">
-                  Logo
-                </span>
-              )}
-            </div>
-            <div className="flex-1">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                Upload Logo
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={onLogoUpload}
-                className="block w-full mt-1 text-xs font-semibold text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-2xl file:border-0 file:text-[10px] file:font-black file:uppercase file:tracking-widest file:bg-slate-900 file:text-white hover:file:bg-slate-800"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                Agency Name
-              </label>
-              <input
-                className="input-field"
-                value={draft.agencyName}
-                onChange={(e) =>
-                  onChange({ ...draft, agencyName: e.target.value })
-                }
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                Address Line 1
-              </label>
-              <input
-                className="input-field"
-                value={draft.addressLine1}
-                onChange={(e) =>
-                  onChange({ ...draft, addressLine1: e.target.value })
-                }
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                Address Line 2
-              </label>
-              <input
-                className="input-field"
-                value={draft.addressLine2}
-                onChange={(e) =>
-                  onChange({ ...draft, addressLine2: e.target.value })
-                }
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                Website
-              </label>
-              <input
-                className="input-field"
-                value={draft.website}
-                onChange={(e) =>
-                  onChange({ ...draft, website: e.target.value })
-                }
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                  Telephone
-                </label>
-                <input
-                  className="input-field"
-                  value={draft.telephone}
-                  onChange={(e) =>
-                    onChange({ ...draft, telephone: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                  Mobile
-                </label>
-                <input
-                  className="input-field"
-                  value={draft.mobile}
-                  onChange={(e) =>
-                    onChange({ ...draft, mobile: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                Email
-              </label>
-              <input
-                className="input-field"
-                value={draft.email}
-                onChange={(e) => onChange({ ...draft, email: e.target.value })}
-              />
-            </div>
-          </div>
-
-          <div className="flex gap-4 pt-2">
-            <button
-              onClick={onClose}
-              className="flex-1 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onSave}
-              disabled={!draft.agencyName.trim()}
-              className="flex-[2] py-4 bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg hover:bg-emerald-500 disabled:opacity-50 transition-all active:scale-95"
-            >
-              Save Agency
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const DriveFileModal = ({
-  isOpen,
-  onClose,
-  files,
-  searchValue,
-  isLoading,
-  error,
-  selectedIds,
-  isAllSelected,
-  onSearchChange,
-  onSearch,
-  onToggle,
-  onToggleAll,
-  onAddSelected,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  files: Array<{ id: string; name: string; mimeType: string }>;
-  searchValue: string;
-  isLoading: boolean;
-  error: string;
-  selectedIds: Record<string, boolean>;
-  isAllSelected: boolean;
-  onSearchChange: (value: string) => void;
-  onSearch: () => void;
-  onToggle: (id: string) => void;
-  onToggleAll: () => void;
-  onAddSelected: () => void;
-}) => {
-  if (!isOpen) return null;
-  const selectedCount = Object.values(selectedIds).filter(Boolean).length;
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-white w-full max-w-3xl rounded-[32px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 border border-white">
-        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-          <div>
-            <h3 className="text-2xl font-black text-slate-800 font-display">
-              Browse Drive Files
-            </h3>
-            <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-bold">
-              Search and select documents to import
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-10 h-10 rounded-full bg-white shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-all"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="p-8 space-y-5">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1">
-              <input
-                value={searchValue}
-                onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="Search by file name"
-                className="w-full px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:ring-4 focus:ring-brand-500/10 focus:border-brand-500 outline-none transition-all"
-              />
-            </div>
-            <button
-              onClick={onSearch}
-              className="px-5 py-3 rounded-2xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:bg-slate-800 transition-all"
-            >
-              Search
-            </button>
-          </div>
-
-          <div className="border border-slate-100 rounded-[24px] overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 bg-slate-50/70 border-b border-slate-100">
-              <label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                <input
-                  type="checkbox"
-                  checked={isAllSelected}
-                  onChange={onToggleAll}
-                  disabled={files.length === 0}
-                  className="w-4 h-4 rounded-md text-brand-600 border-slate-300"
-                />
-                Select All
-              </label>
-              <span className="text-[10px] font-bold text-slate-400">
-                {files.length} file{files.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            <div className="max-h-[320px] overflow-y-auto">
-              {isLoading ? (
-                <div className="p-6 text-xs font-semibold text-slate-400">
-                  Loading Drive files...
-                </div>
-              ) : files.length === 0 ? (
-                <div className="p-6 text-xs font-semibold text-slate-400">
-                  {error || "No files found."}
-                </div>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {files.map((file) => (
-                    <li key={file.id} className="flex items-center gap-3 p-4">
-                      <input
-                        type="checkbox"
-                        checked={!!selectedIds[file.id]}
-                        onChange={() => onToggle(file.id)}
-                        className="w-4 h-4 rounded-md text-brand-600 border-slate-300"
-                      />
-                      <div className="flex-1">
-                        <p className="text-xs font-semibold text-slate-800">
-                          {file.name}
-                        </p>
-                        <p className="text-[10px] text-slate-400">
-                          {file.mimeType}
-                        </p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          {error && files.length > 0 && (
-            <div className="p-3 rounded-2xl text-[10px] font-bold border bg-red-50 border-red-100 text-red-600">
-              {error}
-            </div>
-          )}
-
-          <div className="flex flex-col sm:flex-row gap-3">
-            <button
-              onClick={onClose}
-              className="flex-1 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onAddSelected}
-              disabled={selectedCount === 0}
-              className="flex-1 py-3 rounded-2xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-lg hover:bg-emerald-500 transition-all disabled:opacity-50"
-            >
-              Add Selected ({selectedCount})
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const DocxPreviewModal = ({
-  isOpen,
-  onClose,
-  html,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  html: string;
-}) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[101] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xl animate-in fade-in duration-300">
-      <div className="bg-slate-100 w-full max-w-5xl h-[92vh] rounded-[40px] shadow-[0_35px_60px_-15px_rgba(0,0,0,0.5)] flex flex-col animate-in zoom-in-95 duration-300 overflow-hidden border border-white/20">
-        <div className="p-6 px-10 border-b border-slate-200 bg-white flex justify-between items-center shrink-0">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-blue-200">
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
-              </svg>
-            </div>
-            <div>
-              <h3 className="text-xl font-black text-slate-800 font-display uppercase tracking-tight">
-                Word Rendering
-              </h3>
-              <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black">
-                Live DOCX Layout Simulation
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-12 h-12 rounded-2xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-all"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-12 bg-slate-200/50 flex justify-center custom-scrollbar">
-          <div className="bg-white w-full max-w-[8.5in] shadow-2xl p-16 min-h-full font-sans text-slate-900 preview-content border border-slate-300 rounded-sm">
-            {html ? (
-              <div
-                className="animate-in fade-in duration-700"
-                dangerouslySetInnerHTML={{ __html: html }}
-              />
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-4">
-                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                <span className="text-sm font-bold uppercase tracking-widest">
-                  Generating Live Preview...
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="p-6 px-10 border-t border-slate-200 bg-white flex justify-between items-center shrink-0">
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-            Standard A4/Letter Layout
-          </p>
-          <button
-            onClick={onClose}
-            className="px-12 py-3 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl transform active:scale-95"
-          >
-            Close View
-          </button>
-        </div>
-      </div>
-      <style>{`
-                .preview-content { font-family: 'Arial', sans-serif; font-size: 10pt; color: #1e293b; line-height: 1.4; }
-                .preview-content h1 { font-size: 1.5rem; font-weight: bold; margin-bottom: 2rem; text-align: center; color: #000; text-transform: uppercase; }
-                .preview-content table { width: 100% !important; border-collapse: collapse !important; margin-bottom: 1.5rem !important; table-layout: fixed; }
-                .preview-content td { border: 1px solid #cbd5e1; padding: 6px 10px; font-size: 9pt; vertical-align: top; }
-                .custom-scrollbar::-webkit-scrollbar { width: 8px; }
-                .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-                .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-            `}</style>
-    </div>
   );
 };
 
@@ -681,7 +216,10 @@ const createInitialData = (history: HistoryItem[]): AppData => ({
     preparedByRole: "Admin Staff",
     notedBy: "Operations Manager",
     notedByRole: "Operations Manager",
-    timeReleased: "",
+    timeReleased: new Date().toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
   },
   transmissionMethod: {
     personalDelivery: false,
@@ -910,15 +448,15 @@ const AppContent: React.FC = () => {
       },
       items: Array.isArray(transmittal.items)
         ? transmittal.items.map((item: any) => ({
-            id: item.id,
-            qty: item.qty || "",
-            noOfItems: item.noOfItems || "",
-            documentNumber: item.documentNumber || "",
-            description: item.description || "",
-            remarks: item.remarks || "",
-            fileType: item.fileType || undefined,
-            fileSource: item.fileSource || undefined,
-          }))
+          id: item.id,
+          qty: item.qty || "",
+          noOfItems: item.noOfItems || "",
+          documentNumber: item.documentNumber || "",
+          description: item.description || "",
+          remarks: item.remarks || "",
+          fileType: item.fileType || undefined,
+          fileSource: item.fileSource || undefined,
+        }))
         : [],
       sender: {
         agencyName: senderData.agencyName || "",
@@ -1803,7 +1341,7 @@ const AppContent: React.FC = () => {
                     Intelligent Import
                   </h2>
                   {isParsing && (
-                    <span className="text-[10px] font-bold text-blue-600 animate-pulse uppercase">
+                    <span className="text-[10px] font-bold text-brand-600 animate-pulse uppercase">
                       Parsing {parseProgress.current}/{parseProgress.total}...
                     </span>
                   )}
@@ -1883,7 +1421,7 @@ const AppContent: React.FC = () => {
                   />
                   {statusMsg && (
                     <div
-                      className={`p-4 rounded-2xl text-[10px] font-bold border animate-in slide-in-from-right duration-300 ${statusType === "error" ? "bg-red-50 border-red-100 text-red-600" : "bg-blue-50 border-blue-100 text-blue-600"}`}
+                      className={`p-4 rounded-2xl text-[10px] font-bold border animate-in slide-in-from-right duration-300 ${statusType === "error" ? "bg-red-50 border-red-100 text-red-600" : "bg-brand-50 border-brand-100 text-brand-600"}`}
                     >
                       {statusMsg}
                     </div>
@@ -1956,12 +1494,11 @@ const AppContent: React.FC = () => {
                     </label>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                    <Label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest ml-1">
                       Internal Notes
-                    </label>
-                    <textarea
+                    </Label>
+                    <Textarea
                       rows={2}
-                      className="w-full p-4 bg-white border border-slate-100 rounded-2xl text-xs font-medium focus:ring-4 focus:ring-brand-500/5 focus:border-brand-500 outline-none"
                       value={data.notes}
                       onChange={(e) => handleUpdateNotes(e.target.value)}
                     />
@@ -1979,11 +1516,11 @@ const AppContent: React.FC = () => {
 
               <div className="flex flex-col sm:flex-row gap-3 items-end">
                 <div className="flex-1 space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Saved Agencies
-                  </label>
+                  </Label>
                   <select
-                    className="input-field"
+                    className="w-full h-9 rounded-md border border-input bg-transparent px-2.5 py-1 text-sm shadow-xs transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 outline-none"
                     value={selectedAgencyId}
                     onChange={(e) => setSelectedAgencyId(e.target.value)}
                   >
@@ -1995,12 +1532,12 @@ const AppContent: React.FC = () => {
                     ))}
                   </select>
                 </div>
-                <button
+                <Button
                   onClick={openAgencyModal}
-                  className="h-[52px] px-5 rounded-2xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-lg hover:bg-slate-800 transition-all"
+                  className="h-[52px] px-5 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg"
                 >
                   Add
-                </button>
+                </Button>
               </div>
 
               <div className="flex flex-col items-center gap-6 p-6 bg-slate-50 rounded-[40px] border border-slate-200/60">
@@ -2053,11 +1590,10 @@ const AppContent: React.FC = () => {
               </div>
               <div className="space-y-5">
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Agency Name
-                  </label>
-                  <input
-                    className="input-field"
+                  </Label>
+                  <Input
                     value={data.sender.agencyName}
                     onChange={(e) =>
                       updateField("sender", "agencyName", e.target.value)
@@ -2065,11 +1601,10 @@ const AppContent: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Website
-                  </label>
-                  <input
-                    className="input-field"
+                  </Label>
+                  <Input
                     value={data.sender.website}
                     onChange={(e) =>
                       updateField("sender", "website", e.target.value)
@@ -2078,11 +1613,10 @@ const AppContent: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                       Telephone
-                    </label>
-                    <input
-                      className="input-field"
+                    </Label>
+                    <Input
                       value={data.sender.telephone}
                       onChange={(e) =>
                         updateField("sender", "telephone", e.target.value)
@@ -2090,11 +1624,10 @@ const AppContent: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                       Mobile
-                    </label>
-                    <input
-                      className="input-field"
+                    </Label>
+                    <Input
                       value={data.sender.mobile}
                       onChange={(e) =>
                         updateField("sender", "mobile", e.target.value)
@@ -2103,11 +1636,10 @@ const AppContent: React.FC = () => {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Email
-                  </label>
-                  <input
-                    className="input-field"
+                  </Label>
+                  <Input
                     value={data.sender.email}
                     onChange={(e) =>
                       updateField("sender", "email", e.target.value)
@@ -2125,21 +1657,20 @@ const AppContent: React.FC = () => {
               </h2>
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     To
-                  </label>
-                  <input
-                    className="input-field opacity-50 cursor-not-allowed bg-slate-50"
+                  </Label>
+                  <Input
+                    className="opacity-50 cursor-not-allowed bg-slate-50"
                     value={data.recipient.to}
                     disabled
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Organization
-                  </label>
-                  <input
-                    className="input-field"
+                  </Label>
+                  <Input
                     value={data.recipient.company}
                     onChange={(e) =>
                       updateField("recipient", "company", e.target.value)
@@ -2147,11 +1678,10 @@ const AppContent: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Attention
-                  </label>
-                  <input
-                    className="input-field"
+                  </Label>
+                  <Input
                     value={data.recipient.attention}
                     onChange={(e) =>
                       updateField("recipient", "attention", e.target.value)
@@ -2159,9 +1689,9 @@ const AppContent: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Full Address
-                  </label>
+                  </Label>
                   <ExpandingTextarea
                     value={data.recipient.address}
                     onChange={(v) => updateField("recipient", "address", v)}
@@ -2170,11 +1700,10 @@ const AppContent: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                       Contact No.
-                    </label>
-                    <input
-                      className="input-field"
+                    </Label>
+                    <Input
                       value={data.recipient.contactNumber}
                       onChange={(e) =>
                         updateField(
@@ -2186,11 +1715,10 @@ const AppContent: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                       Email
-                    </label>
-                    <input
-                      className="input-field"
+                    </Label>
+                    <Input
                       value={data.recipient.email}
                       onChange={(e) =>
                         updateField("recipient", "email", e.target.value)
@@ -2209,11 +1737,10 @@ const AppContent: React.FC = () => {
               </h2>
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Contract/Project Title
-                  </label>
-                  <input
-                    className="input-field"
+                  </Label>
+                  <Input
                     value={data.project.projectName}
                     onChange={(e) =>
                       updateField("project", "projectName", e.target.value)
@@ -2221,11 +1748,11 @@ const AppContent: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Transmittal ID
-                  </label>
-                  <input
-                    className="input-field font-mono text-[10px]"
+                  </Label>
+                  <Input
+                    className="font-mono text-[10px]"
                     value={data.project.transmittalNumber}
                     onChange={(e) =>
                       updateField(
@@ -2237,11 +1764,10 @@ const AppContent: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Purpose
-                  </label>
-                  <input
-                    className="input-field"
+                  </Label>
+                  <Input
                     value={data.project.purpose}
                     onChange={(e) =>
                       updateField("project", "purpose", e.target.value)
@@ -2260,11 +1786,10 @@ const AppContent: React.FC = () => {
               <div className="space-y-6">
                 <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100 space-y-4">
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                       Prepared By Name
-                    </label>
-                    <input
-                      className="input-field"
+                    </Label>
+                    <Input
                       value={data.signatories.preparedBy}
                       onChange={(e) =>
                         handleUpdateSignatory("preparedBy", e.target.value)
@@ -2272,11 +1797,10 @@ const AppContent: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                       Prepared By Role
-                    </label>
-                    <input
-                      className="input-field"
+                    </Label>
+                    <Input
                       value={data.signatories.preparedByRole}
                       onChange={(e) =>
                         handleUpdateSignatory("preparedByRole", e.target.value)
@@ -2286,11 +1810,10 @@ const AppContent: React.FC = () => {
                 </div>
                 <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100 space-y-4">
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                       Noted By Name
-                    </label>
-                    <input
-                      className="input-field"
+                    </Label>
+                    <Input
                       value={data.signatories.notedBy}
                       onChange={(e) =>
                         handleUpdateSignatory("notedBy", e.target.value)
@@ -2298,11 +1821,10 @@ const AppContent: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                       Noted By Role
-                    </label>
-                    <input
-                      className="input-field"
+                    </Label>
+                    <Input
                       value={data.signatories.notedByRole}
                       onChange={(e) =>
                         handleUpdateSignatory("notedByRole", e.target.value)
@@ -2311,11 +1833,10 @@ const AppContent: React.FC = () => {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                  <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
                     Time Released
-                  </label>
-                  <input
-                    className="input-field"
+                  </Label>
+                  <Input
                     type="time"
                     step={60}
                     value={parseTimeTo24h(data.signatories.timeReleased)}
@@ -2403,18 +1924,18 @@ const AppContent: React.FC = () => {
 
         <div className="p-8 border-t border-slate-200 bg-white shadow-[0_-10px_30px_rgba(0,0,0,0.03)]">
           <div className="mb-3">
-            <button
+            <Button
               onClick={handleSaveTransmittal}
-              className="w-full py-3 rounded-[24px] bg-emerald-600 text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-lg hover:bg-emerald-500 transition-all active:scale-95"
+              className="w-full py-3 rounded-[24px] bg-brand-600 text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-lg hover:bg-brand-500 active:scale-95"
             >
               Save to History
-            </button>
+            </Button>
           </div>
           <div className="grid grid-cols-2 gap-3 mb-3">
-            <button
+            <Button
               onClick={handlePrint}
               disabled={isGeneratingPdf}
-              className="flex flex-col items-center justify-center py-4 bg-slate-900 text-white rounded-[24px] shadow-2xl hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50 group"
+              className="flex flex-col items-center justify-center py-4 h-auto bg-slate-900 text-white rounded-[24px] shadow-2xl hover:bg-slate-800 active:scale-95 group"
             >
               <svg
                 className="w-5 h-5 mb-1 group-hover:scale-110 transition-transform"
@@ -2432,11 +1953,12 @@ const AppContent: React.FC = () => {
               <span className="text-[9px] font-black uppercase tracking-[0.2em]">
                 Export PDF
               </span>
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={handleDownloadDocx}
               disabled={isGeneratingDocx}
-              className="flex flex-col items-center justify-center py-4 bg-white border border-slate-200 text-slate-900 rounded-[24px] shadow-sm hover:border-brand-500 hover:text-brand-600 transition-all active:scale-95 disabled:opacity-50 group"
+              variant="outline"
+              className="flex flex-col items-center justify-center py-4 h-auto rounded-[24px] hover:border-brand-500 hover:text-brand-600 active:scale-95 group"
             >
               <svg
                 className="w-5 h-5 mb-1 group-hover:scale-110 transition-transform"
@@ -2454,7 +1976,7 @@ const AppContent: React.FC = () => {
               <span className="text-[9px] font-black uppercase tracking-[0.2em]">
                 Export Word
               </span>
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -2540,8 +2062,6 @@ const AppContent: React.FC = () => {
       />
 
       <style>{`
-                .input-field { width: 100%; padding: 0.875rem 1.25rem; font-size: 0.875rem; font-weight: 500; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 1.25rem; outline: none; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-                .input-field:focus { border-color: #7c3aed; background-color: #fff; box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.08); }
                 .scrollbar-hide::-webkit-scrollbar { display: none; }
                 .ease-out-expo { transition-timing-function: cubic-bezier(0.19, 1, 0.22, 1); }
             `}</style>

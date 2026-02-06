@@ -46,7 +46,7 @@ export const FloatingAccount: React.FC<FloatingAccountProps> = ({
                     className="w-16 h-16 rounded-full border-2 border-white/20"
                   />
                 ) : (
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-xl">
+                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white font-bold text-xl">
                     {initials}
                   </div>
                 )}
@@ -111,7 +111,7 @@ export const FloatingAccount: React.FC<FloatingAccountProps> = ({
       <div className="fixed bottom-6 right-6 z-50">
         <button
           onClick={() => setIsOpen(true)}
-          className="w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all duration-200 bg-gradient-to-br from-blue-500 to-purple-600 hover:scale-105"
+          className="w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all duration-200 bg-gradient-to-br from-brand-500 to-brand-700 hover:scale-105"
         >
           {user.image ? (
             <img

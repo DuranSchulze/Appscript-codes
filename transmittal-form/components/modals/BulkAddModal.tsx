@@ -1,13 +1,19 @@
-import React, { useState } from "react";
+"use client";
 
-export const BulkAddModal = ({
-  isOpen,
-  onClose,
-  onImportDriveLink,
-}: {
+import React, { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+interface BulkAddModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImportDriveLink: (link: string) => Promise<void> | void;
+}
+
+export const BulkAddModal: React.FC<BulkAddModalProps> = ({
+  isOpen,
+  onClose,
+  onImportDriveLink,
 }) => {
   const [driveLink, setDriveLink] = useState("");
   const [isSubmittingDrive, setIsSubmittingDrive] = useState(false);
@@ -26,17 +32,18 @@ export const BulkAddModal = ({
               Import from a Google Drive folder
             </p>
           </div>
-          <button
+          <Button
             onClick={onClose}
-            className="w-10 h-10 rounded-full bg-white shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-all"
+            variant="ghost"
+            size="icon"
+            className="rounded-full"
           >
             ✕
-          </button>
+          </Button>
         </div>
         <div className="p-8">
           <div className="space-y-3">
-            <input
-              className="input-field"
+            <Input
               placeholder="Paste Google Drive folder link..."
               value={driveLink}
               onChange={(e) => setDriveLink(e.target.value)}
@@ -65,13 +72,14 @@ export const BulkAddModal = ({
           ) : null}
 
           <div className="mt-8 flex gap-4">
-            <button
+            <Button
               onClick={onClose}
-              className="flex-1 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
+              variant="ghost"
+              className="flex-1 py-4 rounded-2xl font-bold"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={async () => {
                 if (!driveLink.trim()) return;
                 try {
@@ -90,10 +98,10 @@ export const BulkAddModal = ({
                 }
               }}
               disabled={!driveLink.trim() || isSubmittingDrive}
-              className="flex-[2] py-4 bg-slate-900 text-white rounded-2xl font-bold shadow-xl hover:bg-slate-800 disabled:opacity-50 transition-all active:scale-95"
+              className="flex-[2] py-4 rounded-2xl font-bold shadow-xl"
             >
               Import From Drive
-            </button>
+            </Button>
           </div>
         </div>
       </div>
