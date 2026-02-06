@@ -1,2 +1,3 @@
 - in the transmittal id the generated one like 202601-0001 , if the user encoded this means this should not appear again, This should be unique data that no one can replicate so that in the history when I tried to browse again I can see and potentially edit some encoded things inside.
 - System will have a gsheet setup where we can link a g-sheet so one there is a created row of what transmittal document.
+- Internet detector so that there will a pop up when there is no internet so user will be alerted
