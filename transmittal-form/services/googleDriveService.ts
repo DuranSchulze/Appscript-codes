@@ -69,6 +69,29 @@ export const extractFolderIdFromLink = (link: string): string | null => {
     return match ? match[1] : null;
 };
 
+export const isFolderLink = (link: string): boolean => {
+    return /\/folders\//.test(link);
+};
+
+export const extractFileIdFromLink = (link: string): string | null => {
+    // Matches: /file/d/ID, /document/d/ID, /spreadsheets/d/ID, /presentation/d/ID, ?id=ID
+    const regex = /(?:\/(?:file|document|spreadsheets|presentation)\/d\/|[?&]id=)([a-zA-Z0-9_-]{15,})/;
+    const match = link.match(regex);
+    return match ? match[1] : null;
+};
+
+export const getFileMetadata = async (fileId: string): Promise<{ id: string; name: string; mimeType: string }> => {
+    const accessToken = await getGoogleAccessToken();
+    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,mimeType&supportsAllDrives=true`;
+    const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to get file metadata: ${response.status} ${response.statusText}`);
+    }
+    return response.json();
+};
+
 export const listFilesInFolder = async (folderId: string): Promise<Array<{name: string, id: string, mimeType: string}>> => {
     const accessToken = await getGoogleAccessToken();
 

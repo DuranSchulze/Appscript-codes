@@ -19,6 +19,9 @@ import { parseTransmittalDocument } from "../../services/geminiService";
 import {
   listFilesInFolder,
   extractFolderIdFromLink,
+  extractFileIdFromLink,
+  isFolderLink,
+  getFileMetadata,
   getFileContentAsBase64,
   listDriveFiles,
   checkDriveAccess,
@@ -448,15 +451,15 @@ const AppContent: React.FC = () => {
       },
       items: Array.isArray(transmittal.items)
         ? transmittal.items.map((item: any) => ({
-          id: item.id,
-          qty: item.qty || "",
-          noOfItems: item.noOfItems || "",
-          documentNumber: item.documentNumber || "",
-          description: item.description || "",
-          remarks: item.remarks || "",
-          fileType: item.fileType || undefined,
-          fileSource: item.fileSource || undefined,
-        }))
+            id: item.id,
+            qty: item.qty || "",
+            noOfItems: item.noOfItems || "",
+            documentNumber: item.documentNumber || "",
+            description: item.description || "",
+            remarks: item.remarks || "",
+            fileType: item.fileType || undefined,
+            fileSource: item.fileSource || undefined,
+          }))
         : [],
       sender: {
         agencyName: senderData.agencyName || "",
@@ -987,15 +990,39 @@ const AppContent: React.FC = () => {
     setIsAnalyzingText(true);
     setStatusMsg("Analyzing Input...");
     try {
-      const folderId = extractFolderIdFromLink(smartInput);
-      if (folderId) {
-        if (!isDriveReady) {
-          setStatusMsg("Drive access not available. Please sign in again.");
-          setStatusType("error");
-          setIsAnalyzingText(false);
-          return;
+      const lines = smartInput
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const folderLines: string[] = [];
+      const fileLines: string[] = [];
+      const textLines: string[] = [];
+
+      for (const line of lines) {
+        if (isFolderLink(line)) {
+          folderLines.push(line);
+        } else if (extractFileIdFromLink(line)) {
+          fileLines.push(line);
+        } else {
+          textLines.push(line);
         }
-        setStatusMsg("Listing files...");
+      }
+
+      const hasDriveLinks = folderLines.length > 0 || fileLines.length > 0;
+      if (hasDriveLinks && !isDriveReady) {
+        setStatusMsg("Drive access not available. Please sign in again.");
+        setStatusType("error");
+        setIsAnalyzingText(false);
+        return;
+      }
+
+      let totalAdded = 0;
+
+      // Process folder links
+      for (const link of folderLines) {
+        const folderId = extractFolderIdFromLink(link);
+        if (!folderId) continue;
+        setStatusMsg(`Listing files from folder...`);
         const files = await listFilesInFolder(folderId);
         addItems(
           files.map((f) => ({
@@ -1005,15 +1032,50 @@ const AppContent: React.FC = () => {
             documentNumber: "SCAN",
             description: f.name.replace(/\.[^/.]+$/, ""),
             remarks: "Via Drive Folder",
-            fileType: "gdrive",
+            fileType: "gdrive" as const,
             fileSource: `https://drive.google.com/file/d/${f.id}/view`,
           })),
         );
-        setSmartInput("");
-        setStatusMsg(`Fetched ${files.length} files.`);
-      } else {
+        totalAdded += files.length;
+      }
+
+      // Process individual file links in parallel
+      if (fileLines.length > 0) {
+        setStatusMsg(`Fetching ${fileLines.length} file(s)...`);
+        const metadataResults = await Promise.allSettled(
+          fileLines.map((link) => {
+            const fileId = extractFileIdFromLink(link)!;
+            return getFileMetadata(fileId).then((meta) => ({ ...meta, link }));
+          }),
+        );
+        const fileItems: TransmittalItem[] = [];
+        for (const result of metadataResults) {
+          if (result.status === "fulfilled") {
+            const f = result.value;
+            fileItems.push({
+              id: f.id,
+              qty: "1",
+              noOfItems: "1",
+              documentNumber: "DRIVE",
+              description: f.name.replace(/\.[^/.]+$/, ""),
+              remarks: "Via Drive Link",
+              fileType: "gdrive",
+              fileSource: `https://drive.google.com/file/d/${f.id}/view`,
+            });
+          }
+        }
+        if (fileItems.length > 0) {
+          addItems(fileItems);
+          totalAdded += fileItems.length;
+        }
+      }
+
+      // Process remaining plain text through AI
+      if (textLines.length > 0) {
+        setStatusMsg("Analyzing text...");
+        const textBlock = textLines.join("\n");
         const results = await parseTransmittalDocument(
-          smartInput,
+          textBlock,
           "text/plain",
           true,
         );
@@ -1030,9 +1092,17 @@ const AppContent: React.FC = () => {
             })),
           );
           if (results.header) mergeHeaderData(results.header);
-          setSmartInput("");
-          setStatusMsg(`Extracted ${results.items.length} items.`);
+          totalAdded += results.items.length;
         }
+      }
+
+      if (totalAdded > 0) {
+        setSmartInput("");
+        setStatusMsg(`Imported ${totalAdded} item(s).`);
+        setStatusType("info");
+      } else if (textLines.length === 0 && !hasDriveLinks) {
+        setStatusMsg("No recognizable content found.");
+        setStatusType("error");
       }
     } catch (e: any) {
       setStatusMsg("Error: " + e.message);
@@ -1350,7 +1420,7 @@ const AppContent: React.FC = () => {
                   <div className="relative group">
                     <textarea
                       className="w-full p-5 bg-slate-100/50 border border-slate-200 rounded-3xl text-xs font-medium focus:bg-white focus:ring-4 focus:ring-brand-500/5 focus:border-brand-500 outline-none transition-all placeholder-slate-300 min-h-[120px]"
-                      placeholder="Paste text, file names, or Google Drive folder links here..."
+                      placeholder="Paste text, file names, Google Drive file links, or folder links here..."
                       value={smartInput}
                       onChange={(e) => setSmartInput(e.target.value)}
                     />
