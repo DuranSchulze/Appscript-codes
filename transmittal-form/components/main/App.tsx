@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { TransmittalTemplate } from "../NewReportTemplate";
 import { FloatingAccount } from "../FloatingAccount";
 import { BulkAddModal } from "../modals/BulkAddModal";
@@ -451,15 +452,15 @@ const AppContent: React.FC = () => {
       },
       items: Array.isArray(transmittal.items)
         ? transmittal.items.map((item: any) => ({
-            id: item.id,
-            qty: item.qty || "",
-            noOfItems: item.noOfItems || "",
-            documentNumber: item.documentNumber || "",
-            description: item.description || "",
-            remarks: item.remarks || "",
-            fileType: item.fileType || undefined,
-            fileSource: item.fileSource || undefined,
-          }))
+          id: item.id,
+          qty: item.qty || "",
+          noOfItems: item.noOfItems || "",
+          documentNumber: item.documentNumber || "",
+          description: item.description || "",
+          remarks: item.remarks || "",
+          fileType: item.fileType || undefined,
+          fileSource: item.fileSource || undefined,
+        }))
         : [],
       sender: {
         agencyName: senderData.agencyName || "",
@@ -1249,11 +1250,10 @@ const AppContent: React.FC = () => {
       <div className="min-h-screen flex items-center justify-center bg-slate-100 font-sans">
         <div className="bg-white border border-slate-200 rounded-[36px] shadow-2xl w-full max-w-lg p-10 text-center">
           <h1 className="text-2xl font-black text-slate-900 font-display">
-            Sign in to continue
+            Smart Transmittal
           </h1>
           <p className="text-sm text-slate-500 mt-2">
-            Your transmittal workspace is protected. Use your Google account to
-            continue.
+            This is a private system created for the Internal Document Transmittal System. Please sign in
           </p>
           <button
             onClick={handleGoogleSignIn}
@@ -1261,6 +1261,14 @@ const AppContent: React.FC = () => {
           >
             Sign in with Google
           </button>
+          <div className="flex justify-center gap-6 mt-6">
+            <Link href="/legal/privacy-policy" target="_blank" className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-colors">
+              Privacy Policy
+            </Link>
+            <Link href="/legal/terms-of-service" target="_blank" className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-colors">
+              Terms of Service
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -2048,6 +2056,7 @@ const AppContent: React.FC = () => {
               </span>
             </Button>
           </div>
+
         </div>
       </div>
 
@@ -2135,7 +2144,7 @@ const AppContent: React.FC = () => {
                 .scrollbar-hide::-webkit-scrollbar { display: none; }
                 .ease-out-expo { transition-timing-function: cubic-bezier(0.19, 1, 0.22, 1); }
             `}</style>
-    </div>
+    </div >
   );
 };
 
