@@ -168,22 +168,7 @@ const ExpandingTextarea = ({
   );
 };
 
-const getNextTransmittalNumber = (history: HistoryItem[]) => {
-  const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const prefix = `${dateStamp}-`;
-  const stripPrefix = (value: string) =>
-    value.startsWith("TR-FP-") ? value.slice("TR-FP-".length) : value;
-  const suffixes = history
-    .map((item) => item.transmittalNumber)
-    .map(stripPrefix)
-    .filter((number) => number.startsWith(prefix))
-    .map((number) => Number(number.slice(prefix.length)))
-    .filter((value) => !Number.isNaN(value));
-  const next = suffixes.length ? Math.max(...suffixes) + 1 : 1;
-  return `${prefix}${String(next).padStart(4, "0")}`;
-};
-
-const createInitialData = (history: HistoryItem[]): AppData => ({
+const createInitialData = (): AppData => ({
   recipient: {
     to: "",
     email: "",
@@ -197,7 +182,7 @@ const createInitialData = (history: HistoryItem[]): AppData => ({
     projectNumber: "",
     engagementRef: "",
     purpose: "",
-    transmittalNumber: getNextTransmittalNumber(history),
+    transmittalNumber: "",
     department: "Admin",
     date: new Date().toISOString().split("T")[0],
     timeGenerated: new Date().toLocaleTimeString("en-US", {
@@ -275,7 +260,7 @@ const AppContent: React.FC = () => {
       return [];
     }
   });
-  const [data, setData] = useState<AppData>(() => createInitialData(history));
+  const [data, setData] = useState<AppData>(() => createInitialData());
   const [activeTransmittalId, setActiveTransmittalId] = useState<string | null>(
     null,
   );
@@ -337,7 +322,7 @@ const AppContent: React.FC = () => {
   const [selectedAgencyId, setSelectedAgencyId] = useState<string>("");
   const [isAgencyModalOpen, setIsAgencyModalOpen] = useState(false);
   const [agencyDraft, setAgencyDraft] = useState<SenderInfo>(
-    () => createInitialData([]).sender,
+    () => createInitialData().sender,
   );
 
   const getFileTimestamp = () =>
@@ -354,8 +339,42 @@ const AppContent: React.FC = () => {
     }
   }, [session]);
 
+  const fetchNextTransmittalNumber = async () => {
+    if (!apiBaseUrl) return;
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/transmittals/next-number`,
+        {
+          credentials: "include",
+        },
+      );
+      if (!response.ok) return;
+      const payload = await response.json().catch(() => ({}));
+      if (payload?.transmittalNumber) {
+        setData((prev) => {
+          if (prev.project.transmittalNumber) return prev;
+          return {
+            ...prev,
+            project: {
+              ...prev.project,
+              transmittalNumber: payload.transmittalNumber,
+            },
+          };
+        });
+      }
+    } catch (error) {
+      console.error("Failed to fetch next transmittal number", error);
+    }
+  };
+
   useEffect(() => {
     loadHistoryFromDb();
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (session?.user) {
+      fetchNextTransmittalNumber();
+    }
   }, [session?.user?.id]);
 
   const loadAgenciesFromDb = async () => {
@@ -452,15 +471,15 @@ const AppContent: React.FC = () => {
       },
       items: Array.isArray(transmittal.items)
         ? transmittal.items.map((item: any) => ({
-          id: item.id,
-          qty: item.qty || "",
-          noOfItems: item.noOfItems || "",
-          documentNumber: item.documentNumber || "",
-          description: item.description || "",
-          remarks: item.remarks || "",
-          fileType: item.fileType || undefined,
-          fileSource: item.fileSource || undefined,
-        }))
+            id: item.id,
+            qty: item.qty || "",
+            noOfItems: item.noOfItems || "",
+            documentNumber: item.documentNumber || "",
+            description: item.description || "",
+            remarks: item.remarks || "",
+            fileType: item.fileType || undefined,
+            fileSource: item.fileSource || undefined,
+          }))
         : [],
       sender: {
         agencyName: senderData.agencyName || "",
@@ -615,8 +634,9 @@ const AppContent: React.FC = () => {
         "Reset current form? This will not affect your History snapshots.",
       )
     ) {
-      setData(createInitialData(history));
+      setData(createInitialData());
       setActiveTransmittalId(null);
+      fetchNextTransmittalNumber();
       setStatusMsg("Form Reset");
       setTimeout(() => setStatusMsg(""), 3000);
     }
@@ -1253,7 +1273,8 @@ const AppContent: React.FC = () => {
             Smart Transmittal
           </h1>
           <p className="text-sm text-slate-500 mt-2">
-            This is a private system created for the Internal Document Transmittal System. Please sign in
+            This is a private system created for the Internal Document
+            Transmittal System. Please sign in
           </p>
           <button
             onClick={handleGoogleSignIn}
@@ -1262,10 +1283,18 @@ const AppContent: React.FC = () => {
             Sign in with Google
           </button>
           <div className="flex justify-center gap-6 mt-6">
-            <Link href="/legal/privacy-policy" target="_blank" className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-colors">
+            <Link
+              href="/legal/privacy-policy"
+              target="_blank"
+              className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-colors"
+            >
               Privacy Policy
             </Link>
-            <Link href="/legal/terms-of-service" target="_blank" className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-colors">
+            <Link
+              href="/legal/terms-of-service"
+              target="_blank"
+              className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-colors"
+            >
               Terms of Service
             </Link>
           </div>
@@ -2056,7 +2085,6 @@ const AppContent: React.FC = () => {
               </span>
             </Button>
           </div>
-
         </div>
       </div>
 
@@ -2144,7 +2172,7 @@ const AppContent: React.FC = () => {
                 .scrollbar-hide::-webkit-scrollbar { display: none; }
                 .ease-out-expo { transition-timing-function: cubic-bezier(0.19, 1, 0.22, 1); }
             `}</style>
-    </div >
+    </div>
   );
 };
 

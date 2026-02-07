@@ -195,6 +195,48 @@ app.get("/api/google-token", async (req, res) => {
   }
 });
 
+app.get("/api/transmittals/next-number", async (req, res) => {
+  try {
+    const session = await auth.api.getSession({
+      headers: req.headers as any,
+    });
+
+    if (!session?.user) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const TRANSMITTAL_PREFIX = "TR-FP-";
+    const now = new Date();
+    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const prefix = `${TRANSMITTAL_PREFIX}${yearMonth}-`;
+
+    const existing = await prisma.transmittal.findMany({
+      where: {
+        transmittalNumber: { startsWith: prefix },
+      },
+      select: { transmittalNumber: true },
+    });
+
+    let maxSeq = 0;
+    for (const row of existing) {
+      if (!row.transmittalNumber) continue;
+      const suffix = row.transmittalNumber.slice(prefix.length);
+      const num = Number(suffix);
+      if (!Number.isNaN(num) && num > maxSeq) {
+        maxSeq = num;
+      }
+    }
+
+    const nextSeq = maxSeq + 1;
+    const nextNumber = `${yearMonth}-${String(nextSeq).padStart(4, "0")}`;
+
+    return res.json({ transmittalNumber: nextNumber });
+  } catch (error: any) {
+    console.error("Generate next transmittal number error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 app.put("/api/transmittals/:id", async (req, res) => {
   try {
     const session = await auth.api.getSession({
@@ -211,11 +253,12 @@ app.put("/api/transmittals/:id", async (req, res) => {
       return res.status(400).json({ error: "Missing transmittal data" });
     }
 
+    const rawTransmittalNumber = String(data.project?.transmittalNumber || "").trim();
+    const dbTransmittalNumber = ensureDbTransmittalPrefix(rawTransmittalNumber);
+
     const project = {
       ...(data.project || {}),
-      transmittalNumber: ensureDbTransmittalPrefix(
-        data.project?.transmittalNumber,
-      ),
+      transmittalNumber: dbTransmittalNumber,
     };
 
     const existing = await prisma.transmittal.findFirst({
@@ -226,10 +269,26 @@ app.put("/api/transmittals/:id", async (req, res) => {
       return res.status(404).json({ error: "Transmittal not found" });
     }
 
+    if (dbTransmittalNumber) {
+      const duplicate = await prisma.transmittal.findFirst({
+        where: {
+          transmittalNumber: dbTransmittalNumber,
+          id: { not: transmittalId },
+        },
+        select: { id: true },
+      });
+      if (duplicate) {
+        return res.status(409).json({
+          error: `Transmittal number "${rawTransmittalNumber}" is already in use.`,
+        });
+      }
+    }
+
     const transmittal = await prisma.transmittal.update({
       where: { id: transmittalId },
       data: {
         notes: data.notes || "",
+        transmittalNumber: dbTransmittalNumber || null,
         handDelivery: Boolean(data.transmissionMethod?.personalDelivery),
         pickUp: Boolean(data.transmissionMethod?.pickUp),
         courier: Boolean(data.transmissionMethod?.grabLalamove),
@@ -322,17 +381,31 @@ app.post("/api/transmittals", async (req, res) => {
       return res.status(400).json({ error: "Missing transmittal data" });
     }
 
+    const rawTransmittalNumber = String(data.project?.transmittalNumber || "").trim();
+    const dbTransmittalNumber = ensureDbTransmittalPrefix(rawTransmittalNumber);
+
+    if (dbTransmittalNumber) {
+      const duplicate = await prisma.transmittal.findFirst({
+        where: { transmittalNumber: dbTransmittalNumber },
+        select: { id: true },
+      });
+      if (duplicate) {
+        return res.status(409).json({
+          error: `Transmittal number "${rawTransmittalNumber}" is already in use.`,
+        });
+      }
+    }
+
     const project = {
       ...(data.project || {}),
-      transmittalNumber: ensureDbTransmittalPrefix(
-        data.project?.transmittalNumber,
-      ),
+      transmittalNumber: dbTransmittalNumber,
     };
 
     const transmittal = await prisma.transmittal.create({
       data: {
         userId: session.user.id,
         notes: data.notes || "",
+        transmittalNumber: dbTransmittalNumber || null,
         handDelivery: Boolean(data.transmissionMethod?.personalDelivery),
         pickUp: Boolean(data.transmissionMethod?.pickUp),
         courier: Boolean(data.transmissionMethod?.grabLalamove),

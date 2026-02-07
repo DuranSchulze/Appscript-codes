@@ -88,15 +88,32 @@ export async function POST(request: Request) {
       }
     }
 
+    const rawTransmittalNumber = String(data.project?.transmittalNumber || "").trim();
+    const dbTransmittalNumber = ensureDbTransmittalPrefix(rawTransmittalNumber);
+
+    if (dbTransmittalNumber) {
+      const duplicate = await db.transmittal.findFirst({
+        where: { transmittalNumber: dbTransmittalNumber },
+        select: { id: true },
+      });
+      if (duplicate) {
+        return NextResponse.json(
+          { error: `Transmittal number "${rawTransmittalNumber}" is already in use.` },
+          { status: 409 },
+        );
+      }
+    }
+
     const project = {
       ...(data.project || {}),
-      transmittalNumber: ensureDbTransmittalPrefix(data.project?.transmittalNumber),
+      transmittalNumber: dbTransmittalNumber,
     };
 
     const transmittal = await db.transmittal.create({
       data: {
         userId: session.user.id,
         notes: data.notes || "",
+        transmittalNumber: dbTransmittalNumber || null,
         agencyId,
         handDelivery: Boolean(data.transmissionMethod?.personalDelivery),
         pickUp: Boolean(data.transmissionMethod?.pickUp),

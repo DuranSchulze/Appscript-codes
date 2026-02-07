@@ -80,7 +80,12 @@ model Transmittal {
   userId String
   notes  String
 
+  transmittalNumber String?
+
   agencyId String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt
 
   // Transmittal Methods
   handDelivery   Boolean
@@ -112,6 +117,7 @@ model Transmittal {
   notedByRole    String
   timeReleased   String
 
+  @@unique([userId, transmittalNumber])
   @@index([userId])
   @@index([agencyId])
   @@map("transmittal")

@@ -65,9 +65,12 @@ export async function PUT(
       }
     }
 
+    const rawTransmittalNumber = String(data.project?.transmittalNumber || "").trim();
+    const dbTransmittalNumber = ensureDbTransmittalPrefix(rawTransmittalNumber);
+
     const project = {
       ...(data.project || {}),
-      transmittalNumber: ensureDbTransmittalPrefix(data.project?.transmittalNumber),
+      transmittalNumber: dbTransmittalNumber,
     };
 
     const existing = await db.transmittal.findFirst({
@@ -78,10 +81,27 @@ export async function PUT(
       return NextResponse.json({ error: "Transmittal not found" }, { status: 404 });
     }
 
+    if (dbTransmittalNumber) {
+      const duplicate = await db.transmittal.findFirst({
+        where: {
+          transmittalNumber: dbTransmittalNumber,
+          id: { not: transmittalId },
+        },
+        select: { id: true },
+      });
+      if (duplicate) {
+        return NextResponse.json(
+          { error: `Transmittal number "${rawTransmittalNumber}" is already in use.` },
+          { status: 409 },
+        );
+      }
+    }
+
     const transmittal = await db.transmittal.update({
       where: { id: transmittalId },
       data: {
         notes: data.notes || "",
+        transmittalNumber: dbTransmittalNumber || null,
         agencyId,
         handDelivery: Boolean(data.transmissionMethod?.personalDelivery),
         pickUp: Boolean(data.transmissionMethod?.pickUp),
