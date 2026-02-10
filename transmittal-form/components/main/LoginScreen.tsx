@@ -16,8 +16,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onGoogleSignIn }) => {
           Smart Transmittal
         </h1>
         <p className="text-sm text-slate-500 mt-2">
-          This is a private system created for the Internal Document
-          Transmittal System. Please sign in
+          This is a private system created for the Internal Document Transmittal
+          System. Please sign in
         </p>
         <Button
           onClick={onGoogleSignIn}
@@ -25,7 +25,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onGoogleSignIn }) => {
         >
           Sign in with Google
         </Button>
-        <div className="flex justify-center gap-6 mt-6">
+        {/* <div className="flex justify-center gap-6 mt-6">
           <Link
             href="/legal/privacy-policy"
             target="_blank"
@@ -40,7 +40,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onGoogleSignIn }) => {
           >
             Terms of Service
           </Link>
-        </div>
+        </div> */}
       </div>
     </div>
   );
