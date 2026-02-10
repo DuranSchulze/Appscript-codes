@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useRef } from "react";
-import { Zap, Upload, HardDrive } from "lucide-react";
+import React from "react";
+import { Link2, Upload, HardDrive, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { AppData } from "@/types";
@@ -51,6 +52,13 @@ export const ContentTab: React.FC<ContentTabProps> = ({
     { key: "registeredMail", label: "Registered Mail" },
   ] as const;
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && smartInput.trim() && !isAnalyzingText) {
+      e.preventDefault();
+      onSmartAnalysis();
+    }
+  };
+
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <section>
@@ -65,24 +73,35 @@ export const ContentTab: React.FC<ContentTabProps> = ({
           )}
         </div>
         <div className="space-y-4">
-          <div className="relative group">
-            <Textarea
-              className="w-full p-5 bg-slate-100/50 border border-slate-200 rounded-3xl text-xs font-medium focus:bg-white focus:ring-4 focus:ring-brand-500/5 focus:border-brand-500 outline-none transition-all placeholder-slate-300 min-h-[120px]"
-              placeholder="Paste text, file names, Google Drive file links, or folder links here..."
+          <div className="relative">
+            <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+              <Link2 className="w-4 h-4" />
+            </div>
+            <Input
+              className="w-full pl-11 pr-24 py-3 bg-slate-100/50 border border-slate-200 rounded-2xl text-xs font-medium focus:bg-white focus:ring-4 focus:ring-brand-500/5 focus:border-brand-500 outline-none transition-all placeholder-slate-300"
+              placeholder="Paste Google Drive or Sheets link..."
               value={smartInput}
               onChange={(e) => onSmartInputChange(e.target.value)}
+              onKeyDown={handleKeyDown}
             />
-            <div className="absolute right-4 bottom-4 flex gap-2">
+            <div className="absolute right-2 top-1/2 -translate-y-1/2">
               <Button
                 onClick={onSmartAnalysis}
                 disabled={!smartInput.trim() || isAnalyzingText}
-                size="icon"
-                className="rounded-xl shadow-lg"
+                size="sm"
+                className="rounded-xl text-[10px] font-bold px-4"
               >
-                <Zap className={`w-4 h-4 ${isAnalyzingText ? "animate-spin" : ""}`} />
+                {isAnalyzingText ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  "Import"
+                )}
               </Button>
             </div>
           </div>
+          <p className="text-[10px] text-slate-400 ml-1">
+            Supports Google Sheets, Drive files, and folder links
+          </p>
           <div className="grid grid-cols-2 gap-3">
             <Button
               onClick={() => fileInputRef.current?.click()}

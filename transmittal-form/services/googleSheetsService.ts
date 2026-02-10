@@ -93,6 +93,33 @@ const ensureHeaders = async (
   }
 };
 
+/** Check if a URL is a Google Sheets link */
+export const isSheetUrl = (url: string): boolean => {
+  return /docs\.google\.com\/spreadsheets\/d\//.test(url);
+};
+
+/**
+ * Read all data rows from the first sheet of a Google Spreadsheet.
+ * Returns { headers, rows } where rows are string arrays.
+ */
+export const readSheetRows = async (
+  spreadsheetId: string,
+): Promise<{ headers: string[]; rows: string[][] }> => {
+  const accessToken = await getGoogleAccessToken();
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sheet1?majorDimension=ROWS`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    throw new Error(`Cannot read spreadsheet: ${response.status}`);
+  }
+  const data = await response.json();
+  const allRows: string[][] = data.values || [];
+  if (allRows.length === 0) return { headers: [], rows: [] };
+  const [headers, ...rows] = allRows;
+  return { headers, rows };
+};
+
 export interface TransmittalRowData {
   transmittalNumber: string;
   date: string;

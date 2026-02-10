@@ -26,7 +26,9 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
           </Label>
           <Input
             value={project.projectName}
-            onChange={(e) => onUpdateField("project", "projectName", e.target.value)}
+            onChange={(e) =>
+              onUpdateField("project", "projectName", e.target.value)
+            }
           />
         </div>
         <div className="space-y-1">
@@ -34,11 +36,16 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
             Transmittal ID
           </Label>
           <Input
-            className="font-mono text-[10px] bg-muted"
+            className="font-mono text-[10px]"
             value={project.transmittalNumber}
-            readOnly
-            tabIndex={-1}
+            onChange={(e) =>
+              onUpdateField("project", "transmittalNumber", e.target.value)
+            }
+            placeholder="Auto-generated (e.g. 202602-0001)"
           />
+          <p className="text-[9px] text-slate-400 ml-2">
+            Auto-generated but editable. Must be unique across all transmittals.
+          </p>
         </div>
         <div className="space-y-1">
           <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
@@ -46,7 +53,9 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
           </Label>
           <Input
             value={project.purpose}
-            onChange={(e) => onUpdateField("project", "purpose", e.target.value)}
+            onChange={(e) =>
+              onUpdateField("project", "purpose", e.target.value)
+            }
           />
         </div>
       </div>

@@ -29,6 +29,8 @@ import {
   extractSheetIdFromUrl,
   getSpreadsheetTitle,
   appendTransmittalRow,
+  isSheetUrl,
+  readSheetRows,
 } from "../../services/googleSheetsService";
 import { signIn, signOut, useSession } from "../../lib/auth-client";
 import {
@@ -46,7 +48,7 @@ import * as mammoth from "mammoth";
 import { LoadingScreen } from "./LoadingScreen";
 import { LoginScreen } from "./LoginScreen";
 import { SidebarHeader } from "./SidebarHeader";
-import { SidebarFooter } from "./SidebarFooter";
+import { SidebarMenuBar } from "./SidebarFooter";
 import { TabBar, type TabKey } from "./TabBar";
 import { ContentTab } from "./tabs/ContentTab";
 import { SenderTab } from "./tabs/SenderTab";
@@ -54,6 +56,7 @@ import { RecipientTab } from "./tabs/RecipientTab";
 import { ProjectTab } from "./tabs/ProjectTab";
 import { SignatoriesTab } from "./tabs/SignatoriesTab";
 import { HistoryTab } from "./tabs/HistoryTab";
+import { PreviewToolbar, ZOOM_STEPS } from "./PreviewToolbar";
 
 // Add type declaration
 declare global {
@@ -179,20 +182,24 @@ const AppContent: React.FC = () => {
     remarks: 150, // Increased from 100 to 150
   });
   const [isDriveReady, setIsDriveReady] = useState(false);
-  const [previewScale, setPreviewScale] = useState(1);
+  const [zoomPercent, setZoomPercent] = useState(100);
+  const [autoFitZoom, setAutoFitZoom] = useState(100);
+  const [isManualZoom, setIsManualZoom] = useState(false);
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleResize = () => {
       if (previewContainerRef.current) {
         const containerWidth = previewContainerRef.current.offsetWidth;
-        // 8.5in is roughly 816px. We add some padding buffer.
         const targetWidth = 850;
+        let fitPercent = 100;
         if (containerWidth < targetWidth) {
-          const newScale = (containerWidth - 32) / targetWidth; // 32px padding
-          setPreviewScale(Math.max(0.3, Math.min(1, newScale)));
-        } else {
-          setPreviewScale(1);
+          fitPercent = Math.round(((containerWidth - 32) / targetWidth) * 100);
+          fitPercent = Math.max(25, Math.min(100, fitPercent));
+        }
+        setAutoFitZoom(fitPercent);
+        if (!isManualZoom) {
+          setZoomPercent(fitPercent);
         }
       }
     };
@@ -200,7 +207,35 @@ const AppContent: React.FC = () => {
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [showPreview]); // Re-calculate when preview is shown
+  }, [showPreview, isManualZoom]);
+
+  const previewScale = zoomPercent / 100;
+
+  const handleZoomIn = () => {
+    setIsManualZoom(true);
+    setZoomPercent((prev) => {
+      const next = ZOOM_STEPS.find((s) => s > prev);
+      return next ?? prev;
+    });
+  };
+
+  const handleZoomOut = () => {
+    setIsManualZoom(true);
+    setZoomPercent((prev) => {
+      const next = [...ZOOM_STEPS].reverse().find((s) => s < prev);
+      return next ?? prev;
+    });
+  };
+
+  const handleZoomReset = () => {
+    setIsManualZoom(false);
+    setZoomPercent(autoFitZoom);
+  };
+
+  const handleZoomSet = (percent: number) => {
+    setIsManualZoom(true);
+    setZoomPercent(percent);
+  };
 
   const { data: session, isPending } = useSession();
   const apiBaseUrl =
@@ -991,30 +1026,13 @@ const AppContent: React.FC = () => {
   };
 
   const handleSmartAnalysis = async () => {
-    if (!smartInput.trim()) return;
+    const input = smartInput.trim();
+    if (!input) return;
     setIsAnalyzingText(true);
-    setStatusMsg("Analyzing Input...");
+    setStatusMsg("Analyzing link...");
+    setStatusType("info");
     try {
-      const lines = smartInput
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean);
-      const folderLines: string[] = [];
-      const fileLines: string[] = [];
-      const textLines: string[] = [];
-
-      for (const line of lines) {
-        if (isFolderLink(line)) {
-          folderLines.push(line);
-        } else if (extractFileIdFromLink(line)) {
-          fileLines.push(line);
-        } else {
-          textLines.push(line);
-        }
-      }
-
-      const hasDriveLinks = folderLines.length > 0 || fileLines.length > 0;
-      if (hasDriveLinks && !isDriveReady) {
+      if (!isDriveReady) {
         setStatusMsg("Drive access not available. Please sign in again.");
         setStatusType("error");
         setIsAnalyzingText(false);
@@ -1023,11 +1041,76 @@ const AppContent: React.FC = () => {
 
       let totalAdded = 0;
 
-      // Process folder links
-      for (const link of folderLines) {
-        const folderId = extractFolderIdFromLink(link);
-        if (!folderId) continue;
-        setStatusMsg(`Listing files from folder...`);
+      // Google Sheets link
+      if (isSheetUrl(input)) {
+        const sheetId = extractSheetIdFromUrl(input);
+        if (!sheetId) {
+          setStatusMsg("Invalid Google Sheets link.");
+          setStatusType("error");
+          setIsAnalyzingText(false);
+          return;
+        }
+        setStatusMsg("Reading spreadsheet...");
+        const { headers, rows } = await readSheetRows(sheetId);
+        if (rows.length === 0) {
+          setStatusMsg("Spreadsheet is empty or has no data rows.");
+          setStatusType("error");
+          setIsAnalyzingText(false);
+          return;
+        }
+
+        // Map columns by header name (case-insensitive)
+        const lowerHeaders = headers.map((h) => h.toLowerCase().trim());
+        const col = (name: string) => {
+          const idx = lowerHeaders.findIndex((h) => h.includes(name));
+          return idx >= 0 ? idx : -1;
+        };
+        const descIdx =
+          col("description") >= 0
+            ? col("description")
+            : col("name") >= 0
+              ? col("name")
+              : col("title") >= 0
+                ? col("title")
+                : 0;
+        const qtyIdx = col("qty") >= 0 ? col("qty") : col("quantity");
+        const docNumIdx =
+          col("document") >= 0
+            ? col("document")
+            : col("doc no") >= 0
+              ? col("doc no")
+              : col("number");
+        const remarksIdx = col("remark") >= 0 ? col("remark") : col("note");
+
+        const items: TransmittalItem[] = rows
+          .filter((row) => row.some((cell) => cell?.trim()))
+          .map((row, i) => ({
+            id: `sheet-${Date.now()}-${i}`,
+            qty: (qtyIdx >= 0 ? row[qtyIdx]?.trim() : "") || "1",
+            noOfItems: "1",
+            documentNumber: docNumIdx >= 0 ? row[docNumIdx]?.trim() || "" : "",
+            description: row[descIdx]?.trim() || `Row ${i + 1}`,
+            remarks:
+              (remarksIdx >= 0 ? row[remarksIdx]?.trim() : "") ||
+              "Via Google Sheet",
+            fileType: "link" as const,
+          }));
+
+        if (items.length > 0) {
+          addItems(items);
+          totalAdded += items.length;
+        }
+
+        // Drive folder link
+      } else if (isFolderLink(input)) {
+        const folderId = extractFolderIdFromLink(input);
+        if (!folderId) {
+          setStatusMsg("Invalid Drive folder link.");
+          setStatusType("error");
+          setIsAnalyzingText(false);
+          return;
+        }
+        setStatusMsg("Listing files from folder...");
         const files = await listFilesInFolder(folderId);
         addItems(
           files.map((f) => ({
@@ -1042,72 +1125,36 @@ const AppContent: React.FC = () => {
           })),
         );
         totalAdded += files.length;
-      }
 
-      // Process individual file links in parallel
-      if (fileLines.length > 0) {
-        setStatusMsg(`Fetching ${fileLines.length} file(s)...`);
-        const metadataResults = await Promise.allSettled(
-          fileLines.map((link) => {
-            const fileId = extractFileIdFromLink(link)!;
-            return getFileMetadata(fileId).then((meta) => ({ ...meta, link }));
-          }),
-        );
-        const fileItems: TransmittalItem[] = [];
-        for (const result of metadataResults) {
-          if (result.status === "fulfilled") {
-            const f = result.value;
-            fileItems.push({
-              id: f.id,
-              qty: "1",
-              noOfItems: "1",
-              documentNumber: "DRIVE",
-              description: f.name.replace(/\.[^/.]+$/, ""),
-              remarks: "Via Drive Link",
-              fileType: "gdrive",
-              fileSource: `https://drive.google.com/file/d/${f.id}/view`,
-            });
-          }
-        }
-        if (fileItems.length > 0) {
-          addItems(fileItems);
-          totalAdded += fileItems.length;
-        }
-      }
-
-      // Process remaining plain text through AI
-      if (textLines.length > 0) {
-        setStatusMsg("Analyzing text...");
-        const textBlock = textLines.join("\n");
-        const results = await parseTransmittalDocument(
-          textBlock,
-          "text/plain",
-          true,
-        );
-        if (results.items.length > 0) {
-          addItems(
-            results.items.map((res) => ({
-              id: Date.now().toString() + Math.random(),
-              qty: res.qty || "1",
-              noOfItems: "1",
-              documentNumber: res.documentNumber || "",
-              description: res.description,
-              remarks: res.remarks || "",
-              fileType: "link",
-            })),
-          );
-          if (results.header) mergeHeaderData(results.header);
-          totalAdded += results.items.length;
-        }
+        // Individual Drive file link
+      } else if (extractFileIdFromLink(input)) {
+        setStatusMsg("Fetching file info...");
+        const fileId = extractFileIdFromLink(input)!;
+        const meta = await getFileMetadata(fileId);
+        addItems([
+          {
+            id: meta.id,
+            qty: "1",
+            noOfItems: "1",
+            documentNumber: "DRIVE",
+            description: meta.name.replace(/\.[^/.]+$/, ""),
+            remarks: "Via Drive Link",
+            fileType: "gdrive",
+            fileSource: `https://drive.google.com/file/d/${meta.id}/view`,
+          },
+        ]);
+        totalAdded += 1;
+      } else {
+        setStatusMsg("Please paste a valid Google Drive or Sheets link.");
+        setStatusType("error");
+        setIsAnalyzingText(false);
+        return;
       }
 
       if (totalAdded > 0) {
         setSmartInput("");
         setStatusMsg(`Imported ${totalAdded} item(s).`);
         setStatusType("info");
-      } else if (textLines.length === 0 && !hasDriveLinks) {
-        setStatusMsg("No recognizable content found.");
-        setStatusType("error");
       }
     } catch (e: any) {
       setStatusMsg("Error: " + e.message);
@@ -1213,10 +1260,15 @@ const AppContent: React.FC = () => {
   };
 
   const handleSaveTransmittal = async () => {
-    await saveTransmittalToDb();
-    setStatusMsg("Saved to history");
-    setStatusType("info");
-    setTimeout(() => setStatusMsg(""), 3000);
+    try {
+      await saveTransmittalToDb();
+      setStatusMsg("Saved to history");
+      setStatusType("info");
+    } catch (e: any) {
+      setStatusMsg(e.message || "Failed to save transmittal");
+      setStatusType("error");
+    }
+    setTimeout(() => setStatusMsg(""), 5000);
   };
 
   const handleSendEmail = () => {
@@ -1268,10 +1320,21 @@ const AppContent: React.FC = () => {
       >
         <SidebarHeader
           isDriveReady={isDriveReady}
-          onSignOut={handleSignOut}
-          onResetWorkspace={resetForNewAnalysis}
           showPreview={showPreview}
           onTogglePreview={setShowPreview}
+        />
+
+        <SidebarMenuBar
+          onSaveTransmittal={handleSaveTransmittal}
+          onExportPdf={handlePrint}
+          onExportDocx={handleDownloadDocx}
+          onExportCsv={handleExportCSV}
+          onSendEmail={handleSendEmail}
+          onPreviewDocx={handlePreviewDocx}
+          onSignOut={handleSignOut}
+          onResetWorkspace={resetForNewAnalysis}
+          isGeneratingPdf={isGeneratingPdf}
+          isGeneratingDocx={isGeneratingDocx}
         />
 
         <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
@@ -1348,46 +1411,47 @@ const AppContent: React.FC = () => {
             />
           )}
         </div>
-
-        <SidebarFooter
-          onSaveTransmittal={handleSaveTransmittal}
-          onExportPdf={handlePrint}
-          onExportDocx={handleDownloadDocx}
-          isGeneratingPdf={isGeneratingPdf}
-          isGeneratingDocx={isGeneratingDocx}
-        />
       </div>
 
       {/* ─── Preview Panel ─── */}
       <div
         ref={previewContainerRef}
-        className={`${showPreview ? "flex" : "hidden"} lg:flex flex-1 h-full overflow-y-auto overflow-x-hidden bg-slate-200 p-4 lg:p-8 justify-start custom-scrollbar w-full absolute inset-0 lg:static z-10 flex-col items-center`}
+        className={`${showPreview ? "flex" : "hidden"} lg:flex flex-1 h-full overflow-y-auto overflow-x-hidden bg-slate-200 custom-scrollbar w-full absolute inset-0 lg:static z-10 flex-col items-center`}
       >
-        <div
-          className="transition-all duration-300 ease-out origin-top shadow-[0_40px_100px_rgba(0,0,0,0.15)] rounded-sm shrink-0"
-          style={{
-            transform: `scale(${previewScale})`,
-            width: "816px",
-            marginBottom: "200px",
-          }}
-        >
-          <div id="print-container" className="bg-white min-h-[1056px]">
-            <TransmittalTemplate
-              data={data}
-              onUpdateItem={updateItem}
-              onRemoveItem={removeItem}
-              onMoveItem={moveItem}
-              onReorderItems={handleReorderItems}
-              onAddItem={handleManualAdd}
-              onBulkAdd={() => setIsBulkModalOpen(true)}
-              onUpdateSignatory={handleUpdateSignatory}
-              onUpdateReceivedBy={handleUpdateReceivedBy}
-              onUpdateFooter={handleUpdateFooter}
-              onUpdateNotes={handleUpdateNotes}
-              isGeneratingPdf={isGeneratingPdf}
-              columnWidths={columnWidths}
-              onColumnResize={handleColumnResize}
-            />
+        <PreviewToolbar
+          zoomPercent={zoomPercent}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onZoomReset={handleZoomReset}
+          onZoomSet={handleZoomSet}
+        />
+        <div className="flex-1 overflow-y-auto overflow-x-hidden w-full flex flex-col items-center p-4 lg:p-8 pt-0">
+          <div
+            className="transition-all duration-300 ease-out origin-top shadow-[0_40px_100px_rgba(0,0,0,0.15)] rounded-sm shrink-0"
+            style={{
+              transform: `scale(${previewScale})`,
+              width: "816px",
+              marginBottom: "200px",
+            }}
+          >
+            <div id="print-container" className="bg-white min-h-[1056px]">
+              <TransmittalTemplate
+                data={data}
+                onUpdateItem={updateItem}
+                onRemoveItem={removeItem}
+                onMoveItem={moveItem}
+                onReorderItems={handleReorderItems}
+                onAddItem={handleManualAdd}
+                onBulkAdd={() => setIsBulkModalOpen(true)}
+                onUpdateSignatory={handleUpdateSignatory}
+                onUpdateReceivedBy={handleUpdateReceivedBy}
+                onUpdateFooter={handleUpdateFooter}
+                onUpdateNotes={handleUpdateNotes}
+                isGeneratingPdf={isGeneratingPdf}
+                columnWidths={columnWidths}
+                onColumnResize={handleColumnResize}
+              />
+            </div>
           </div>
         </div>
       </div>
