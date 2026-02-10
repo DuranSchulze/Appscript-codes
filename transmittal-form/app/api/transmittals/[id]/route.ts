@@ -27,6 +27,39 @@ const mapTransmittalForApi = (transmittal: any) => {
   };
 };
 
+export async function DELETE(
+  request: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const session = await auth.api.getSession({
+      headers: request.headers as any,
+    });
+
+    if (!session?.user) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    const { id } = await ctx.params;
+
+    const transmittal = await db.transmittal.findFirst({
+      where: { id, userId: session.user.id },
+      select: { id: true },
+    });
+
+    if (!transmittal) {
+      return NextResponse.json({ error: "Transmittal not found" }, { status: 404 });
+    }
+
+    await db.transmittal.delete({ where: { id } });
+
+    return NextResponse.json({ ok: true });
+  } catch (error: any) {
+    console.error("Delete transmittal error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
 export async function PUT(
   request: NextRequest,
   ctx: { params: Promise<{ id: string }> },

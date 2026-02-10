@@ -1,9 +1,23 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { FileText, Trash2, Loader2, FolderOpen } from "lucide-react";
+import {
+  FileText,
+  Trash2,
+  Loader2,
+  FolderOpen,
+  CalendarDays,
+  X,
+} from "lucide-react";
+import { format, parse } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 export interface TransmittalSummary {
   id: string;
@@ -32,12 +46,15 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
   const [transmittals, setTransmittals] = useState<TransmittalSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [dateFilter, setDateFilter] = useState<Date | undefined>(undefined);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       fetchTransmittals();
       setSearch("");
+      setDateFilter(undefined);
     }
   }, [isOpen]);
 
@@ -52,7 +69,9 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
       const list: TransmittalSummary[] = Array.isArray(payload.transmittals)
         ? payload.transmittals.map((t: any) => {
             const project = t.project || {};
-            const recipient = Array.isArray(t.recipients) ? t.recipients[0] : null;
+            const recipient = Array.isArray(t.recipients)
+              ? t.recipients[0]
+              : null;
             return {
               id: t.id,
               transmittalNumber: project.transmittalNumber || "",
@@ -86,15 +105,20 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
 
   if (!isOpen) return null;
 
-  const filtered = transmittals.filter((t) => {
-    const q = search.toLowerCase();
-    return (
-      !q ||
-      t.transmittalNumber.toLowerCase().includes(q) ||
-      t.projectName.toLowerCase().includes(q) ||
-      t.recipientName.toLowerCase().includes(q)
-    );
-  });
+  const filtered = transmittals
+    .filter((t) => {
+      const q = search.toLowerCase();
+      const matchesSearch =
+        !q ||
+        t.transmittalNumber.toLowerCase().includes(q) ||
+        t.projectName.toLowerCase().includes(q) ||
+        t.recipientName.toLowerCase().includes(q) ||
+        t.date.includes(q);
+      const dateFilterStr = dateFilter ? format(dateFilter, "yyyy-MM-dd") : "";
+      const matchesDate = !dateFilterStr || t.date === dateFilterStr;
+      return matchesSearch && matchesDate;
+    })
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
@@ -106,7 +130,8 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
                 Open Transmittal
               </h3>
               <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-bold">
-                {transmittals.length} saved transmittal{transmittals.length !== 1 ? "s" : ""}
+                {transmittals.length} saved transmittal
+                {transmittals.length !== 1 ? "s" : ""}
               </p>
             </div>
             <Button
@@ -118,13 +143,51 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
               ✕
             </Button>
           </div>
-          <Input
-            placeholder="Search by ID, project, or recipient..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            autoFocus
-            className="rounded-xl"
-          />
+          <div className="flex gap-2">
+            <Input
+              placeholder="Search by ID, project, or recipient..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoFocus
+              className="rounded-xl flex-1"
+            />
+            <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={`rounded-xl w-[160px] justify-start text-left text-xs font-normal gap-2 ${
+                    !dateFilter ? "text-muted-foreground" : ""
+                  }`}
+                >
+                  <CalendarDays className="w-3.5 h-3.5" />
+                  {dateFilter
+                    ? format(dateFilter, "MMM dd, yyyy")
+                    : "Filter by date"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-auto">
+                <Calendar
+                  mode="single"
+                  selected={dateFilter}
+                  onSelect={(day) => {
+                    setDateFilter(day);
+                    setIsCalendarOpen(false);
+                  }}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+            {dateFilter && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-xl h-9 w-9 shrink-0"
+                onClick={() => setDateFilter(undefined)}
+              >
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -137,7 +200,9 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
             <div className="flex flex-col items-center justify-center py-12 text-slate-400">
               <FolderOpen className="w-8 h-8 mb-2" />
               <p className="text-sm font-medium">
-                {search ? "No matching transmittals" : "No saved transmittals yet"}
+                {search
+                  ? "No matching transmittals"
+                  : "No saved transmittals yet"}
               </p>
             </div>
           ) : (
@@ -158,15 +223,14 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
                     <span className="font-mono text-[11px] font-bold text-slate-800">
                       {t.transmittalNumber || "—"}
                     </span>
-                    <span className="text-[10px] text-slate-400">
-                      {t.date}
-                    </span>
+                    <span className="text-[10px] text-slate-400">{t.date}</span>
                   </div>
                   <p className="text-xs text-slate-600 truncate">
                     {t.projectName}
                   </p>
                   <p className="text-[10px] text-slate-400 truncate">
-                    {t.recipientName || "No recipient"} · {t.itemCount} item{t.itemCount !== 1 ? "s" : ""}
+                    {t.recipientName || "No recipient"} · {t.itemCount} item
+                    {t.itemCount !== 1 ? "s" : ""}
                   </p>
                 </div>
                 <button
