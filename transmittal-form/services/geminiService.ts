@@ -45,11 +45,16 @@ const DOCUMENT_CONTROLLER_PROMPT = `
   1. **Header Identification**: Locate the primary recipient or entity the document is addressed to. Identify the requesting organization or client company.
   2. **Project Context**: Look for project titles, engagement references, or case numbers.
   3. **Itemized List**: Identify all specific documents or files mentioned. For each, find a unique identifier (Reference No) and a descriptive title.
+  4. **Document # / Ref # Priority**: Prefer explicit identifiers in this order when available: Document No, Reference No, Control No, OR No (Official Receipt No), Invoice No, Receipt No, Title No, eCAR No, Tax Declaration No, Certificate No, and serial/control identifiers.
+  5. **Remarks Priority**: If the document indicates copy status, include it in remarks (e.g., Original, Certified True Copy, Photocopy, Scanned Copy).
 
   FORMATTING RULES:
   - If a specific field is missing, leave it as null or an empty string.
   - For 'Qty', defaults to '1' unless a specific count is listed.
   - Be precise with names and ID numbers.
+  - 'documentNumber' must contain the strongest explicit identifier found in the document content, not a generic label.
+  - Keep punctuation and alphanumeric format of identifiers (e.g., OR-12345, eCAR-2024-0012).
+  - Put copy-status notes in 'remarks' when present.
   
   Output the result strictly in the provided JSON schema format.
 `;

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { Pencil, Eye } from "lucide-react";
+import { Pencil, Eye, Loader2 } from "lucide-react";
 import { TransmittalTemplate } from "../NewReportTemplate";
 import { FloatingAccount } from "../FloatingAccount";
 import { BulkAddModal } from "../modals/BulkAddModal";
@@ -15,6 +15,7 @@ import {
   extractFileIdFromLink,
   isFolderLink,
   getFileMetadata,
+  getFileContentAsBase64,
   listDriveFiles,
   checkDriveAccess,
   clearGoogleToken,
@@ -145,6 +146,24 @@ const stripFileExtension = (fileName: string): string =>
   fileName.replace(/\.[^/.]+$/, "").trim();
 
 const DRIVE_IMPORT_REMARK = "Imported from Google Drive";
+const DRIVE_ANALYZABLE_EXTENSION_PATTERN =
+  /\.(pdf|png|jpe?g|webp|gif|bmp|tiff?)$/i;
+
+type DriveFileMeta = {
+  id: string;
+  name: string;
+  mimeType: string;
+};
+
+const toDriveFileSource = (fileId: string): string =>
+  `https://drive.google.com/file/d/${fileId}/view`;
+
+const isDriveFileAnalyzable = (file: DriveFileMeta): boolean => {
+  const mimeType = String(file.mimeType || "").toLowerCase();
+  if (mimeType === "application/pdf") return true;
+  if (mimeType.startsWith("image/")) return true;
+  return DRIVE_ANALYZABLE_EXTENSION_PATTERN.test(file.name || "");
+};
 
 const deriveDocumentNumberFromFileName = (fileName: string): string => {
   const baseName = stripFileExtension(fileName);
@@ -271,6 +290,46 @@ const parseTransmittalDocument = async (
   return payload as ParsedDocumentResponse;
 };
 
+const resolveSessionErrorNotice = (error: unknown): string | undefined => {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const typedError = error as {
+    status?: number;
+    statusText?: string;
+    message?: string;
+    error?: { message?: string; code?: string } | string;
+  };
+
+  const nestedError =
+    typeof typedError.error === "string"
+      ? typedError.error
+      : `${typedError.error?.message || ""} ${typedError.error?.code || ""}`.trim();
+
+  const details = [typedError.message, typedError.statusText, nestedError]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  const status = Number(typedError.status || 0);
+  const likelyConnectivityIssue =
+    status >= 500 ||
+    /unable to connect|network|dns|accelerate|failed to fetch|timeout|please_restart_the_process|internal_server_error/.test(
+      details,
+    );
+
+  if (likelyConnectivityIssue) {
+    return "Session check failed due to a temporary connection issue (internet, DNS, or server). Please check your connection and sign in again.";
+  }
+
+  if (status === 401 || status === 403) {
+    return "Your session has expired. Please sign in again.";
+  }
+
+  return "We could not restore your session. Please sign in again.";
+};
+
 const AppContent: React.FC = () => {
   const [smartInput, setSmartInput] = useState("");
   const [isAnalyzingText, setIsAnalyzingText] = useState(false);
@@ -282,15 +341,16 @@ const AppContent: React.FC = () => {
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [docxPreviewHtml, setDocxPreviewHtml] = useState("");
   const [isDriveModalOpen, setIsDriveModalOpen] = useState(false);
-  const [driveFiles, setDriveFiles] = useState<
-    Array<{ id: string; name: string; mimeType: string }>
-  >([]);
+  const [driveFiles, setDriveFiles] = useState<DriveFileMeta[]>([]);
   const [driveSearch, setDriveSearch] = useState("");
   const [driveSelected, setDriveSelected] = useState<Record<string, boolean>>(
     {},
   );
   const [driveError, setDriveError] = useState("");
   const [isDriveLoading, setIsDriveLoading] = useState(false);
+  const [isBulkImporting, setIsBulkImporting] = useState(false);
+  const [isDriveSelectionImporting, setIsDriveSelectionImporting] =
+    useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("content");
   const [isTransmittalListOpen, setIsTransmittalListOpen] = useState(false);
   const [isFileUploadOpen, setIsFileUploadOpen] = useState(false);
@@ -369,10 +429,11 @@ const AppContent: React.FC = () => {
     setZoomPercent(percent);
   };
 
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, error: sessionError } = useSession();
   const apiBaseUrl =
     process.env.NEXT_PUBLIC_BETTER_AUTH_URL ||
     (typeof window !== "undefined" ? window.location.origin : "");
+  const sessionErrorNotice = resolveSessionErrorNotice(sessionError);
 
   const handleGoogleSignIn = async () => {
     await signIn.social({
@@ -724,24 +785,116 @@ const AppContent: React.FC = () => {
       ...item,
       noOfItems: (index + 1).toString(),
     }));
-  const toDriveItem = (file: {
-    id: string;
-    name: string;
-  }): TransmittalItem => ({
+  const toDriveItem = (
+    file: Pick<DriveFileMeta, "id" | "name">,
+    remarks: string = DRIVE_IMPORT_REMARK,
+  ): TransmittalItem => ({
     id: file.id,
     qty: "1",
     noOfItems: "1",
     documentNumber: createDriveDocumentNumber(file),
     description: stripFileExtension(file.name),
-    remarks: DRIVE_IMPORT_REMARK,
+    remarks,
     fileType: "gdrive",
-    fileSource: `https://drive.google.com/file/d/${file.id}/view`,
+    fileSource: toDriveFileSource(file.id),
   });
   const addItems = (newItems: TransmittalItem[]) => {
     setData((prev) => ({
       ...prev,
       items: reindexItems([...prev.items, ...newItems]),
     }));
+  };
+
+  const mapAnalyzedDriveItems = (
+    file: DriveFileMeta,
+    parsedItems: ParsedDocumentResponse["items"],
+    forceDefaultRemarks = false,
+  ): TransmittalItem[] => {
+    const fallbackDescription = stripFileExtension(file.name) || file.name;
+    return parsedItems.map((res, index) => {
+      const resolvedDocumentNumber = resolveDocumentNumber(
+        res.documentNumber || "",
+        file.name || res.description || "",
+      );
+      return {
+        id: `${file.id}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        qty: String(res.qty || "1").trim() || "1",
+        noOfItems: "1",
+        documentNumber:
+          resolvedDocumentNumber || createDriveDocumentNumber(file),
+        description: (
+          res.description ||
+          fallbackDescription ||
+          `File ${index + 1}`
+        ).trim(),
+        remarks: forceDefaultRemarks
+          ? DRIVE_IMPORT_REMARK
+          : (res.remarks || DRIVE_IMPORT_REMARK).trim() || DRIVE_IMPORT_REMARK,
+        fileType: "gdrive",
+        fileSource: toDriveFileSource(file.id),
+      };
+    });
+  };
+
+  const analyzeDriveFileForItems = async (
+    file: DriveFileMeta,
+  ): Promise<{ items: TransmittalItem[]; usedFallback: boolean }> => {
+    if (!isDriveFileAnalyzable(file)) {
+      return { items: [toDriveItem(file)], usedFallback: true };
+    }
+
+    try {
+      const { base64, mimeType } = await getFileContentAsBase64(file.id);
+      const result = await parseTransmittalDocument(
+        base64,
+        mimeType || file.mimeType || "application/pdf",
+        false,
+        file.name,
+      );
+
+      const parsedItems = Array.isArray(result.items) ? result.items : [];
+      if (parsedItems.length === 0) {
+        return { items: [toDriveItem(file)], usedFallback: true };
+      }
+
+      const usedFallback = Boolean(result.error);
+      return {
+        items: mapAnalyzedDriveItems(file, parsedItems, usedFallback),
+        usedFallback,
+      };
+    } catch {
+      return { items: [toDriveItem(file)], usedFallback: true };
+    }
+  };
+
+  const importDriveFilesWithAi = async (
+    files: DriveFileMeta[],
+    progressLabel: string,
+  ): Promise<{ addedCount: number; fallbackCount: number }> => {
+    if (files.length === 0) {
+      return { addedCount: 0, fallbackCount: 0 };
+    }
+
+    const importedItems: TransmittalItem[] = [];
+    let fallbackCount = 0;
+
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      setStatusMsg(
+        `${progressLabel}: analyzing file ${index + 1}/${files.length} (${file.name})...`,
+      );
+      setStatusType("info");
+
+      const { items, usedFallback } = await analyzeDriveFileForItems(file);
+      importedItems.push(...items);
+      if (usedFallback) fallbackCount += 1;
+    }
+
+    if (importedItems.length > 0) {
+      addItems(importedItems);
+    }
+
+    return { addedCount: importedItems.length, fallbackCount };
   };
 
   const mergeHeaderData = (header: any) => {
@@ -796,18 +949,36 @@ const AppContent: React.FC = () => {
     }
 
     try {
+      setIsBulkImporting(true);
       setStatusMsg("Listing Drive files...");
       setStatusType("info");
       const files = await listFilesInFolder(folderId);
-      addItems(files.map((file) => toDriveItem(file)));
-      setStatusMsg(`Fetched ${files.length} files from Drive.`);
+      if (files.length === 0) {
+        setStatusMsg("No files found in the selected Drive folder.");
+        setStatusType("info");
+        setTimeout(() => setStatusMsg(""), 5000);
+        return;
+      }
+
+      const { addedCount, fallbackCount } = await importDriveFilesWithAi(
+        files,
+        "Drive bulk import",
+      );
+
+      setStatusMsg(
+        fallbackCount > 0
+          ? `Imported ${addedCount} item(s) from ${files.length} file(s). Filename fallback was used for ${fallbackCount} file(s).`
+          : `Imported ${addedCount} item(s) from ${files.length} file(s) using AI extraction.`,
+      );
       setStatusType("info");
-      setTimeout(() => setStatusMsg(""), 3000);
+      setTimeout(() => setStatusMsg(""), 5000);
     } catch (e: any) {
       setStatusMsg("Error: " + e.message);
       setStatusType("error");
       setTimeout(() => setStatusMsg(""), 5000);
       throw e;
+    } finally {
+      setIsBulkImporting(false);
     }
   };
 
@@ -1085,14 +1256,31 @@ const AppContent: React.FC = () => {
     setDriveSelected(nextSelected);
   };
 
-  const handleDriveAddSelected = () => {
+  const handleDriveAddSelected = async () => {
     const selectedFiles = driveFiles.filter((file) => driveSelected[file.id]);
     if (selectedFiles.length === 0) return;
-    addItems(selectedFiles.map((file) => toDriveItem(file)));
-    setStatusMsg(`Added ${selectedFiles.length} Drive files.`);
-    setStatusType("info");
-    setTimeout(() => setStatusMsg(""), 3000);
-    setIsDriveModalOpen(false);
+
+    setIsDriveSelectionImporting(true);
+    try {
+      const { addedCount, fallbackCount } = await importDriveFilesWithAi(
+        selectedFiles,
+        "Drive selection",
+      );
+
+      setStatusMsg(
+        fallbackCount > 0
+          ? `Added ${addedCount} item(s) from ${selectedFiles.length} selected file(s). Filename fallback was used for ${fallbackCount} file(s).`
+          : `Added ${addedCount} item(s) from ${selectedFiles.length} selected file(s) using AI extraction.`,
+      );
+      setStatusType("info");
+      setIsDriveModalOpen(false);
+    } catch (e: any) {
+      setStatusMsg("Error: " + (e?.message || "Failed to import Drive files."));
+      setStatusType("error");
+    } finally {
+      setIsDriveSelectionImporting(false);
+      setTimeout(() => setStatusMsg(""), 5000);
+    }
   };
 
   const handleSmartAnalysis = async () => {
@@ -1110,6 +1298,7 @@ const AppContent: React.FC = () => {
       }
 
       let totalAdded = 0;
+      let fallbackCount = 0;
 
       // Google Sheets link
       if (isSheetUrl(input)) {
@@ -1182,16 +1371,24 @@ const AppContent: React.FC = () => {
         }
         setStatusMsg("Listing files from folder...");
         const files = await listFilesInFolder(folderId);
-        addItems(files.map((file) => toDriveItem(file)));
-        totalAdded += files.length;
+        const driveImport = await importDriveFilesWithAi(
+          files,
+          "Drive folder import",
+        );
+        totalAdded += driveImport.addedCount;
+        fallbackCount += driveImport.fallbackCount;
 
         // Individual Drive file link
       } else if (extractFileIdFromLink(input)) {
         setStatusMsg("Fetching file info...");
         const fileId = extractFileIdFromLink(input)!;
         const meta = await getFileMetadata(fileId);
-        addItems([toDriveItem(meta)]);
-        totalAdded += 1;
+        const driveImport = await importDriveFilesWithAi(
+          [meta],
+          "Drive file import",
+        );
+        totalAdded += driveImport.addedCount;
+        fallbackCount += driveImport.fallbackCount;
       } else {
         setStatusMsg("Please paste a valid Google Drive or Sheets link.");
         setStatusType("error");
@@ -1201,7 +1398,11 @@ const AppContent: React.FC = () => {
 
       if (totalAdded > 0) {
         setSmartInput("");
-        setStatusMsg(`Imported ${totalAdded} item(s).`);
+        setStatusMsg(
+          fallbackCount > 0
+            ? `Imported ${totalAdded} item(s). Filename fallback was used for ${fallbackCount} file(s).`
+            : `Imported ${totalAdded} item(s) using AI extraction.`,
+        );
         setStatusType("info");
       }
     } catch (e: any) {
@@ -1395,16 +1596,50 @@ const AppContent: React.FC = () => {
     );
   };
 
+  const isDocumentProcessing =
+    isParsing || isBulkImporting || isDriveSelectionImporting;
+
+  const documentProcessingStatus = isParsing
+    ? parseProgress.total > 0
+      ? `Parsing ${parseProgress.current}/${parseProgress.total} file(s)...`
+      : "Processing uploaded files..."
+    : statusMsg ||
+      (isBulkImporting
+        ? "Bulk importing files from Google Drive..."
+        : "Importing selected files from Google Drive...");
+
   if (isPending) {
     return <LoadingScreen />;
   }
 
   if (!session?.user) {
-    return <LoginScreen onGoogleSignIn={handleGoogleSignIn} />;
+    return (
+      <LoginScreen
+        onGoogleSignIn={handleGoogleSignIn}
+        authNotice={sessionErrorNotice}
+      />
+    );
   }
 
   return (
     <div className="flex flex-col lg:flex-row h-screen bg-slate-100 overflow-hidden font-sans selection:bg-brand-500/20 relative">
+      {isDocumentProcessing ? (
+        <div className="pointer-events-none fixed left-1/2 top-5 z-[130] w-[min(92vw,560px)] -translate-x-1/2">
+          <div className="rounded-2xl border border-brand-200 bg-white/95 px-4 py-3 shadow-2xl backdrop-blur">
+            <div className="flex items-start gap-3">
+              <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-brand-600" />
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-widest text-brand-700">
+                  Processing files
+                </p>
+                <p className="mt-1 text-xs text-slate-600 break-words">
+                  {documentProcessingStatus}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {/* Mobile Toggle Button */}
       <div className="lg:hidden absolute bottom-6 right-6 z-50 flex gap-2">
         <button
@@ -1455,6 +1690,7 @@ const AppContent: React.FC = () => {
               onSmartAnalysis={handleSmartAnalysis}
               isParsing={isParsing}
               parseProgress={parseProgress}
+              isDocumentProcessing={isDocumentProcessing}
               onOpenUploadModal={() => setIsFileUploadOpen(true)}
               isDriveReady={isDriveReady}
               onOpenDriveModal={handleOpenDriveModal}
@@ -1515,14 +1751,20 @@ const AppContent: React.FC = () => {
         />
         <div className="flex-1 overflow-y-auto overflow-x-hidden w-full flex flex-col items-center p-4 lg:p-8 pt-0">
           <div
-            className="transition-all duration-300 ease-out origin-top shadow-[0_40px_100px_rgba(0,0,0,0.15)] rounded-sm shrink-0"
+            className={`transition-all duration-300 ease-out origin-top shadow-[0_40px_100px_rgba(0,0,0,0.15)] rounded-sm shrink-0 ${
+              isDocumentProcessing ? "opacity-60" : "opacity-100"
+            }`}
             style={{
               transform: `scale(${previewScale})`,
               width: "816px",
               marginBottom: "200px",
             }}
           >
-            <div id="print-container" className="bg-white min-h-[1056px]">
+            <div
+              id="print-container"
+              className="bg-white min-h-[1056px]"
+              aria-busy={isDocumentProcessing}
+            >
               <TransmittalTemplate
                 data={data}
                 onUpdateItem={updateItem}
@@ -1588,6 +1830,8 @@ const AppContent: React.FC = () => {
         onToggle={handleDriveToggle}
         onToggleAll={handleDriveToggleAll}
         onAddSelected={handleDriveAddSelected}
+        isImporting={isDriveSelectionImporting}
+        processingMessage={statusMsg}
       />
       <ExportChoiceModal
         isOpen={exportChoiceOpen}

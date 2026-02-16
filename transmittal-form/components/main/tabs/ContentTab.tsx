@@ -15,6 +15,7 @@ interface ContentTabProps {
   onSmartAnalysis: () => void;
   isParsing: boolean;
   parseProgress: { current: number; total: number };
+  isDocumentProcessing: boolean;
   onOpenUploadModal: () => void;
   isDriveReady: boolean;
   onOpenDriveModal: () => void;
@@ -33,6 +34,7 @@ export const ContentTab: React.FC<ContentTabProps> = ({
   onSmartAnalysis,
   isParsing,
   parseProgress,
+  isDocumentProcessing,
   onOpenUploadModal,
   isDriveReady,
   onOpenDriveModal,
@@ -103,20 +105,29 @@ export const ContentTab: React.FC<ContentTabProps> = ({
           <div className="grid grid-cols-2 gap-3">
             <Button
               onClick={onOpenUploadModal}
+              disabled={isDocumentProcessing}
               variant="outline"
               className="flex items-center justify-center gap-2 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-sm"
             >
-              <Upload className="w-4 h-4 text-slate-400" />
-              Upload Files
+              {isDocumentProcessing ? (
+                <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4 text-slate-400" />
+              )}
+              {isDocumentProcessing ? "Processing Files" : "Upload Files"}
             </Button>
             <Button
               onClick={onOpenDriveModal}
-              disabled={!isDriveReady}
+              disabled={!isDriveReady || isDocumentProcessing}
               variant="outline"
               className="flex items-center justify-center gap-2 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-sm"
             >
-              <HardDrive className="w-4 h-4 text-slate-400" />
-              Browse Drive
+              {isDocumentProcessing ? (
+                <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
+              ) : (
+                <HardDrive className="w-4 h-4 text-slate-400" />
+              )}
+              {isDocumentProcessing ? "Working..." : "Browse Drive"}
             </Button>
           </div>
           {statusMsg && (

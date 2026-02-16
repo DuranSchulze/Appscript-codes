@@ -54,7 +54,7 @@ export const SenderTab: React.FC<SenderTabProps> = ({
             Saved Agencies
           </Label>
           <Select
-            value={selectedAgencyId || undefined}
+            value={selectedAgencyId}
             onValueChange={(val) => onSelectAgency(val as string)}
           >
             <SelectTrigger className="w-full">
@@ -121,7 +121,9 @@ export const SenderTab: React.FC<SenderTabProps> = ({
           </Label>
           <Input
             value={sender.agencyName}
-            onChange={(e) => onUpdateField("sender", "agencyName", e.target.value)}
+            onChange={(e) =>
+              onUpdateField("sender", "agencyName", e.target.value)
+            }
           />
         </div>
         <div className="space-y-1">
@@ -140,7 +142,9 @@ export const SenderTab: React.FC<SenderTabProps> = ({
             </Label>
             <Input
               value={sender.telephone}
-              onChange={(e) => onUpdateField("sender", "telephone", e.target.value)}
+              onChange={(e) =>
+                onUpdateField("sender", "telephone", e.target.value)
+              }
             />
           </div>
           <div className="space-y-1">
@@ -149,7 +153,9 @@ export const SenderTab: React.FC<SenderTabProps> = ({
             </Label>
             <Input
               value={sender.mobile}
-              onChange={(e) => onUpdateField("sender", "mobile", e.target.value)}
+              onChange={(e) =>
+                onUpdateField("sender", "mobile", e.target.value)
+              }
             />
           </div>
         </div>

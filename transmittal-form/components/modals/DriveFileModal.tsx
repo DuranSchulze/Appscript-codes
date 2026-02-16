@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,8 @@ interface DriveFileModalProps {
   onToggle: (id: string) => void;
   onToggleAll: () => void;
   onAddSelected: () => void;
+  isImporting?: boolean;
+  processingMessage?: string;
 }
 
 export const DriveFileModal: React.FC<DriveFileModalProps> = ({
@@ -35,6 +38,8 @@ export const DriveFileModal: React.FC<DriveFileModalProps> = ({
   onToggle,
   onToggleAll,
   onAddSelected,
+  isImporting = false,
+  processingMessage = "",
 }) => {
   if (!isOpen) return null;
   const selectedCount = Object.values(selectedIds).filter(Boolean).length;
@@ -55,6 +60,7 @@ export const DriveFileModal: React.FC<DriveFileModalProps> = ({
             variant="ghost"
             size="icon"
             className="rounded-full"
+            disabled={isImporting}
           >
             ✕
           </Button>
@@ -66,9 +72,19 @@ export const DriveFileModal: React.FC<DriveFileModalProps> = ({
                 value={searchValue}
                 onChange={(e) => onSearchChange(e.target.value)}
                 placeholder="Search by file name"
+                disabled={isImporting}
               />
             </div>
-            <Button onClick={onSearch}>Search</Button>
+            <Button onClick={onSearch} disabled={isLoading || isImporting}>
+              {isImporting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Working...
+                </>
+              ) : (
+                "Search"
+              )}
+            </Button>
           </div>
 
           <div className="border border-slate-100 rounded-[24px] overflow-hidden">
@@ -78,7 +94,7 @@ export const DriveFileModal: React.FC<DriveFileModalProps> = ({
                   type="checkbox"
                   checked={isAllSelected}
                   onChange={onToggleAll}
-                  disabled={files.length === 0}
+                  disabled={files.length === 0 || isImporting}
                   className="w-4 h-4 rounded-md text-brand-600 border-slate-300"
                 />
                 Select All
@@ -104,6 +120,7 @@ export const DriveFileModal: React.FC<DriveFileModalProps> = ({
                         type="checkbox"
                         checked={!!selectedIds[file.id]}
                         onChange={() => onToggle(file.id)}
+                        disabled={isImporting}
                         className="w-4 h-4 rounded-md text-brand-600 border-slate-300"
                       />
                       <div className="flex-1">
@@ -127,20 +144,35 @@ export const DriveFileModal: React.FC<DriveFileModalProps> = ({
             </div>
           )}
 
+          {isImporting ? (
+            <div className="p-3 rounded-2xl text-[10px] font-bold border bg-brand-50 border-brand-100 text-brand-700 flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              {processingMessage || "Importing selected Drive files..."}
+            </div>
+          ) : null}
+
           <div className="flex flex-col sm:flex-row gap-3">
             <Button
               onClick={onClose}
               variant="ghost"
               className="flex-1 py-3 rounded-2xl font-bold"
+              disabled={isImporting}
             >
               Cancel
             </Button>
             <Button
               onClick={onAddSelected}
-              disabled={selectedCount === 0}
+              disabled={selectedCount === 0 || isImporting}
               className="flex-1 py-3 rounded-2xl bg-brand-600 text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-lg hover:bg-brand-500 disabled:opacity-50"
             >
-              Add Selected ({selectedCount})
+              {isImporting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                  Importing...
+                </>
+              ) : (
+                `Add Selected (${selectedCount})`
+              )}
             </Button>
           </div>
         </div>

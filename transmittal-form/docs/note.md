@@ -17,12 +17,7 @@
 
 NOTES ni BOSS
 
+- [] btw, meron sana ako ipa fix sa iyo - ung Notary automation na ginawa ko. I think, same issue with the PCF ng accounting. Since, nag palit sa gemini ng model, need update. I will provide you link later. And meron pang isa - summary of emails (hindi na na cacapture ung accurate title ng document. You can ask Belle from receipt - regarding the Notary app, and the Summary of emails. BOth app needs to have an updated Gemini model.
+
 - [] For Doc/Ref #, walang format. But it should be extracted from the document number itself, eg. Official Receipts issued by the BIR - duon makukuha ung ref #. As for the remarks, meron din nilalagay ang team na note kung original, certified or photocopy ba un for transmitted na document nila
-
-btw, meron sana ako ipa fix sa iyo - ung Notary automation na ginawa ko. I think, same issue with the PCF ng accounting. Since, nag palit sa gemini ng model, need update. I will provide you link later.
-
-And meron pang isa - summary of emails (hindi na na cacapture ung accurate title ng document)
-
-You can ask Belle from receipt - regarding the Notary app, and the Summary of emails.
-
-BOth app needs to have an updated Gemini model.
+- [] I needed something to add in the system. you see we import files to the transmittal items we use AI in here for each you see we need the tagging of the documents # / reference # based on the file content of the file we can see anything related like receipt or any documents na may marecognize na number (eg title number, invoice/receipt number, eCAR number) in each documents. I want that each process will undergo with ai searching data like this and use that as a reference or document number.
