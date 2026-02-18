@@ -59,7 +59,7 @@ const DOCUMENT_CONTROLLER_PROMPT = `
   Output the result strictly in the provided JSON schema format.
 `;
 
-interface ParseResult {
+export interface ParseResult {
     items: Array<{ description: string, documentNumber: string, qty: string, remarks: string, documentType?: string }>;
     header?: {
         recipientName?: string;

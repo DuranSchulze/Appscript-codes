@@ -40,7 +40,12 @@ import {
   SenderInfo,
 } from "../../types";
 import * as mammoth from "mammoth";
-import { parseTransmittalDocument } from "../../services/geminiService";
+import {
+  parseTransmittalDocument,
+  ParseResult,
+} from "../../services/geminiService";
+
+type ParsedDocumentResponse = ParseResult;
 
 // Modular UI components
 import { LoadingScreen } from "./LoadingScreen";
