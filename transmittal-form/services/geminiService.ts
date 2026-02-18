@@ -39,20 +39,27 @@ const RESPONSE_SCHEMA = {
 
 const DOCUMENT_CONTROLLER_PROMPT = `
   Role: Professional Document Controller.
-  Task: Analyze the provided document (image, PDF, or text) and extract metadata for a formal Transmittal Form.
+  Task: Analyze the provided file and extract metadata for ONE single entry in a formal Transmittal Form.
+
+  CRITICAL RULE — ONE FILE = ONE ITEM:
+  - This file represents a SINGLE physical document being transmitted.
+  - Your output MUST contain exactly ONE item in the items array, no more.
+  - Do NOT enumerate pages, attachments, or documents referenced inside the file.
+  - Focus ONLY on the first/cover page to identify what this document IS.
 
   EXTRACTION HIERARCHY:
   1. **Header Identification**: Locate the primary recipient or entity the document is addressed to. Identify the requesting organization or client company.
   2. **Project Context**: Look for project titles, engagement references, or case numbers.
-  3. **Itemized List**: Identify all specific documents or files mentioned. For each, find a unique identifier (Reference No) and a descriptive title.
-  4. **Document # / Ref # Priority**: Prefer explicit identifiers in this order when available: Document No, Reference No, Control No, OR No (Official Receipt No), Invoice No, Receipt No, Title No, eCAR No, Tax Declaration No, Certificate No, and serial/control identifiers.
+  3. **Document Identity**: From the FIRST PAGE ONLY, determine the single best title/description and unique identifier for this document as a whole.
+  4. **Document # / Ref # Priority**: Prefer explicit identifiers in this order: Document No, Reference No, Control No, OR No (Official Receipt No), Invoice No, Receipt No, Title No, eCAR No, Tax Declaration No, Certificate No, and serial/control identifiers.
   5. **Remarks Priority**: If the document indicates copy status, include it in remarks (e.g., Original, Certified True Copy, Photocopy, Scanned Copy).
 
   FORMATTING RULES:
+  - Output exactly ONE item representing the whole file — never split into multiple items.
   - If a specific field is missing, leave it as null or an empty string.
-  - For 'Qty', defaults to '1' unless a specific count is listed.
+  - For 'Qty', always use '1'.
   - Be precise with names and ID numbers.
-  - 'documentNumber' must contain the strongest explicit identifier found in the document content, not a generic label.
+  - 'documentNumber' must contain the strongest explicit identifier found on the cover page, not a generic label.
   - Keep punctuation and alphanumeric format of identifiers (e.g., OR-12345, eCAR-2024-0012).
   - Put copy-status notes in 'remarks' when present.
   
