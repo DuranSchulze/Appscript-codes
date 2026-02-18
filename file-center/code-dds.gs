@@ -31,7 +31,8 @@
 // Configuration Constants
 const SPREADSHEET_ID = "1Pr90AQwuf1IX1rgtpfheSglpJyPwONdwhIKGY1Hg0u8";
 const TIMEZONE = "GMT+8";
-const MAX_FILENAME_LENGTH = 150;
+const MAX_FILENAME_LENGTH = 220;
+const MAX_FORMATTED_TITLE_LENGTH = 200;
 const SUPPORTED_MIME_TYPES = [
   "application/pdf",
   "image/jpeg",
@@ -781,8 +782,14 @@ function extractTitleFromFileFirstPage(file) {
         debugLog("🔵 Attempting Gemini extraction (PRIMARY)...");
         const result = extractTitleWithGemini(file, geminiKey, mimeType);
         if (result && result.title && result.title.length > 3) {
-          debugLog(`✅ Gemini SUCCESS: "${result.title}"`);
-          return { title: result.title, aiService: "Gemini 2.0 Flash" };
+          const geminiTitle = formatTitleWithSpaces(result.title);
+          if (!isLikelyIncompleteTitle(geminiTitle)) {
+            debugLog(`✅ Gemini SUCCESS: "${geminiTitle}"`);
+            return { title: geminiTitle, aiService: "Gemini 2.0 Flash" };
+          }
+          debugLog(
+            `⚠️ Gemini title looks incomplete ("${geminiTitle}") - trying OCR fallback for fuller title`,
+          );
         } else {
           debugLog(
             `⚠️ Gemini returned short/empty title: "${result ? result.title : "null"}"`,
@@ -861,28 +868,29 @@ function extractTitleWithGemini(file, apiKey, mimeType) {
 
     const url = buildGeminiGenerateContentUrl(apiKey);
 
-    // IMPROVED PROMPT - Optimized for PDF direct reading
-    const prompt = `You are analyzing a document (PDF or image). Extract ONLY the most descriptive title from the FIRST PAGE.
+    // IMPROVED PROMPT - optimized for complete legal heading extraction
+    const prompt = `You are analyzing a legal/administrative document (PDF or image). Extract the FULL formal title from the FIRST PAGE.
 
 STRICT RULES:
-1. Return 3-10 words maximum
-2. Remove ALL dates, numbers, file codes, "Re:", "Subject:", "Document:" prefixes
-3. Use Title Case (Capitalize Each Word)
-4. Focus on the MAIN TOPIC/PURPOSE of the document
-5. DO NOT include: file extensions, dates, reference numbers, version numbers
-6. Return ONLY the clean title - no quotes, no explanations
+1. Copy the title text as written (do NOT summarize, paraphrase, or shorten it).
+2. Prefer the complete legal heading (example: "Motion For Issuance Of A Writ Of Execution").
+3. If the title is wrapped on multiple lines, combine those lines into one complete line.
+4. Keep meaningful words after "for", "of", "to", and "in" (do not cut the phrase early).
+5. Return a single clean title line, usually 5-20 words (allow up to 25 when needed).
+6. Remove only obvious metadata/noise (file extensions, standalone dates, trailing reference codes).
+7. Return ONLY the title text (no quotes, numbering, or explanation).
 
 EXAMPLES:
-❌ BAD: "Document_2025-10-19_Re_Vehicle_Transfer_Form_v1.pdf"
-✅ GOOD: "Vehicle Transfer And Odometer Disclosure"
+BAD: "Motion For Lss"
+GOOD: "Motion For Issuance Of A Writ Of Execution"
 
-❌ BAD: "Legal Document 1"
-✅ GOOD: "Legal Services Agreement"
+BAD: "Employment Contract"
+GOOD: "Employment Contract For Project-Based Personnel"
 
-❌ BAD: "2025-10-19 Contract"
-✅ GOOD: "Employment Contract"
+BAD: "Document_2026-02-16_Re_Motion.pdf"
+GOOD: "Motion For Issuance Of A Writ Of Execution"
 
-Extract the title now:`;
+Extract the complete title now:`;
 
     const payload = {
       contents: [
@@ -900,7 +908,7 @@ Extract the title now:`;
       ],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 60,
+        maxOutputTokens: 90,
         topP: 0.8,
         topK: 10,
       },
@@ -992,6 +1000,51 @@ function cleanExtractedTitle(title) {
 }
 
 /**
+ * Detects likely truncated titles (e.g., "Motion For Lss")
+ */
+function isLikelyIncompleteTitle(title) {
+  if (!title) return true;
+
+  const normalized = title.toString().replace(/\s+/g, " ").trim();
+  if (!normalized) return true;
+
+  const words = normalized.split(" ").filter((word) => word);
+  if (words.length <= 2) return true;
+
+  const firstWord = (words[0] || "").toLowerCase();
+  const secondWord = (words[1] || "").toLowerCase();
+  const thirdWord = (words[2] || "").toLowerCase();
+
+  const legalLeadWords = [
+    "motion",
+    "petition",
+    "application",
+    "request",
+    "manifestation",
+    "notice",
+    "affidavit",
+    "complaint",
+    "answer",
+  ];
+  const hasLegalLeadWord = legalLeadWords.indexOf(firstWord) !== -1;
+
+  if (/\b(for|of|to|in|on|re)\s*$/i.test(normalized)) return true;
+
+  if (hasLegalLeadWord && words.length <= 2) return true;
+
+  if (
+    hasLegalLeadWord &&
+    (secondWord === "for" || secondWord === "of") &&
+    words.length === 3 &&
+    thirdWord.length <= 4
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Format title with spaces (no underscores)
  */
 function formatTitleWithSpaces(title) {
@@ -1001,8 +1054,7 @@ function formatTitleWithSpaces(title) {
 
   return title
     .toString()
-    .replace(/[<>:"/\\|?*]/g, "")
-    .replace(/_+/g, " ")
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .split(" ")
@@ -1010,7 +1062,7 @@ function formatTitleWithSpaces(title) {
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     })
     .join(" ")
-    .substring(0, 80);
+    .substring(0, MAX_FORMATTED_TITLE_LENGTH);
 }
 
 /**
@@ -1116,24 +1168,69 @@ function extractBestTitle(text, fallbackName) {
   if (lines.length === 0)
     return sanitizeFileName(fallbackName.replace(/\.[^/.]+$/, ""));
 
-  let bestCandidate = null,
-    bestScore = 0;
+  const maxLinesToCheck = Math.min(lines.length, 12);
+  const candidates = [];
 
-  for (let i = 0; i < Math.min(lines.length, 10); i++) {
-    const line = lines[i];
-    if (line.length < 5 || line.length > 100) continue;
+  for (let i = 0; i < maxLinesToCheck; i++) {
+    const line1 = lines[i];
+    candidates.push({ text: line1, startIndex: i, span: 1 });
+
+    if (i + 1 < maxLinesToCheck) {
+      const line2 = `${line1} ${lines[i + 1]}`.replace(/\s+/g, " ").trim();
+      if (line2.length <= 140) {
+        candidates.push({ text: line2, startIndex: i, span: 2 });
+      }
+    }
+
+    if (i + 2 < maxLinesToCheck) {
+      const line3 = `${line1} ${lines[i + 1]} ${lines[i + 2]}`
+        .replace(/\s+/g, " ")
+        .trim();
+      if (line3.length <= 170) {
+        candidates.push({ text: line3, startIndex: i, span: 3 });
+      }
+    }
+  }
+
+  let bestCandidate = null;
+  let bestScore = 0;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    const line = candidate.text;
+
+    if (line.length < 5 || line.length > 170) continue;
 
     const wordCount = line.split(/\s+/).length;
+    if (wordCount < 3 || wordCount > 24) continue;
+
     const letterCount = (line.match(/[a-zA-Z]/g) || []).length;
     const letterRatio = letterCount / line.length;
 
     let score = 0;
-    if (wordCount >= 3 && wordCount <= 12) score += 3;
-    if (letterRatio >= 0.6) score += 2;
+
+    if (wordCount >= 5 && wordCount <= 20) score += 4;
+    else if (wordCount >= 3 && wordCount <= 24) score += 2;
+
+    if (letterRatio >= 0.55) score += 2;
     if (!/^\d/.test(line)) score += 1;
-    if (i < 3) score += 2;
-    if (/^[A-Z]/.test(line)) score += 1;
-    if (/^(page|from|to|date|subject|re:)/i.test(line)) score -= 3;
+
+    if (candidate.startIndex < 3) score += 2;
+    else if (candidate.startIndex < 6) score += 1;
+
+    if (candidate.span > 1) score += 2;
+
+    if (
+      /\b(motion|petition|application|writ|complaint|affidavit|agreement|contract|notice|deed)\b/i.test(
+        line,
+      )
+    ) {
+      score += 2;
+    }
+
+    if (/^(page|from|to|date|subject|re:|cc:|email|reference)/i.test(line)) {
+      score -= 4;
+    }
 
     if (score > bestScore) {
       bestScore = score;
@@ -1143,7 +1240,7 @@ function extractBestTitle(text, fallbackName) {
 
   if (bestCandidate && bestScore > 0) return sanitizeFileName(bestCandidate);
 
-  const firstGoodLine = lines.find((l) => l.length >= 5 && l.length <= 100);
+  const firstGoodLine = lines.find((l) => l.length >= 5 && l.length <= 140);
   if (firstGoodLine) return sanitizeFileName(firstGoodLine);
 
   return sanitizeFileName(fallbackName.replace(/\.[^/.]+$/, ""));

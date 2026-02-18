@@ -40,6 +40,7 @@ import {
   SenderInfo,
 } from "../../types";
 import * as mammoth from "mammoth";
+import { parseTransmittalDocument } from "../../services/geminiService";
 
 // Modular UI components
 import { LoadingScreen } from "./LoadingScreen";
@@ -253,52 +254,6 @@ const createDriveDocumentNumber = (file: {
   }
 
   return `DRV-${idSuffix}`;
-};
-
-type ParsedDocumentResponse = {
-  items: Array<{
-    description?: string;
-    documentNumber?: string;
-    qty?: string;
-    remarks?: string;
-  }>;
-  header?: {
-    recipientName?: string;
-    recipientEmail?: string;
-    companyName?: string;
-    address?: string;
-    projectName?: string;
-    projectNumber?: string;
-    purpose?: string;
-  };
-  error?: string;
-};
-
-const parseTransmittalDocument = async (
-  content: string,
-  mimeType: string,
-  isText = false,
-  fileName?: string,
-): Promise<ParsedDocumentResponse> => {
-  const response = await fetch("/api/parse-transmittal", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      content,
-      mimeType,
-      isText,
-      fileName,
-    }),
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(String(payload?.error || "Failed to analyze document."));
-  }
-
-  return payload as ParsedDocumentResponse;
 };
 
 const resolveSessionErrorNotice = (error: unknown): string | undefined => {
