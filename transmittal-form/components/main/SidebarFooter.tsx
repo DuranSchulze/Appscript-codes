@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Save,
   FileText,
@@ -38,6 +38,8 @@ export interface SidebarMenuBarProps {
   onNewTransmittal: () => void;
   onOpenTransmittal: () => void;
   onSaveTransmittal: () => void;
+  isEditingTransmittal?: boolean;
+  transmittalNumber?: string;
   onExportPdf: () => void;
   onExportDocx: () => void;
   onExportCsv?: () => void;
@@ -53,6 +55,8 @@ export const SidebarMenuBar: React.FC<SidebarMenuBarProps> = ({
   onNewTransmittal,
   onOpenTransmittal,
   onSaveTransmittal,
+  isEditingTransmittal = false,
+  transmittalNumber,
   onExportPdf,
   onExportDocx,
   onExportCsv,
@@ -64,6 +68,32 @@ export const SidebarMenuBar: React.FC<SidebarMenuBarProps> = ({
   isGeneratingDocx,
 }) => {
   const [showResetDialog, setShowResetDialog] = useState(false);
+  const displayTransmittalNumber = transmittalNumber?.trim() || "Draft";
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
+      const hasPrimaryModifier = event.metaKey || event.ctrlKey;
+      if (!hasPrimaryModifier || event.altKey || event.shiftKey) return;
+
+      const key = event.key.toLowerCase();
+
+      if (key === "o") {
+        event.preventDefault();
+        onOpenTransmittal();
+        return;
+      }
+
+      if (key === "s") {
+        event.preventDefault();
+        onSaveTransmittal();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onOpenTransmittal, onSaveTransmittal]);
 
   return (
     <>
@@ -80,6 +110,12 @@ export const SidebarMenuBar: React.FC<SidebarMenuBarProps> = ({
             className="min-w-[220px]"
           >
             <DropdownMenuGroup>
+              <DropdownMenuLabel className="text-[10px] font-semibold text-slate-600 normal-case leading-snug">
+                What do you want to do for {displayTransmittalNumber} Document?
+              </DropdownMenuLabel>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
               <DropdownMenuItem onClick={onNewTransmittal}>
                 <FilePlus2 className="mr-2 h-4 w-4" />
                 New Transmittal
@@ -87,15 +123,15 @@ export const SidebarMenuBar: React.FC<SidebarMenuBarProps> = ({
               <DropdownMenuItem onClick={onOpenTransmittal}>
                 <FolderOpen className="mr-2 h-4 w-4" />
                 Open...
-                <DropdownMenuShortcut>⌘O</DropdownMenuShortcut>
+                <DropdownMenuShortcut>⌘/Ctrl+O</DropdownMenuShortcut>
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem onClick={onSaveTransmittal}>
                 <Save className="mr-2 h-4 w-4" />
-                Save
-                <DropdownMenuShortcut>⌘S</DropdownMenuShortcut>
+                {isEditingTransmittal ? "Update" : "Save"}
+                <DropdownMenuShortcut>⌘/Ctrl+S</DropdownMenuShortcut>
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

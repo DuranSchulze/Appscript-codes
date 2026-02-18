@@ -1,9 +1,15 @@
 "use client";
 
 import React from "react";
-import { ImagePlus } from "lucide-react";
+import {
+  Building2,
+  Globe,
+  Mail,
+  Phone,
+  Smartphone,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -23,12 +29,9 @@ interface SenderTabProps {
   agencies: DbAgency[];
   selectedAgencyId: string;
   onSelectAgency: (id: string) => void;
-  onOpenAgencyModal: () => void;
+  onOpenAgencyModal: (mode: "create" | "update") => void;
+  onDeleteAgency: () => void;
   sender: SenderInfo;
-  onUpdateField: (section: "sender", field: string, value: any) => void;
-  logoInputRef: React.RefObject<HTMLInputElement | null>;
-  logoInputKey: number;
-  onLogoUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export const SenderTab: React.FC<SenderTabProps> = ({
@@ -36,26 +39,30 @@ export const SenderTab: React.FC<SenderTabProps> = ({
   selectedAgencyId,
   onSelectAgency,
   onOpenAgencyModal,
+  onDeleteAgency,
   sender,
-  onUpdateField,
-  logoInputRef,
-  logoInputKey,
-  onLogoUpload,
 }) => {
+  const hasSelectedAgency = Boolean(selectedAgencyId);
+  const readOnlyValue = (value: string) => value?.trim() || "—";
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <h2 className="text-xs font-black text-slate-800 uppercase tracking-[0.2em]">
         Sender Branding
       </h2>
 
-      <div className="flex flex-col sm:flex-row gap-3 items-end">
-        <div className="flex-1 space-y-1">
+      <div className="space-y-3">
+        <div className="space-y-1">
           <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
             Saved Agencies
           </Label>
           <Select
             value={selectedAgencyId}
             onValueChange={(val) => onSelectAgency(val as string)}
+            items={agencies.map((agency) => ({
+              value: agency.id,
+              label: agency.name || "Unnamed agency",
+            }))}
           >
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Select agency..." />
@@ -63,26 +70,48 @@ export const SenderTab: React.FC<SenderTabProps> = ({
             <SelectContent>
               {agencies.map((agency) => (
                 <SelectItem key={agency.id} value={agency.id}>
-                  {agency.name}
+                  {agency.name || "Unnamed agency"}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        <Button
-          onClick={onOpenAgencyModal}
-          className="h-[52px] px-5 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg"
-        >
-          Add
-        </Button>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={() =>
+              onOpenAgencyModal(hasSelectedAgency ? "update" : "create")
+            }
+            className="h-11 flex-1 min-w-[120px] rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg"
+          >
+            {hasSelectedAgency ? "Update" : "Add"}
+          </Button>
+
+          {hasSelectedAgency ? (
+            <Button
+              onClick={() => onOpenAgencyModal("create")}
+              variant="outline"
+              className="h-11 flex-1 min-w-[120px] rounded-2xl text-[10px] font-black uppercase tracking-[0.2em]"
+            >
+              Add New
+            </Button>
+          ) : null}
+
+          <Button
+            onClick={onDeleteAgency}
+            variant="ghost"
+            disabled={!hasSelectedAgency}
+            className="h-11 flex-1 min-w-[120px] rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] text-red-600 hover:text-red-700 hover:bg-red-50 disabled:text-slate-300"
+          >
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            Delete
+          </Button>
+        </div>
       </div>
 
-      <div className="flex flex-col items-center gap-6 p-6 bg-slate-50 rounded-[40px] border border-slate-200/60">
-        <div
-          className="relative group cursor-pointer"
-          onClick={() => logoInputRef.current?.click()}
-        >
-          <div className="w-32 h-32 rounded-full border-4 border-white shadow-xl flex items-center justify-center bg-white overflow-hidden transition-transform group-hover:scale-105">
+      <div className="space-y-5 p-6 bg-slate-50 rounded-[40px] border border-slate-200/60">
+        <div className="flex items-center gap-4">
+          <div className="w-20 h-20 rounded-3xl border border-white shadow-md flex items-center justify-center bg-white overflow-hidden">
             {sender.logoBase64 ? (
               <img
                 src={sender.logoBase64}
@@ -90,84 +119,95 @@ export const SenderTab: React.FC<SenderTabProps> = ({
                 className="w-full h-full object-contain"
               />
             ) : (
-              <div className="flex flex-col items-center text-slate-300">
-                <ImagePlus className="w-8 h-8 mb-1" />
-                <span className="text-[8px] font-black uppercase tracking-widest">
-                  Add Logo
-                </span>
-              </div>
+              <Building2 className="w-7 h-7 text-slate-300" />
             )}
           </div>
-          <input
-            key={logoInputKey}
-            type="file"
-            ref={logoInputRef}
-            className="hidden"
-            accept="image/*"
-            onChange={onLogoUpload}
-          />
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-black text-slate-800 uppercase tracking-widest">
-            {sender.agencyName}
-          </p>
-        </div>
-      </div>
 
-      <div className="space-y-5">
-        <div className="space-y-1">
-          <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
-            Agency Name
-          </Label>
-          <Input
-            value={sender.agencyName}
-            onChange={(e) =>
-              onUpdateField("sender", "agencyName", e.target.value)
-            }
-          />
+          <div>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+              Active Agency
+            </p>
+            <p className="text-xs font-black text-slate-800 uppercase tracking-widest mt-1">
+              {readOnlyValue(sender.agencyName)}
+            </p>
+          </div>
         </div>
-        <div className="space-y-1">
-          <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
-            Website
-          </Label>
-          <Input
-            value={sender.website}
-            onChange={(e) => onUpdateField("sender", "website", e.target.value)}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
+              Address Line 1
+            </Label>
+            <p className="px-2 text-xs font-semibold text-slate-700">
+              {readOnlyValue(sender.addressLine1)}
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
+              Address Line 2
+            </Label>
+            <p className="px-2 text-xs font-semibold text-slate-700">
+              {readOnlyValue(sender.addressLine2)}
+            </p>
+          </div>
+
+          <div className="space-y-1 sm:col-span-2">
+            <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
+              Website
+            </Label>
+            <div className="px-2 flex items-center gap-2 text-xs text-slate-700">
+              <Globe className="h-3.5 w-3.5 text-slate-400" />
+              <span className="truncate">{readOnlyValue(sender.website)}</span>
+            </div>
+          </div>
+
           <div className="space-y-1">
             <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
               Telephone
             </Label>
-            <Input
-              value={sender.telephone}
-              onChange={(e) =>
-                onUpdateField("sender", "telephone", e.target.value)
-              }
-            />
+            <div className="px-2 flex items-center gap-2 text-xs text-slate-700">
+              <Phone className="h-3.5 w-3.5 text-slate-400" />
+              <span className="truncate">
+                {readOnlyValue(sender.telephone)}
+              </span>
+            </div>
           </div>
+
           <div className="space-y-1">
             <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
               Mobile
             </Label>
-            <Input
-              value={sender.mobile}
-              onChange={(e) =>
-                onUpdateField("sender", "mobile", e.target.value)
-              }
-            />
+            <div className="px-2 flex items-center gap-2 text-xs text-slate-700">
+              <Smartphone className="h-3.5 w-3.5 text-slate-400" />
+              <span className="truncate">{readOnlyValue(sender.mobile)}</span>
+            </div>
+          </div>
+
+          <div className="space-y-1 sm:col-span-2">
+            <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
+              Email
+            </Label>
+            <div className="px-2 flex items-center gap-2 text-xs text-slate-700">
+              <Mail className="h-3.5 w-3.5 text-slate-400" />
+              <span className="truncate">{readOnlyValue(sender.email)}</span>
+            </div>
+          </div>
+
+          <div className="space-y-1 sm:col-span-2">
+            <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
+              Agency Name
+            </Label>
+            <p className="px-2 text-xs font-semibold text-slate-700">
+              {readOnlyValue(sender.agencyName)}
+            </p>
           </div>
         </div>
-        <div className="space-y-1">
-          <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
-            Email
-          </Label>
-          <Input
-            value={sender.email}
-            onChange={(e) => onUpdateField("sender", "email", e.target.value)}
-          />
-        </div>
+
+        <p className="text-[10px] font-semibold text-slate-400">
+          Brand details are read-only here. Use Add/Update to manage agency
+          data.
+        </p>
       </div>
     </div>
   );

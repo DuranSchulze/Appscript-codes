@@ -53,3 +53,36 @@ export async function PUT(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+export async function DELETE(
+  request: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const session = await auth.api.getSession({
+      headers: request.headers as any,
+    });
+
+    if (!session?.user) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    const { id } = await ctx.params;
+
+    const existing = await db.agency.findFirst({
+      where: { id, userId: session.user.id },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return NextResponse.json({ error: "Agency not found" }, { status: 404 });
+    }
+
+    await db.agency.delete({ where: { id } });
+
+    return NextResponse.json({ ok: true });
+  } catch (error: any) {
+    console.error("Delete agency error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}

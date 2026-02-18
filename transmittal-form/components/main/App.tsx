@@ -142,6 +142,17 @@ const createInitialData = (): AppData => ({
   items: [],
 });
 
+const createEmptySenderDraft = (): SenderInfo => ({
+  agencyName: "",
+  addressLine1: "",
+  addressLine2: "",
+  website: "",
+  mobile: "",
+  telephone: "",
+  email: "",
+  logoBase64: null,
+});
+
 const stripFileExtension = (fileName: string): string =>
   fileName.replace(/\.[^/.]+$/, "").trim();
 
@@ -443,20 +454,24 @@ const AppContent: React.FC = () => {
   };
 
   const handleSignOut = async () => {
-    clearGoogleToken();
+    await clearGoogleToken();
     await signOut();
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const logoInputRef = useRef<HTMLInputElement>(null);
   const printRef = useRef<HTMLDivElement>(null);
-  const [logoInputKey, setLogoInputKey] = useState(0);
 
   const [agencies, setAgencies] = useState<DbAgency[]>([]);
   const [selectedAgencyId, setSelectedAgencyId] = useState<string>("");
   const [isAgencyModalOpen, setIsAgencyModalOpen] = useState(false);
   const [agencyDraft, setAgencyDraft] = useState<SenderInfo>(
     () => createInitialData().sender,
+  );
+  const [agencyDriveLogoLink, setAgencyDriveLogoLink] = useState("");
+  const [isImportingAgencyDriveLogo, setIsImportingAgencyDriveLogo] =
+    useState(false);
+  const [agencyModalMode, setAgencyModalMode] = useState<"create" | "update">(
+    "create",
   );
 
   const getFileTimestamp = () =>
@@ -533,6 +548,17 @@ const AppContent: React.FC = () => {
     if (id) setSelectedAgencyId(id);
   }, [data.agencyId]);
 
+  const mapDbAgencyToSender = (agency: DbAgency): SenderInfo => ({
+    agencyName: agency.name || "",
+    addressLine1: agency.addressLine1 || "",
+    addressLine2: agency.addressLine2 || "",
+    website: agency.website || "",
+    mobile: agency.contactNumber || "",
+    telephone: agency.telephoneNumber || "",
+    email: agency.email || "",
+    logoBase64: agency.logoBase64 || null,
+  });
+
   useEffect(() => {
     if (!selectedAgencyId) return;
     const agency = agencies.find((a) => a.id === selectedAgencyId);
@@ -540,18 +566,8 @@ const AppContent: React.FC = () => {
     setData((prev) => ({
       ...prev,
       agencyId: agency.id,
-      sender: {
-        agencyName: agency.name || "",
-        addressLine1: agency.addressLine1 || "",
-        addressLine2: agency.addressLine2 || "",
-        website: agency.website || "",
-        mobile: agency.contactNumber || "",
-        telephone: agency.telephoneNumber || "",
-        email: agency.email || "",
-        logoBase64: agency.logoBase64 || null,
-      },
+      sender: mapDbAgencyToSender(agency),
     }));
-    setLogoInputKey((prev) => prev + 1);
   }, [selectedAgencyId, agencies]);
 
   const mapDbTransmittalToAppData = (transmittal: any): AppData => {
@@ -1106,21 +1122,6 @@ const AppContent: React.FC = () => {
     }
   }, [processingError]);
 
-  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const base64 = await resizeImage(file, 400);
-      updateField("sender", "logoBase64", `data:image/jpeg;base64,${base64}`);
-    } catch (err: any) {
-      setStatusMsg(`Logo Error: ${err.message}`);
-      setStatusType("error");
-      setTimeout(() => setStatusMsg(""), 3000);
-    } finally {
-      setLogoInputKey((prev) => prev + 1);
-    }
-  };
-
   const handleAgencyLogoUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -1141,8 +1142,80 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const openAgencyModal = () => {
-    setAgencyDraft({ ...data.sender });
+  const handleAgencyDriveLogoImport = async () => {
+    const link = agencyDriveLogoLink.trim();
+    if (!link) {
+      setStatusMsg("Paste a Google Drive file link first.");
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 3000);
+      return;
+    }
+
+    if (!isDriveReady) {
+      setStatusMsg("Google Drive is not connected. Please sign in again.");
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 3000);
+      return;
+    }
+
+    const fileId = extractFileIdFromLink(link);
+    if (!fileId) {
+      setStatusMsg("Invalid Google Drive file link.");
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 3000);
+      return;
+    }
+
+    setIsImportingAgencyDriveLogo(true);
+    try {
+      const meta = await getFileMetadata(fileId);
+      const metaMimeType = String(meta.mimeType || "");
+      if (!metaMimeType.startsWith("image/")) {
+        throw new Error("Selected Google Drive file is not an image.");
+      }
+
+      const { base64, mimeType } = await getFileContentAsBase64(fileId);
+      const effectiveMimeType = mimeType?.startsWith("image/")
+        ? mimeType
+        : metaMimeType;
+
+      setAgencyDraft((prev) => ({
+        ...prev,
+        logoBase64: `data:${effectiveMimeType};base64,${base64}`,
+      }));
+      setAgencyDriveLogoLink("");
+      setStatusMsg(`Logo imported from Google Drive (${meta.name}).`);
+      setStatusType("info");
+      setTimeout(() => setStatusMsg(""), 3000);
+    } catch (error: any) {
+      setStatusMsg(
+        error?.message || "Failed to import logo from Google Drive.",
+      );
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 4000);
+    } finally {
+      setIsImportingAgencyDriveLogo(false);
+    }
+  };
+
+  const openAgencyModal = (mode: "create" | "update") => {
+    setAgencyDriveLogoLink("");
+
+    if (mode === "update") {
+      const agency = agencies.find((item) => item.id === selectedAgencyId);
+      if (!agency) {
+        setStatusMsg("Select an agency first to update.");
+        setStatusType("error");
+        setTimeout(() => setStatusMsg(""), 3000);
+        return;
+      }
+      setAgencyDraft(mapDbAgencyToSender(agency));
+      setAgencyModalMode("update");
+    } else {
+      setAgencyDraft(createEmptySenderDraft());
+      setAgencyModalMode("create");
+    }
+
     setIsAgencyModalOpen(true);
   };
 
@@ -1150,9 +1223,15 @@ const AppContent: React.FC = () => {
     if (!session?.user || !apiBaseUrl) return;
     const name = agencyDraft.agencyName.trim();
     if (!name) return;
+    const isUpdating =
+      agencyModalMode === "update" && Boolean(selectedAgencyId);
+    const endpoint = isUpdating
+      ? `${apiBaseUrl}/api/agencies/${selectedAgencyId}`
+      : `${apiBaseUrl}/api/agencies`;
+
     try {
-      const response = await fetch(`${apiBaseUrl}/api/agencies`, {
-        method: "POST",
+      const response = await fetch(endpoint, {
+        method: isUpdating ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
@@ -1182,14 +1261,56 @@ const AppContent: React.FC = () => {
         setData((prev) => ({
           ...prev,
           agencyId: saved.id,
-          sender: { ...agencyDraft, agencyName: name },
+          sender: mapDbAgencyToSender(saved),
         }));
+        setStatusMsg(isUpdating ? "Agency updated" : "Agency added");
+        setStatusType("info");
+        setTimeout(() => setStatusMsg(""), 3000);
       }
 
       setIsAgencyModalOpen(false);
     } catch (error: any) {
       console.error("Save agency failed:", error);
       setStatusMsg(error.message || "Failed to save agency");
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 3000);
+    }
+  };
+
+  const handleDeleteAgency = async () => {
+    if (!session?.user || !apiBaseUrl || !selectedAgencyId) return;
+
+    const selectedAgency = agencies.find(
+      (item) => item.id === selectedAgencyId,
+    );
+    const agencyName = selectedAgency?.name || "this agency";
+    const shouldDelete = window.confirm(
+      `Delete \"${agencyName}\" from saved agencies?`,
+    );
+    if (!shouldDelete) return;
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/agencies/${selectedAgencyId}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        },
+      );
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Failed to delete agency");
+      }
+
+      await loadAgenciesFromDb();
+      setSelectedAgencyId("");
+      setData((prev) => ({ ...prev, agencyId: null }));
+      setStatusMsg("Agency deleted");
+      setStatusType("info");
+      setTimeout(() => setStatusMsg(""), 3000);
+    } catch (error: any) {
+      setStatusMsg(error.message || "Failed to delete agency");
       setStatusType("error");
       setTimeout(() => setStatusMsg(""), 3000);
     }
@@ -1566,9 +1687,10 @@ const AppContent: React.FC = () => {
   };
 
   const handleSaveTransmittal = async () => {
+    const isEditing = Boolean(activeTransmittalId);
     try {
       await saveTransmittalToDb();
-      setStatusMsg("Saved");
+      setStatusMsg(isEditing ? "Transmittal updated" : "Transmittal saved");
       setStatusType("info");
     } catch (e: any) {
       setStatusMsg(e.message || "Failed to save transmittal");
@@ -1640,6 +1762,28 @@ const AppContent: React.FC = () => {
           </div>
         </div>
       ) : null}
+
+      {statusMsg && !isDocumentProcessing ? (
+        <div className="pointer-events-none fixed right-4 top-5 z-[140] w-[min(92vw,360px)] animate-in slide-in-from-right-5 fade-in duration-300">
+          <div
+            className={`rounded-2xl border px-4 py-3 shadow-2xl backdrop-blur ${
+              statusType === "error"
+                ? "border-red-200 bg-red-50/95 text-red-700"
+                : "border-brand-200 bg-white/95 text-slate-700"
+            }`}
+          >
+            <p
+              className={`text-[10px] font-black uppercase tracking-widest ${
+                statusType === "error" ? "text-red-600" : "text-brand-700"
+              }`}
+            >
+              {statusType === "error" ? "Action failed" : "Action complete"}
+            </p>
+            <p className="mt-1 text-xs break-words">{statusMsg}</p>
+          </div>
+        </div>
+      ) : null}
+
       {/* Mobile Toggle Button */}
       <div className="lg:hidden absolute bottom-6 right-6 z-50 flex gap-2">
         <button
@@ -1668,6 +1812,8 @@ const AppContent: React.FC = () => {
           onNewTransmittal={resetForNewAnalysis}
           onOpenTransmittal={() => setIsTransmittalListOpen(true)}
           onSaveTransmittal={handleSaveTransmittal}
+          isEditingTransmittal={Boolean(activeTransmittalId)}
+          transmittalNumber={data.project.transmittalNumber}
           onExportPdf={handlePrint}
           onExportDocx={handleDownloadDocx}
           onExportCsv={handleExportCSV}
@@ -1694,8 +1840,6 @@ const AppContent: React.FC = () => {
               onOpenUploadModal={() => setIsFileUploadOpen(true)}
               isDriveReady={isDriveReady}
               onOpenDriveModal={handleOpenDriveModal}
-              statusMsg={statusMsg}
-              statusType={statusType}
               transmissionMethod={data.transmissionMethod}
               onUpdateTransmission={updateTransmission}
               notes={data.notes}
@@ -1709,11 +1853,8 @@ const AppContent: React.FC = () => {
               selectedAgencyId={selectedAgencyId}
               onSelectAgency={setSelectedAgencyId}
               onOpenAgencyModal={openAgencyModal}
+              onDeleteAgency={handleDeleteAgency}
               sender={data.sender}
-              onUpdateField={updateField}
-              logoInputRef={logoInputRef}
-              logoInputKey={logoInputKey}
-              onLogoUpload={handleLogoUpload}
             />
           )}
 
@@ -1748,6 +1889,7 @@ const AppContent: React.FC = () => {
           onZoomOut={handleZoomOut}
           onZoomReset={handleZoomReset}
           onZoomSet={handleZoomSet}
+          transmittalNumber={data.project.transmittalNumber}
         />
         <div className="flex-1 overflow-y-auto overflow-x-hidden w-full flex flex-col items-center p-4 lg:p-8 pt-0">
           <div
@@ -1856,9 +1998,15 @@ const AppContent: React.FC = () => {
       <AgencyPresetModal
         isOpen={isAgencyModalOpen}
         onClose={() => setIsAgencyModalOpen(false)}
+        mode={agencyModalMode}
+        isDriveReady={isDriveReady}
         draft={agencyDraft}
         onChange={setAgencyDraft}
         onLogoUpload={handleAgencyLogoUpload}
+        driveLogoLink={agencyDriveLogoLink}
+        onDriveLogoLinkChange={setAgencyDriveLogoLink}
+        onImportDriveLogo={handleAgencyDriveLogoImport}
+        isImportingDriveLogo={isImportingAgencyDriveLogo}
         onSave={saveAgencyPreset}
       />
 

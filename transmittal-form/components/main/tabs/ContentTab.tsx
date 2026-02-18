@@ -19,8 +19,6 @@ interface ContentTabProps {
   onOpenUploadModal: () => void;
   isDriveReady: boolean;
   onOpenDriveModal: () => void;
-  statusMsg: string;
-  statusType: "info" | "error";
   transmissionMethod: AppData["transmissionMethod"];
   onUpdateTransmission: (method: string, checked: boolean) => void;
   notes: string;
@@ -38,8 +36,6 @@ export const ContentTab: React.FC<ContentTabProps> = ({
   onOpenUploadModal,
   isDriveReady,
   onOpenDriveModal,
-  statusMsg,
-  statusType,
   transmissionMethod,
   onUpdateTransmission,
   notes,
@@ -130,13 +126,6 @@ export const ContentTab: React.FC<ContentTabProps> = ({
               {isDocumentProcessing ? "Working..." : "Browse Drive"}
             </Button>
           </div>
-          {statusMsg && (
-            <div
-              className={`p-4 rounded-2xl text-[10px] font-bold border animate-in slide-in-from-right duration-300 ${statusType === "error" ? "bg-red-50 border-red-100 text-red-600" : "bg-brand-50 border-brand-100 text-brand-600"}`}
-            >
-              {statusMsg}
-            </div>
-          )}
         </div>
       </section>
 

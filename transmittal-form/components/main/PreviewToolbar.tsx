@@ -11,6 +11,7 @@ interface PreviewToolbarProps {
   onZoomOut: () => void;
   onZoomReset: () => void;
   onZoomSet: (percent: number) => void;
+  transmittalNumber?: string;
 }
 
 export const PreviewToolbar: React.FC<PreviewToolbarProps> = ({
@@ -19,9 +20,20 @@ export const PreviewToolbar: React.FC<PreviewToolbarProps> = ({
   onZoomOut,
   onZoomReset,
   onZoomSet,
+  transmittalNumber,
 }) => {
+  const displayTransmittalNumber = transmittalNumber?.trim() || "Draft";
+
   return (
-    <div className="sticky top-0 z-10 flex items-center justify-center gap-1 py-2 px-4">
+    <div className="sticky top-0 z-10 flex items-center justify-center gap-2 py-2 px-4">
+      <div className="flex items-center gap-2 bg-white/90 backdrop-blur-md border border-slate-200/80 rounded-xl shadow-sm px-3 py-1">
+        <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">
+          Transmittal ID
+        </span>
+        <span className="font-mono text-[11px] font-bold text-slate-700">
+          {displayTransmittalNumber}
+        </span>
+      </div>
       <div className="flex items-center gap-1 bg-white/90 backdrop-blur-md border border-slate-200/80 rounded-xl shadow-sm px-2 py-1">
         <button
           onClick={onZoomOut}

@@ -207,13 +207,23 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
             </div>
           ) : (
             filtered.map((t) => (
-              <button
+              <div
                 key={t.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => {
                   onOpenTransmittal(t.id);
                   onClose();
                 }}
-                className="w-full flex items-center gap-4 p-4 rounded-2xl border border-slate-100 hover:border-slate-300 hover:bg-slate-50 transition-all text-left group"
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onOpenTransmittal(t.id);
+                    onClose();
+                  }
+                }}
+                className="w-full flex items-center gap-4 p-4 rounded-2xl border border-slate-100 hover:border-slate-300 hover:bg-slate-50 transition-all text-left group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center group-hover:bg-brand-50">
                   <FileText className="w-4 h-4 text-slate-400 group-hover:text-brand-600" />
@@ -245,7 +255,7 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                   )}
                 </button>
-              </button>
+              </div>
             ))
           )}
         </div>
