@@ -203,6 +203,7 @@ function onOpen() {
         .addItem("🔍 Test Gemini Connection", "testGeminiConnection")
         .addItem("🧪 Test Gemini AI Integration", "testGeminiIntegration")
         .addItem("📊 View System Status", "viewSystemStatus")
+        .addItem("📋 View Saved Config", "viewSavedConfig")
         .addSeparator()
         .addItem("🚨 View Error Report", "viewErrorReport")
         .addItem("🗑️ Clear Error Logs", "clearErrorLogs"),
@@ -1651,30 +1652,44 @@ function viewSystemStatus() {
   const lastFullScanPleadings = getConfigValue("LAST_FULL_SCAN_PLEADINGS");
   const lastUpdateClient = getConfigValue("LAST_UPDATE_SCAN_CLIENT");
   const lastUpdatePleadings = getConfigValue("LAST_UPDATE_SCAN_PLEADINGS");
-  const hasApiKey = !!PropertiesService.getUserProperties().getProperty(
+  const selectedModel =
+    getConfigValue(GEMINI_CONFIG.SELECTED_MODEL_KEY) ||
+    GEMINI_CONFIG.FALLBACK_MODEL + " (default)";
+  const apiKey = PropertiesService.getUserProperties().getProperty(
     GEMINI_CONFIG.USER_PROP_KEY,
   );
+  const hasApiKey = !!apiKey;
+  const maskedKey = hasApiKey
+    ? apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4)
+    : "❌ Not set";
   const triggers = ScriptApp.getProjectTriggers();
   const scheduledTriggers = triggers.filter(
     (t) => t.getHandlerFunction() === "scheduledScan",
   );
-  let status = "📊 ENHANCED SYSTEM STATUS\n\n";
+  // Helper to show a partial Drive ID for verification
+  function maskDriveId(id) {
+    if (!id) return "❌ Not set";
+    if (id.length <= 8) return `✅ ${id}`;
+    return `✅ ${id.substring(0, 6)}...${id.substring(id.length - 4)} (${id.length} chars)`;
+  }
+  let status = "📊 SYSTEM STATUS\n";
+  status += "─────────────────────────────────\n\n";
   status += "📄 CLIENT DOCUMENTS:\n";
-  status += `   🔗 Drive: ${clientDriveId ? "✅ Configured" : "❌ Not set"}\n`;
-  status += `   🔍 Last Full Scan: ${lastFullScanClient ? new Date(lastFullScanClient).toLocaleString() : "❌ Never"}\n`;
-  status += `   🔄 Last Update: ${lastUpdateClient ? new Date(lastUpdateClient).toLocaleString() : "❌ Never"}\n\n`;
+  status += `   🔗 Drive ID: ${maskDriveId(clientDriveId)}\n`;
+  status += `   🔍 Last Full Scan: ${lastFullScanClient ? new Date(lastFullScanClient).toLocaleString() : "Never"}\n`;
+  status += `   🔄 Last Update: ${lastUpdateClient ? new Date(lastUpdateClient).toLocaleString() : "Never"}\n\n`;
   status += "⚖️ SCANNED PLEADINGS:\n";
-  status += `   🔗 Drive: ${pleadingsDriveId ? "✅ Configured" : "❌ Not set"}\n`;
-  status += `   🔍 Last Full Scan: ${lastFullScanPleadings ? new Date(lastFullScanPleadings).toLocaleString() : "❌ Never"}\n`;
-  status += `   🔄 Last Update: ${lastUpdatePleadings ? new Date(lastUpdatePleadings).toLocaleString() : "❌ Never"}\n`;
-  status += `   📋 Auto-Naming: ✅ YYYY-MM-DD Descriptive Title\n\n`;
-  status += "SYSTEM FEATURES:\n";
-  status += `🔑 Gemini API: ${hasApiKey ? "✅ Set" : "❌ Not set"}\n`;
-  status += `⏰ Auto-Scan: ${scheduledTriggers.length > 0 ? "✅ Active (Enhanced Features)" : "❌ Disabled"}\n`;
-  status += `📋 Dropdowns: ✅ Enhanced with "No Action Needed"\n`;
-  status += `👥 User Tracking: ✅ Upload & Modification Emails\n`;
-  status += `📧 Activity Logging: ✅ Enhanced with User Attribution\n`;
-  status += `🔄 File Renaming: ✅ Both Drive Files & Sheet Display Names`;
+  status += `   🔗 Drive ID: ${maskDriveId(pleadingsDriveId)}\n`;
+  status += `   🔍 Last Full Scan: ${lastFullScanPleadings ? new Date(lastFullScanPleadings).toLocaleString() : "Never"}\n`;
+  status += `   🔄 Last Update: ${lastUpdatePleadings ? new Date(lastUpdatePleadings).toLocaleString() : "Never"}\n\n`;
+  status += "🤖 GEMINI AI:\n";
+  status += `   🔑 API Key: ${maskedKey}\n`;
+  status += `   🤖 Model: ${selectedModel}\n\n`;
+  status += "⚙️ SYSTEM:\n";
+  status += `   ⏰ Auto-Scan: ${scheduledTriggers.length > 0 ? "✅ Active" : "❌ Disabled"}\n`;
+  status += `   📋 Dropdowns: ✅ Enhanced\n`;
+  status += `   👥 User Tracking: ✅ Active\n`;
+  status += `   📋 Auto-Naming: ✅ YYYY-MM-DD Descriptive Title`;
   SpreadsheetApp.getUi().alert(status);
 }
 
@@ -2029,36 +2044,51 @@ function logEvent(
 
 function getConfigValue(key) {
   try {
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(
-      CONFIG.SHEETS.CONFIG,
-    );
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CONFIG.SHEETS.CONFIG);
+    if (!sheet) {
+      console.log(
+        `System Config sheet not found when reading key "${key}". Run Initial Setup first.`,
+      );
+      return "";
+    }
     const data = sheet.getDataRange().getValues();
+    // data[0] is the header row ["Key", "Value"] — start from i=1
     for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === key) {
-        return data[i][1];
+      if (String(data[i][0]).trim() === String(key).trim()) {
+        return String(data[i][1]).trim();
       }
     }
   } catch (error) {
-    console.log(`Error getting config value ${key}: ${error.message}`);
+    console.log(`Error getting config value "${key}": ${error.message}`);
   }
   return "";
 }
 
 function setConfigValue(key, value) {
   try {
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(
-      CONFIG.SHEETS.CONFIG,
-    );
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(CONFIG.SHEETS.CONFIG);
+    if (!sheet) {
+      // Auto-create the config sheet if it was somehow deleted
+      sheet = ss.insertSheet(CONFIG.SHEETS.CONFIG);
+      sheet.getRange(1, 1, 1, 2).setValues([["Key", "Value"]]);
+      sheet.setFrozenRows(1);
+      sheet.hideSheet();
+      console.log("System Config sheet was missing — recreated automatically.");
+    }
     const data = sheet.getDataRange().getValues();
+    // data[0] is the header row — start from i=1
     for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === key) {
+      if (String(data[i][0]).trim() === String(key).trim()) {
         sheet.getRange(i + 1, 2).setValue(value);
         return;
       }
     }
+    // Key not found — append new row
     sheet.appendRow([key, value]);
   } catch (error) {
-    console.log(`Error setting config value ${key}: ${error.message}`);
+    console.log(`Error setting config value "${key}": ${error.message}`);
   }
 }
 
@@ -2591,5 +2621,71 @@ function clearErrorLogs() {
     );
   } catch (error) {
     ui.alert(`❌ Failed to clear error logs: ${error.message}`);
+  }
+}
+
+/**
+ * Dumps the raw contents of the System Config sheet so the user can verify
+ * exactly what is stored. Masks Drive IDs and API key for security.
+ * Useful for diagnosing "nothing set" issues.
+ */
+function viewSavedConfig() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CONFIG.SHEETS.CONFIG);
+    if (!sheet) {
+      ui.alert(
+        "❌ System Config sheet not found.\n\nThe sheet may have been deleted or Initial Setup was never run.\n\nPlease run:\n🔧 Initial Setup",
+      );
+      return;
+    }
+    const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) {
+      ui.alert(
+        "⚠️ System Config sheet exists but has no data rows.\n\nPlease run:\n🔧 Initial Setup",
+      );
+      return;
+    }
+    // Sensitive keys to partially mask
+    const sensitiveKeys = [
+      "CLIENT_DOCUMENTS_DRIVE_ID",
+      "SCANNED_PLEADINGS_DRIVE_ID",
+    ];
+    let report = "📋 SAVED CONFIGURATION\n";
+    report += "─────────────────────────────────\n\n";
+    report += `Sheet: "${CONFIG.SHEETS.CONFIG}" (${data.length - 1} entries)\n\n`;
+    for (let i = 1; i < data.length; i++) {
+      const key = String(data[i][0]).trim();
+      let val = String(data[i][1]).trim();
+      if (!key) continue;
+      // Mask long IDs for display but show enough to verify
+      if (sensitiveKeys.includes(key) && val.length > 8) {
+        val = `${val.substring(0, 6)}...${val.substring(val.length - 4)} (${val.length} chars)`;
+      }
+      // Skip large JSON blobs (file index)
+      if (key.includes("FILE_INDEX") && val.length > 20) {
+        val = `[JSON, ${val.length} chars]`;
+      }
+      const isEmpty = !val || val === "" || val === "undefined";
+      const icon = isEmpty ? "⚠️" : "✅";
+      report += `${icon} ${key}:\n   ${isEmpty ? "(empty)" : val}\n\n`;
+    }
+    // Also show Gemini API key status from User Properties
+    const apiKey = PropertiesService.getUserProperties().getProperty(
+      GEMINI_CONFIG.USER_PROP_KEY,
+    );
+    report += "─────────────────────────────────\n";
+    report += "USER PROPERTIES (per-user, not in sheet):\n\n";
+    if (apiKey) {
+      const masked =
+        apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4);
+      report += `✅ GEMINI_API_KEY: ${masked}\n`;
+    } else {
+      report += `⚠️ GEMINI_API_KEY: (not set)\n`;
+    }
+    ui.alert(report);
+  } catch (error) {
+    ui.alert(`❌ Failed to read config: ${error.message}`);
   }
 }
