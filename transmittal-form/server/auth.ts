@@ -55,6 +55,7 @@ export const auth = betterAuth({
           redirectURI: `${process.env.BETTER_AUTH_URL}/api/auth/callback/google-dds`,
           accessType: "offline",
           prompt: "select_account",
+          pkce: false,
         },
       ],
     }),

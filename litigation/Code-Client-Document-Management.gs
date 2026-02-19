@@ -136,12 +136,27 @@ const PLEADING_TYPES = {
 
 // Gemini API Configuration
 const GEMINI_CONFIG = {
-  MODEL_ENDPOINT:
+  FALLBACK_MODEL: "gemini-2.0-flash",
+  FALLBACK_ENDPOINT:
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+  MODELS_LIST_URL: "https://generativelanguage.googleapis.com/v1beta/models",
   USER_PROP_KEY: "GEMINI_API_KEY",
+  SELECTED_MODEL_KEY: "GEMINI_SELECTED_MODEL",
   TEMPERATURE: 0.2,
   MAX_TOKENS: 150,
 };
+
+/**
+ * Returns the active Gemini generateContent endpoint.
+ * Reads GEMINI_SELECTED_MODEL from System Config; falls back to FALLBACK_ENDPOINT.
+ */
+function getGeminiEndpoint() {
+  const selectedModel = getConfigValue(GEMINI_CONFIG.SELECTED_MODEL_KEY);
+  if (selectedModel) {
+    return `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent`;
+  }
+  return GEMINI_CONFIG.FALLBACK_ENDPOINT;
+}
 
 /**
  * Enhanced menu system with user tracking diagnostics
@@ -164,6 +179,7 @@ function onOpen() {
         ),
     )
     .addItem("🔑 Set Gemini API Key", "setGeminiApiKey")
+    .addItem("🤖 Select AI Model", "selectGeminiModel")
     .addItem("🗑️ Clear Gemini API Key", "clearGeminiApiKey")
     .addSeparator()
     .addSubMenu(
@@ -184,7 +200,12 @@ function onOpen() {
         .addItem("📄 Test Client Documents Access", "testClientDocsAccess")
         .addItem("⚖️ Test Pleadings Access", "testPleadingsAccess")
         .addItem("👥 Test User Tracking", "testUserTracking")
-        .addItem("📊 View System Status", "viewSystemStatus"),
+        .addItem("🔍 Test Gemini Connection", "testGeminiConnection")
+        .addItem("🧪 Test Gemini AI Integration", "testGeminiIntegration")
+        .addItem("📊 View System Status", "viewSystemStatus")
+        .addSeparator()
+        .addItem("🚨 View Error Report", "viewErrorReport")
+        .addItem("🗑️ Clear Error Logs", "clearErrorLogs"),
     )
     .addToUi();
 }
@@ -1749,7 +1770,7 @@ function generateAiPleadingTitle(fileName) {
       payload: JSON.stringify(payload),
       muteHttpExceptions: true,
     };
-    const response = UrlFetchApp.fetch(GEMINI_CONFIG.MODEL_ENDPOINT, options);
+    const response = UrlFetchApp.fetch(getGeminiEndpoint(), options);
     const responseCode = response.getResponseCode();
     if (responseCode !== 200) {
       console.log(
@@ -1779,47 +1800,76 @@ function generateAiPleadingTitle(fileName) {
 // Gemini API key management functions
 function setGeminiApiKey() {
   const ui = SpreadsheetApp.getUi();
+  // Show current key status before prompting
+  const existingKey = PropertiesService.getUserProperties().getProperty(
+    GEMINI_CONFIG.USER_PROP_KEY,
+  );
+  const selectedModel =
+    getConfigValue(GEMINI_CONFIG.SELECTED_MODEL_KEY) ||
+    GEMINI_CONFIG.FALLBACK_MODEL;
+  let statusMsg = "🔑 SET GEMINI API KEY\n\n";
+  if (existingKey) {
+    const masked =
+      existingKey.substring(0, 4) +
+      "..." +
+      existingKey.substring(existingKey.length - 4);
+    statusMsg += `Current status: ✅ Key is SET (${masked})\n`;
+    statusMsg += `Active model: ${selectedModel}\n\n`;
+    statusMsg +=
+      "Enter a new key below to replace it, or press Cancel to keep the existing key.";
+  } else {
+    statusMsg += "Current status: ❌ No key set\n\n";
+    statusMsg +=
+      "Get your free API key from:\nhttps://aistudio.google.com/app/apikey\n\n";
+    statusMsg +=
+      "Note: The key is stored securely in your personal user properties and is not visible to other spreadsheet users.";
+  }
   const response = ui.prompt(
     "🔑 Set Gemini API Key",
-    "Enter your Gemini API key:\n\n(Get this from https://aistudio.google.com/app/apikey)\n\nNote: This will be stored securely in your user properties and only accessible to you.",
+    statusMsg,
     ui.ButtonSet.OK_CANCEL,
   );
   if (response.getSelectedButton() === ui.Button.OK) {
     const apiKey = response.getResponseText().trim();
-    if (apiKey) {
-      try {
-        testGeminiApiKey(apiKey);
-        PropertiesService.getUserProperties().setProperty(
-          GEMINI_CONFIG.USER_PROP_KEY,
-          apiKey,
-        );
-        logEvent(
-          "CONFIG",
-          "",
-          "",
-          "",
-          "",
-          "Gemini API key set successfully",
-          "SUCCESS",
-        );
-        ui.alert(
-          "✅ Gemini API key saved successfully!\n\nReady for future AI features.",
-        );
-      } catch (error) {
-        logEvent(
-          "ERROR",
-          "",
-          "",
-          "",
-          "",
-          `Invalid Gemini API key: ${error.message}`,
-          "ERROR",
-          error.message,
-        );
-        ui.alert(
-          `❌ Invalid API key or API test failed.\n\nError: ${error.message}`,
-        );
-      }
+    if (!apiKey) {
+      ui.alert("⚠️ No key entered. Existing key (if any) was not changed.");
+      return;
+    }
+    try {
+      ui.alert("⏳ Validating API key against Gemini... Please wait.");
+      testGeminiApiKey(apiKey);
+      PropertiesService.getUserProperties().setProperty(
+        GEMINI_CONFIG.USER_PROP_KEY,
+        apiKey,
+      );
+      logEvent(
+        "CONFIG",
+        "",
+        "",
+        "",
+        "",
+        "Gemini API key set successfully",
+        "SUCCESS",
+      );
+      const masked =
+        apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4);
+      ui.alert(
+        `✅ Gemini API key saved!\n\nKey: ${masked}\nModel: ${selectedModel}\n\nThe key was validated successfully. AI title generation is now active.`,
+      );
+    } catch (error) {
+      logEvent(
+        "ERROR",
+        "",
+        "",
+        "",
+        "",
+        `Invalid Gemini API key: ${error.message}`,
+        "ERROR",
+        error.message,
+      );
+      ui.alert(
+        `❌ API key validation failed.\n\nError: ${error.message}\n\nThe key was NOT saved. Please check the key and try again.`,
+      );
     }
   }
 }
@@ -1846,7 +1896,7 @@ function testGeminiApiKey(apiKey) {
     payload: JSON.stringify(payload),
     muteHttpExceptions: true,
   };
-  const response = UrlFetchApp.fetch(GEMINI_CONFIG.MODEL_ENDPOINT, options);
+  const response = UrlFetchApp.fetch(getGeminiEndpoint(), options);
   const responseCode = response.getResponseCode();
   if (responseCode !== 200) {
     throw new Error(
@@ -1903,6 +1953,12 @@ function logEvent(
     ];
     sheet.appendRow(row);
     const lastRow = sheet.getLastRow();
+    // Highlight ERROR rows in red for easy visual identification
+    if (status === "ERROR") {
+      sheet
+        .getRange(lastRow, 1, 1, LOG_HEADERS.length)
+        .setBackground("#f4cccc");
+    }
     if (lastRow > 1001) {
       sheet.deleteRows(2, lastRow - 1001);
     }
@@ -2027,5 +2083,427 @@ function testSheetAccess() {
     }
   } catch (error) {
     SpreadsheetApp.getUi().alert("❌ Error: " + error.message);
+  }
+}
+
+// ============================================================
+// PLAN ITEM 2: GEMINI MODEL SELECTOR
+// ============================================================
+
+/**
+ * Fetches the list of Gemini models that support generateContent.
+ * Returns an array of model name strings (e.g. ["gemini-2.0-flash", ...]).
+ * Throws on network or API error.
+ */
+function fetchGeminiModels(apiKey) {
+  const url = `${GEMINI_CONFIG.MODELS_LIST_URL}?key=${apiKey}`;
+  const options = {
+    method: "get",
+    muteHttpExceptions: true,
+  };
+  const response = UrlFetchApp.fetch(url, options);
+  const responseCode = response.getResponseCode();
+  if (responseCode !== 200) {
+    throw new Error(
+      `Failed to fetch models (HTTP ${responseCode}): ${response.getContentText()}`,
+    );
+  }
+  const data = JSON.parse(response.getContentText());
+  if (!data.models || !Array.isArray(data.models)) {
+    throw new Error("Unexpected response format from models API.");
+  }
+  // Filter to only models that support generateContent
+  const capable = data.models
+    .filter(
+      (m) =>
+        m.supportedGenerationMethods &&
+        m.supportedGenerationMethods.includes("generateContent"),
+    )
+    .map((m) => m.name.replace("models/", ""))
+    .sort();
+  return capable;
+}
+
+/**
+ * Determines the "newest" model from a list by preferring higher version numbers
+ * and non-experimental/non-legacy names. Returns the model name string.
+ */
+function pickNewestModel(models) {
+  if (!models || models.length === 0) return null;
+  // Prefer non-exp, non-legacy, non-preview, non-001 models; then sort descending
+  const scored = models.map((m) => {
+    let score = 0;
+    if (m.includes("exp") || m.includes("preview")) score -= 10;
+    if (m.includes("legacy") || m.includes("001")) score -= 20;
+    // Extract version number for comparison
+    const versionMatch = m.match(/(\d+\.\d+)/);
+    if (versionMatch) score += parseFloat(versionMatch[1]) * 10;
+    if (m.includes("pro")) score += 5;
+    if (m.includes("flash")) score += 3;
+    return { model: m, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].model;
+}
+
+/**
+ * Fetches the live Gemini model list and lets the user pick one.
+ * The newest model is highlighted with ★. Saves selection to System Config.
+ */
+function selectGeminiModel() {
+  const ui = SpreadsheetApp.getUi();
+  const apiKey = PropertiesService.getUserProperties().getProperty(
+    GEMINI_CONFIG.USER_PROP_KEY,
+  );
+  if (!apiKey) {
+    ui.alert(
+      "❌ No Gemini API key set.\n\nPlease set your API key first via:\n🔑 Set Gemini API Key",
+    );
+    return;
+  }
+  try {
+    ui.alert("⏳ Fetching available Gemini models... Please wait.");
+    const models = fetchGeminiModels(apiKey);
+    if (models.length === 0) {
+      ui.alert(
+        "❌ No generateContent-capable models found.\n\nCheck your API key permissions.",
+      );
+      return;
+    }
+    const newestModel = pickNewestModel(models);
+    const currentModel =
+      getConfigValue(GEMINI_CONFIG.SELECTED_MODEL_KEY) ||
+      GEMINI_CONFIG.FALLBACK_MODEL;
+    // Build numbered list for display
+    let listMsg = "🤖 SELECT GEMINI AI MODEL\n\n";
+    listMsg += `Currently active: ${currentModel}\n\n`;
+    listMsg += "Available models (enter the number to select):\n\n";
+    models.forEach((m, i) => {
+      const isCurrent = m === currentModel ? " ◀ CURRENT" : "";
+      const isNewest = m === newestModel ? " ★ RECOMMENDED" : "";
+      listMsg += `${i + 1}. ${m}${isNewest}${isCurrent}\n`;
+    });
+    listMsg += `\nEnter a number (1–${models.length}):`;
+    const response = ui.prompt(
+      "🤖 Select AI Model",
+      listMsg,
+      ui.ButtonSet.OK_CANCEL,
+    );
+    if (response.getSelectedButton() !== ui.Button.OK) return;
+    const input = response.getResponseText().trim();
+    const index = parseInt(input, 10) - 1;
+    if (isNaN(index) || index < 0 || index >= models.length) {
+      ui.alert(
+        `❌ Invalid selection "${input}".\n\nPlease enter a number between 1 and ${models.length}.`,
+      );
+      return;
+    }
+    const selectedModel = models[index];
+    setConfigValue(GEMINI_CONFIG.SELECTED_MODEL_KEY, selectedModel);
+    logEvent(
+      "CONFIG",
+      "",
+      "",
+      "",
+      "",
+      `Gemini model selected: ${selectedModel}`,
+      "SUCCESS",
+    );
+    const isNewest = selectedModel === newestModel ? " (★ Recommended)" : "";
+    ui.alert(
+      `✅ AI Model Updated!\n\nSelected: ${selectedModel}${isNewest}\n\nAll future AI title generation will use this model. You can change it anytime from the menu.`,
+    );
+  } catch (error) {
+    logEvent(
+      "ERROR",
+      "",
+      "",
+      "",
+      "",
+      `Model selection failed: ${error.message}`,
+      "ERROR",
+      error.message,
+    );
+    ui.alert(`❌ Failed to fetch model list.\n\nError: ${error.message}`);
+  }
+}
+
+// ============================================================
+// PLAN ITEM 1 (continued): TEST GEMINI CONNECTION
+// ============================================================
+
+/**
+ * Standalone diagnostic: tests the currently stored API key and selected model.
+ * Shows key status, model in use, response received, and latency.
+ */
+function testGeminiConnection() {
+  const ui = SpreadsheetApp.getUi();
+  const apiKey = PropertiesService.getUserProperties().getProperty(
+    GEMINI_CONFIG.USER_PROP_KEY,
+  );
+  if (!apiKey) {
+    ui.alert(
+      "❌ No Gemini API key set.\n\nPlease set your API key first via:\n🔑 Set Gemini API Key",
+    );
+    return;
+  }
+  const selectedModel =
+    getConfigValue(GEMINI_CONFIG.SELECTED_MODEL_KEY) ||
+    GEMINI_CONFIG.FALLBACK_MODEL;
+  const endpoint = getGeminiEndpoint();
+  const masked =
+    apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4);
+  try {
+    const payload = {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: 'Reply with exactly: "Connection successful."' }],
+        },
+      ],
+      generationConfig: { temperature: 0, maxOutputTokens: 20 },
+    };
+    const options = {
+      method: "post",
+      contentType: "application/json",
+      headers: { "x-goog-api-key": apiKey },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true,
+    };
+    const startTime = Date.now();
+    const response = UrlFetchApp.fetch(endpoint, options);
+    const latencyMs = Date.now() - startTime;
+    const responseCode = response.getResponseCode();
+    if (responseCode !== 200) {
+      throw new Error(`HTTP ${responseCode}: ${response.getContentText()}`);
+    }
+    const data = JSON.parse(response.getContentText());
+    const replyText =
+      data.candidates &&
+      data.candidates[0] &&
+      data.candidates[0].content &&
+      data.candidates[0].content.parts &&
+      data.candidates[0].content.parts[0] &&
+      data.candidates[0].content.parts[0].text;
+    logEvent(
+      "TEST_GEMINI_CONNECTION",
+      "",
+      "",
+      "",
+      "",
+      `Connection test passed. Model: ${selectedModel}, Latency: ${latencyMs}ms`,
+      "SUCCESS",
+    );
+    let report = "🔍 GEMINI CONNECTION TEST\n\n";
+    report += `✅ Status: CONNECTED\n`;
+    report += `🔑 Key: ${masked}\n`;
+    report += `🤖 Model: ${selectedModel}\n`;
+    report += `⚡ Latency: ${latencyMs}ms\n`;
+    report += `💬 Response: "${replyText ? replyText.trim() : "(empty)"}"`;
+    ui.alert(report);
+  } catch (error) {
+    logEvent(
+      "ERROR",
+      "",
+      "",
+      "",
+      "",
+      `Gemini connection test failed: ${error.message}`,
+      "ERROR",
+      error.message,
+    );
+    let report = "🔍 GEMINI CONNECTION TEST\n\n";
+    report += `❌ Status: FAILED\n`;
+    report += `🔑 Key: ${masked}\n`;
+    report += `🤖 Model: ${selectedModel}\n`;
+    report += `❌ Error: ${error.message}`;
+    ui.alert(report);
+  }
+}
+
+// ============================================================
+// PLAN ITEM 4: GEMINI AI INTEGRATION DIAGNOSTIC
+// ============================================================
+
+/**
+ * End-to-end integration test for the full AI title generation pipeline.
+ * Tests: key presence → model config → actual generateAiPleadingTitle() call → result validation.
+ */
+function testGeminiIntegration() {
+  const ui = SpreadsheetApp.getUi();
+  const sampleFilename = "motion_to_dismiss_complaint_2024.pdf";
+  const apiKey = PropertiesService.getUserProperties().getProperty(
+    GEMINI_CONFIG.USER_PROP_KEY,
+  );
+  const selectedModel =
+    getConfigValue(GEMINI_CONFIG.SELECTED_MODEL_KEY) ||
+    GEMINI_CONFIG.FALLBACK_MODEL;
+  let report = "🧪 GEMINI AI INTEGRATION TEST\n\n";
+  // Step 1: API key check
+  if (!apiKey) {
+    report += "❌ STEP 1 — API Key: NOT SET\n";
+    report += "\nTest cannot proceed. Please set your Gemini API key first.";
+    ui.alert(report);
+    return;
+  }
+  const masked =
+    apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4);
+  report += `✅ STEP 1 — API Key: SET (${masked})\n`;
+  // Step 2: Model config check
+  report += `✅ STEP 2 — Model: ${selectedModel}\n`;
+  report += `✅ STEP 3 — Endpoint: ${getGeminiEndpoint()}\n`;
+  // Step 3: Run actual AI title generation
+  report += `\n📄 Sample Input: "${sampleFilename}"\n`;
+  report += "⏳ Calling generateAiPleadingTitle()...\n";
+  const startTime = Date.now();
+  let aiTitle = null;
+  let testPassed = false;
+  let errorMsg = "";
+  try {
+    aiTitle = generateAiPleadingTitle(sampleFilename);
+    const latencyMs = Date.now() - startTime;
+    if (aiTitle && aiTitle.length > 0) {
+      testPassed = true;
+      report += `\n✅ STEP 4 — AI Output: "${aiTitle}"\n`;
+      report += `⚡ Latency: ${latencyMs}ms\n`;
+      // Step 4: Simulate full name generation
+      const fakeDate = new Date("2024-03-15");
+      const fullName = generatePleadingName(sampleFilename, fakeDate);
+      report += `\n📋 Full Generated Name:\n"${fullName}"\n`;
+      report += "\n✅ RESULT: ALL TESTS PASSED\n";
+      report += "AI title generation is fully operational.";
+    } else {
+      errorMsg = "AI returned null or empty response";
+      report += `\n❌ STEP 4 — AI Output: (empty/null)\n`;
+      report += `\n❌ RESULT: FAILED — ${errorMsg}`;
+    }
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    errorMsg = error.message;
+    report += `\n❌ STEP 4 — Exception after ${latencyMs}ms: ${errorMsg}\n`;
+    report += `\n❌ RESULT: FAILED`;
+  }
+  logEvent(
+    "TEST_GEMINI_INTEGRATION",
+    "",
+    "",
+    "",
+    "",
+    testPassed
+      ? `Integration test PASSED. Model: ${selectedModel}, Output: "${aiTitle}"`
+      : `Integration test FAILED: ${errorMsg}`,
+    testPassed ? "SUCCESS" : "ERROR",
+    testPassed ? "" : errorMsg,
+  );
+  ui.alert(report);
+}
+
+// ============================================================
+// PLAN ITEM 3: ERROR LOG REPORT & CLEAR
+// ============================================================
+
+/**
+ * Reads the Logs sheet and displays the last 20 ERROR-status rows
+ * in a formatted alert for easy developer reporting.
+ */
+function viewErrorReport() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(
+      CONFIG.SHEETS.LOGS,
+    );
+    if (!sheet) {
+      ui.alert("❌ Logs sheet not found. Please run Initial Setup first.");
+      return;
+    }
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      ui.alert("📋 No log entries found.");
+      return;
+    }
+    const data = sheet
+      .getRange(2, 1, lastRow - 1, LOG_HEADERS.length)
+      .getValues();
+    // Filter to ERROR rows only
+    const errorRows = data.filter((row) => row[7] === "ERROR");
+    if (errorRows.length === 0) {
+      ui.alert(
+        "✅ No errors found in the log!\n\nThe system has been running without errors.",
+      );
+      return;
+    }
+    // Show last 20 errors (most recent first)
+    const recentErrors = errorRows.slice(-20).reverse();
+    let report = `🚨 ERROR REPORT (${errorRows.length} total errors, showing last ${recentErrors.length})\n`;
+    report += "─────────────────────────────────\n\n";
+    recentErrors.forEach((row, i) => {
+      const timestamp =
+        row[0] instanceof Date ? row[0].toLocaleString() : row[0];
+      const eventType = row[1] || "";
+      const details = row[6] || "";
+      const errorMsg = row[8] || "";
+      report += `[${i + 1}] ${timestamp}\n`;
+      report += `    Type: ${eventType}\n`;
+      if (details) report += `    Details: ${details}\n`;
+      if (errorMsg) report += `    Error: ${errorMsg}\n`;
+      report += "\n";
+    });
+    report += "─────────────────────────────────\n";
+    report += "Use 🗑️ Clear Error Logs to remove these entries.";
+    ui.alert(report);
+  } catch (error) {
+    ui.alert(`❌ Failed to read error report: ${error.message}`);
+  }
+}
+
+/**
+ * Clears only ERROR-status rows from the Logs sheet after confirmation.
+ */
+function clearErrorLogs() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    "🗑️ Clear Error Logs",
+    "This will permanently delete all ERROR rows from the Logs sheet.\n\nNon-error log entries (INFO, SUCCESS) will be kept.\n\nProceed?",
+    ui.ButtonSet.YES_NO,
+  );
+  if (response !== ui.Button.YES) return;
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(
+      CONFIG.SHEETS.LOGS,
+    );
+    if (!sheet) {
+      ui.alert("❌ Logs sheet not found.");
+      return;
+    }
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      ui.alert("📋 No log entries to clear.");
+      return;
+    }
+    // Collect ERROR row indices (iterate from bottom to avoid index shifting)
+    const data = sheet
+      .getRange(2, 1, lastRow - 1, LOG_HEADERS.length)
+      .getValues();
+    let deletedCount = 0;
+    for (let i = data.length - 1; i >= 0; i--) {
+      if (data[i][7] === "ERROR") {
+        sheet.deleteRow(i + 2); // +2 because data starts at row 2
+        deletedCount++;
+      }
+    }
+    logEvent(
+      "CONFIG",
+      "",
+      "",
+      "",
+      "",
+      `Error logs cleared: ${deletedCount} ERROR rows deleted`,
+      "SUCCESS",
+    );
+    ui.alert(
+      `✅ Error logs cleared!\n\n${deletedCount} ERROR row(s) removed from the Logs sheet.`,
+    );
+  } catch (error) {
+    ui.alert(`❌ Failed to clear error logs: ${error.message}`);
   }
 }
