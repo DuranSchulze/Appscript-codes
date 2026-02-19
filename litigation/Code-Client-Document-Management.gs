@@ -17,7 +17,7 @@ Required OAuth Scopes:
 
 
 Authored by: Atty. Mary Wendy Duran
-Modified: 21 September 2025
+Modified: February 19, 2026
 *******************************************************/
 
 /**
@@ -1836,44 +1836,88 @@ function setGeminiApiKey() {
       return;
     }
     try {
-      ui.alert("⏳ Validating API key against Gemini... Please wait.");
-      testGeminiApiKey(apiKey);
+      // Save the key first so testGeminiApiKey uses the correct endpoint from config
       PropertiesService.getUserProperties().setProperty(
         GEMINI_CONFIG.USER_PROP_KEY,
         apiKey,
       );
-      logEvent(
-        "CONFIG",
-        "",
-        "",
-        "",
-        "",
-        "Gemini API key set successfully",
-        "SUCCESS",
-      );
       const masked =
         apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4);
-      ui.alert(
-        `✅ Gemini API key saved!\n\nKey: ${masked}\nModel: ${selectedModel}\n\nThe key was validated successfully. AI title generation is now active.`,
-      );
+      const result = testGeminiApiKey(apiKey);
+      if (result.valid && result.quotaExhausted) {
+        // Key is genuine but free-tier quota is exhausted
+        logEvent(
+          "CONFIG",
+          "",
+          "",
+          "",
+          "",
+          "Gemini API key saved (quota exhausted on validation)",
+          "SUCCESS",
+        );
+        ui.alert(
+          `✅ Gemini API key saved!\n\nKey: ${masked}\nModel: ${selectedModel}\n\n⚠️ Note: Your free-tier quota is currently exhausted (HTTP 429).\nThe key is valid — AI title generation will work once your quota resets or you enable billing at:\nhttps://ai.google.dev/gemini-api/docs/rate-limits`,
+        );
+      } else if (result.valid) {
+        logEvent(
+          "CONFIG",
+          "",
+          "",
+          "",
+          "",
+          "Gemini API key set and validated successfully",
+          "SUCCESS",
+        );
+        ui.alert(
+          `✅ Gemini API key saved!\n\nKey: ${masked}\nModel: ${selectedModel}\n\nThe key was validated successfully. AI title generation is now active.`,
+        );
+      } else {
+        // Invalid key — remove it
+        PropertiesService.getUserProperties().deleteProperty(
+          GEMINI_CONFIG.USER_PROP_KEY,
+        );
+        logEvent(
+          "ERROR",
+          "",
+          "",
+          "",
+          "",
+          `Invalid Gemini API key rejected: ${result.error}`,
+          "ERROR",
+          result.error,
+        );
+        ui.alert(
+          `❌ API key rejected — the key appears to be invalid or unauthorized.\n\nError: ${result.error}\n\nThe key was NOT saved. Please check the key at:\nhttps://aistudio.google.com/app/apikey`,
+        );
+      }
     } catch (error) {
+      // Unexpected exception (network failure, etc.) — remove the key we pre-saved
+      PropertiesService.getUserProperties().deleteProperty(
+        GEMINI_CONFIG.USER_PROP_KEY,
+      );
       logEvent(
         "ERROR",
         "",
         "",
         "",
         "",
-        `Invalid Gemini API key: ${error.message}`,
+        `Gemini API key validation error: ${error.message}`,
         "ERROR",
         error.message,
       );
       ui.alert(
-        `❌ API key validation failed.\n\nError: ${error.message}\n\nThe key was NOT saved. Please check the key and try again.`,
+        `❌ Unexpected error during validation.\n\nError: ${error.message}\n\nThe key was NOT saved.`,
       );
     }
   }
 }
 
+/**
+ * Tests a Gemini API key. Returns an object: { valid: bool, quotaExhausted: bool, error: string }.
+ * A 429 (quota exhausted) is treated as a VALID key — the key itself is correct,
+ * the account just needs billing enabled or quota to reset.
+ * Only 400/401/403 responses indicate a genuinely invalid or unauthorized key.
+ */
 function testGeminiApiKey(apiKey) {
   const payload = {
     contents: [
@@ -1898,15 +1942,31 @@ function testGeminiApiKey(apiKey) {
   };
   const response = UrlFetchApp.fetch(getGeminiEndpoint(), options);
   const responseCode = response.getResponseCode();
-  if (responseCode !== 200) {
-    throw new Error(
-      `API returned ${responseCode}: ${response.getContentText()}`,
-    );
+  if (responseCode === 200) {
+    const data = JSON.parse(response.getContentText());
+    if (
+      !data.candidates ||
+      !data.candidates[0] ||
+      !data.candidates[0].content
+    ) {
+      return {
+        valid: false,
+        quotaExhausted: false,
+        error: "Invalid API response structure",
+      };
+    }
+    return { valid: true, quotaExhausted: false, error: "" };
   }
-  const data = JSON.parse(response.getContentText());
-  if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-    throw new Error("Invalid API response structure");
+  if (responseCode === 429) {
+    // Quota exhausted — the key is valid, but the account has no remaining quota.
+    return { valid: true, quotaExhausted: true, error: "" };
   }
+  // 400/401/403 = bad key or unauthorized
+  return {
+    valid: false,
+    quotaExhausted: false,
+    error: `HTTP ${responseCode}: ${response.getContentText()}`,
+  };
 }
 
 function clearGeminiApiKey() {
@@ -2274,32 +2334,58 @@ function testGeminiConnection() {
     const response = UrlFetchApp.fetch(endpoint, options);
     const latencyMs = Date.now() - startTime;
     const responseCode = response.getResponseCode();
-    if (responseCode !== 200) {
-      throw new Error(`HTTP ${responseCode}: ${response.getContentText()}`);
-    }
-    const data = JSON.parse(response.getContentText());
-    const replyText =
-      data.candidates &&
-      data.candidates[0] &&
-      data.candidates[0].content &&
-      data.candidates[0].content.parts &&
-      data.candidates[0].content.parts[0] &&
-      data.candidates[0].content.parts[0].text;
-    logEvent(
-      "TEST_GEMINI_CONNECTION",
-      "",
-      "",
-      "",
-      "",
-      `Connection test passed. Model: ${selectedModel}, Latency: ${latencyMs}ms`,
-      "SUCCESS",
-    );
     let report = "🔍 GEMINI CONNECTION TEST\n\n";
-    report += `✅ Status: CONNECTED\n`;
     report += `🔑 Key: ${masked}\n`;
     report += `🤖 Model: ${selectedModel}\n`;
     report += `⚡ Latency: ${latencyMs}ms\n`;
-    report += `💬 Response: "${replyText ? replyText.trim() : "(empty)"}"`;
+    if (responseCode === 200) {
+      const data = JSON.parse(response.getContentText());
+      const replyText =
+        data.candidates &&
+        data.candidates[0] &&
+        data.candidates[0].content &&
+        data.candidates[0].content.parts &&
+        data.candidates[0].content.parts[0] &&
+        data.candidates[0].content.parts[0].text;
+      logEvent(
+        "TEST_GEMINI_CONNECTION",
+        "",
+        "",
+        "",
+        "",
+        `Connection test passed. Model: ${selectedModel}, Latency: ${latencyMs}ms`,
+        "SUCCESS",
+      );
+      report += `✅ Status: CONNECTED\n`;
+      report += `� Response: "${replyText ? replyText.trim() : "(empty)"}"`;
+    } else if (responseCode === 429) {
+      logEvent(
+        "TEST_GEMINI_CONNECTION",
+        "",
+        "",
+        "",
+        "",
+        `Connection test: key valid but quota exhausted. Model: ${selectedModel}`,
+        "SUCCESS",
+      );
+      report += `⚠️ Status: KEY VALID — QUOTA EXHAUSTED\n`;
+      report += `The key is correctly authenticated but your free-tier quota is used up.\n`;
+      report += `AI title generation will resume once quota resets or billing is enabled:\n`;
+      report += `https://ai.google.dev/gemini-api/docs/rate-limits`;
+    } else {
+      logEvent(
+        "ERROR",
+        "",
+        "",
+        "",
+        "",
+        `Gemini connection test failed: HTTP ${responseCode}`,
+        "ERROR",
+        response.getContentText(),
+      );
+      report += `❌ Status: FAILED (HTTP ${responseCode})\n`;
+      report += `The key may be invalid or unauthorized. Check it at:\nhttps://aistudio.google.com/app/apikey`;
+    }
     ui.alert(report);
   } catch (error) {
     logEvent(
@@ -2308,12 +2394,12 @@ function testGeminiConnection() {
       "",
       "",
       "",
-      `Gemini connection test failed: ${error.message}`,
+      `Gemini connection test error: ${error.message}`,
       "ERROR",
       error.message,
     );
     let report = "🔍 GEMINI CONNECTION TEST\n\n";
-    report += `❌ Status: FAILED\n`;
+    report += `❌ Status: ERROR\n`;
     report += `🔑 Key: ${masked}\n`;
     report += `🤖 Model: ${selectedModel}\n`;
     report += `❌ Error: ${error.message}`;
