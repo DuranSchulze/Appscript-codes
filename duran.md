@@ -1,0 +1,3 @@
+- responsiveness for the website for Tab screen portrait creates a white space in the right side of the screen.
+- clicking the Practice Area in the navigation produces a weird look of the modal or navigation in the tablet screen portrait.
+- dds website is optimized
