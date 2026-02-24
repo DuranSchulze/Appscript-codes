@@ -61,6 +61,34 @@ function onOpen() {
   }
 }
 
+function getGeminiFallbackReason(error) {
+  const message = (error && error.message ? error.message : String(error || ""))
+    .toLowerCase()
+    .trim();
+
+  if (message.indexOf("429") !== -1) {
+    return "Gemini API 429";
+  }
+
+  if (
+    message.indexOf("daily limit") !== -1 ||
+    message.indexOf("limit reached") !== -1 ||
+    message.indexOf("quota") !== -1
+  ) {
+    return "Gemini quota reached";
+  }
+
+  if (message.indexOf("content filtered") !== -1) {
+    return "Gemini content filtered";
+  }
+
+  if (message.indexOf("api key") !== -1) {
+    return "Gemini key error";
+  }
+
+  return "Gemini error";
+}
+
 function createCustomMenu() {
   const ui = SpreadsheetApp.getUi();
 
@@ -143,6 +171,7 @@ function initializeSetup() {
     else setupResults.sheetsUpdated++;
 
     addSampleDashboardData(ss);
+    const modelSetupResult = configureGeminiModelDuringSetup();
 
     const processingTime = (new Date() - startTime) / 1000;
     logAudit(
@@ -150,7 +179,11 @@ function initializeSetup() {
       `Sheets created: ${setupResults.sheetsCreated}, updated: ${setupResults.sheetsUpdated}, time: ${processingTime}s`,
     );
 
-    const successMessage = `✅ System Setup Complete!\n\n📊 Results:\n• Sheets Created: ${setupResults.sheetsCreated}\n• Sheets Updated: ${setupResults.sheetsUpdated}\n• Processing Time: ${processingTime.toFixed(2)} seconds\n\n🚀 Ready for AI-powered document processing!`;
+    const modelSetupMessage =
+      modelSetupResult && modelSetupResult.message
+        ? `\n\n🤖 Gemini Model:\n• ${modelSetupResult.message}`
+        : "";
+    const successMessage = `✅ System Setup Complete!\n\n📊 Results:\n• Sheets Created: ${setupResults.sheetsCreated}\n• Sheets Updated: ${setupResults.sheetsUpdated}\n• Processing Time: ${processingTime.toFixed(2)} seconds${modelSetupMessage}\n\n🚀 Ready for AI-powered document processing!`;
     ui.alert("Setup Complete", successMessage, ui.ButtonSet.OK);
   } catch (error) {
     logError("System initialization failed", error);
@@ -180,10 +213,11 @@ function createDashboardSheet(ss) {
     "Emails",
     "Status",
     "Manager Emails",
+    "Alert Emails (Errors/No Files)",
   ];
-  dashboardSheet.getRange("A1:E1").setValues([headers]);
+  dashboardSheet.getRange("A1:F1").setValues([headers]);
 
-  const headerRange = dashboardSheet.getRange("A1:E1");
+  const headerRange = dashboardSheet.getRange("A1:F1");
   headerRange
     .setFontWeight("bold")
     .setBackground("#E31E24")
@@ -197,6 +231,7 @@ function createDashboardSheet(ss) {
   dashboardSheet.setColumnWidth(3, 300);
   dashboardSheet.setColumnWidth(4, 120);
   dashboardSheet.setColumnWidth(5, 300);
+  dashboardSheet.setColumnWidth(6, 320);
   dashboardSheet.setFrozenRows(1);
 
   const statusRange = dashboardSheet.getRange("D2:D");
@@ -360,6 +395,7 @@ function addSampleDashboardData(ss) {
           "hr@company.com",
           "Ready",
           "hr.manager@company.com",
+          "it-alerts@company.com",
         ],
         [
           "Finance Department",
@@ -367,6 +403,7 @@ function addSampleDashboardData(ss) {
           "finance@company.com",
           "Ready",
           "finance.manager@company.com",
+          "finance-alerts@company.com",
         ],
       ];
       dashboardSheet
@@ -589,6 +626,17 @@ function processDepartmentFiles() {
       "Processing completed",
       `Total: ${totalProcessed} files, ${flagged} flagged, ${errors} errors, ${processingTime}s`,
     );
+
+    if (errors > 0) {
+      notifyProcessingErrorsForToday(departments, {
+        totalProcessed,
+        errors,
+        flagged,
+        departmentsProcessed,
+        processingTime,
+      });
+    }
+
     return { totalProcessed, errors, departmentsProcessed, flagged };
   } catch (error) {
     logError("Main processing failed", error);
@@ -769,6 +817,7 @@ function extractTitleFromFileFirstPage(file) {
     const mimeType = file.getMimeType();
     const properties = PropertiesService.getScriptProperties();
     const geminiKey = getGeminiApiKey();
+    let geminiFallbackReason = "";
 
     debugLog(`\n--- TITLE EXTRACTION START ---`);
     debugLog(`File: ${file.getName()}`);
@@ -796,25 +845,31 @@ function extractTitleFromFileFirstPage(file) {
       } catch (geminiError) {
         debugLog(`❌ Gemini FAILED: ${geminiError.message}`);
         logError("Gemini extraction failed", geminiError);
+        geminiFallbackReason = getGeminiFallbackReason(geminiError);
       }
     } else if (!geminiKey) {
       debugLog("⚠️ Gemini API key not configured");
+      geminiFallbackReason = "Gemini key missing";
     } else {
       debugLog(
         `⚠️ Gemini daily limit reached (${getGeminiCallsToday()}/${getGeminiDailyCallLimit()}) - skipping Gemini`,
       );
+      geminiFallbackReason = "Gemini quota reached";
     }
 
     // OCR fallback
     debugLog("⚠️ Falling back to OCR...");
+    const ocrService = geminiFallbackReason
+      ? `OCR Fallback (${geminiFallbackReason})`
+      : "OCR Fallback";
     if (mimeType === "application/pdf") {
       const title = extractTitleFromPDF(file);
       debugLog(`OCR Result: "${title}"`);
-      return { title: title, aiService: "OCR Fallback" };
+      return { title: title, aiService: ocrService };
     } else if (mimeType.startsWith("image/")) {
       const title = extractTitleFromImage(file);
       debugLog(`OCR Result: "${title}"`);
-      return { title: title, aiService: "OCR Fallback" };
+      return { title: title, aiService: ocrService };
     }
 
     // Final fallback to filename
@@ -822,7 +877,10 @@ function extractTitleFromFileFirstPage(file) {
       file.getName().replace(/\.[^/.]+$/, ""),
     );
     debugLog(`⚠️ Using filename fallback: "${fallbackTitle}"`);
-    return { title: fallbackTitle, aiService: "Filename Fallback" };
+    const filenameFallbackService = geminiFallbackReason
+      ? `Filename Fallback (${geminiFallbackReason})`
+      : "Filename Fallback";
+    return { title: fallbackTitle, aiService: filenameFallbackService };
   } catch (error) {
     logError(`Title extraction failed for ${file.getName()}`, error);
     return {
@@ -1434,6 +1492,7 @@ function getDepartments() {
           emails: row[2] ? row[2].toString().trim() : "",
           status: row[3] ? row[3].toString().trim() : "",
           managerEmails: row[4] ? row[4].toString().trim() : "",
+          alertEmails: row[5] ? row[5].toString().trim() : "",
         });
       }
     }
@@ -1642,6 +1701,258 @@ function cleanupOldEmailData() {
     }
   } catch (error) {
     logError("Failed to cleanup email data", error);
+  }
+}
+
+function addEmailsToSet(emailList, targetSet) {
+  if (!emailList) return;
+  emailList
+    .split(",")
+    .map((email) => email.trim())
+    .filter((email) => email)
+    .forEach((email) => targetSet.add(email));
+}
+
+function getAlertRecipients(departments) {
+  const toSet = new Set();
+  const ccSet = new Set();
+
+  departments.forEach((dept) => {
+    const preferredAlertRecipients =
+      dept.alertEmails || dept.managerEmails || dept.emails || "";
+
+    addEmailsToSet(preferredAlertRecipients, toSet);
+    addEmailsToSet(dept.managerEmails, ccSet);
+  });
+
+  Array.from(toSet).forEach((email) => ccSet.delete(email));
+
+  return {
+    to: Array.from(toSet),
+    cc: Array.from(ccSet),
+  };
+}
+
+function sendAlertEmail(toRecipients, ccRecipients, subject, htmlBody) {
+  if (!toRecipients || toRecipients.length === 0) {
+    return false;
+  }
+
+  const emailOptions = {
+    htmlBody: htmlBody,
+    name: "FilePino Alert Automation",
+  };
+
+  if (ccRecipients && ccRecipients.length > 0) {
+    emailOptions.cc = ccRecipients.join(",");
+  }
+
+  MailApp.sendEmail(toRecipients.join(","), subject, "", emailOptions);
+  return true;
+}
+
+function getTodaysAuditErrors() {
+  const today = Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd");
+  const errors = [];
+
+  try {
+    const ss = openTargetSpreadsheet();
+    const sheet = ss.getSheetByName("Audit Trail");
+    if (!sheet) return errors;
+
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const status = row[3] ? row[3].toString().trim() : "";
+      if (status !== "Error") continue;
+
+      const rawTimestamp = row[0];
+      const timestamp =
+        rawTimestamp instanceof Date ? rawTimestamp : new Date(rawTimestamp);
+      if (!(timestamp instanceof Date) || isNaN(timestamp.getTime())) continue;
+
+      if (Utilities.formatDate(timestamp, TIMEZONE, "yyyy-MM-dd") !== today)
+        continue;
+
+      errors.push({
+        timestamp: timestamp,
+        action: row[1] ? row[1].toString() : "",
+        details: row[2] ? row[2].toString() : "",
+        errorMessage: row[4] ? row[4].toString() : "",
+      });
+    }
+  } catch (error) {
+    logError("Failed to read today's audit errors", error);
+  }
+
+  return errors;
+}
+
+function getAiUsageStatsForDate(date) {
+  const files = getTodaysProcessedFilesWithDirectUrls(date);
+  const stats = {
+    totalFiles: files.length,
+    geminiSuccess: 0,
+    ocrFallback: 0,
+    filenameFallback: 0,
+    quotaFallback: 0,
+    api429Fallback: 0,
+  };
+
+  files.forEach((file) => {
+    const aiUsed = (file.aiUsed || "").toLowerCase();
+
+    if (aiUsed.indexOf("gemini") !== -1 && aiUsed.indexOf("fallback") === -1) {
+      stats.geminiSuccess++;
+    }
+    if (aiUsed.indexOf("ocr fallback") !== -1) {
+      stats.ocrFallback++;
+    }
+    if (aiUsed.indexOf("filename fallback") !== -1) {
+      stats.filenameFallback++;
+    }
+    if (aiUsed.indexOf("quota") !== -1 || aiUsed.indexOf("limit") !== -1) {
+      stats.quotaFallback++;
+    }
+    if (aiUsed.indexOf("429") !== -1) {
+      stats.api429Fallback++;
+    }
+  });
+
+  return stats;
+}
+
+function notifyNoFilesForDay(date, departments) {
+  try {
+    const recipients = getAlertRecipients(departments || []);
+    if (recipients.to.length === 0) {
+      logAudit(
+        "No-files alert skipped",
+        "No alert recipients configured in Dashboard column 'Alert Emails (Errors/No Files)'",
+      );
+      return;
+    }
+
+    const subject = `FilePino Alert - No Files Processed (${date})`;
+    const htmlBody = `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;">
+        <h2 style="margin:0 0 10px 0;color:#b91c1c;">FilePino Daily Alert: No Files Processed</h2>
+        <p style="margin:0 0 8px 0;"><strong>Date:</strong> ${date}</p>
+        <p style="margin:0 0 12px 0;">No files were processed for today.</p>
+        <p style="margin:0;">Please check the source department folders, upload timing, and schedule status if this is unexpected.</p>
+      </div>
+    `;
+
+    const sent = sendAlertEmail(
+      recipients.to,
+      recipients.cc,
+      subject,
+      htmlBody,
+    );
+    if (sent) {
+      logAudit(
+        "No-files alert sent",
+        `Sent no-files alert for ${date} to ${recipients.to.length} recipient(s)`,
+      );
+    }
+  } catch (error) {
+    logError("Failed to send no-files alert", error);
+  }
+}
+
+function notifyProcessingErrorsForToday(departments, processingSummary) {
+  try {
+    const recipients = getAlertRecipients(departments || []);
+    if (recipients.to.length === 0) {
+      logAudit(
+        "Error alert skipped",
+        "No alert recipients configured in Dashboard column 'Alert Emails (Errors/No Files)'",
+      );
+      return;
+    }
+
+    const today = Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd");
+    const todayErrors = getTodaysAuditErrors();
+    const aiStats = getAiUsageStatsForDate(today);
+
+    const combinedErrorText = todayErrors
+      .map((entry) => `${entry.action} ${entry.details} ${entry.errorMessage}`)
+      .join("\n")
+      .toLowerCase();
+
+    const gemini429Errors = (
+      combinedErrorText.match(/gemini[\s\S]*?429|code:\s*429/g) || []
+    ).length;
+    const geminiQuotaErrors = (
+      combinedErrorText.match(/daily limit|quota|limit reached/g) || []
+    ).length;
+
+    const errorRows = todayErrors.slice(-20).map((entry) => {
+      const time = Utilities.formatDate(entry.timestamp, TIMEZONE, "HH:mm:ss");
+      const compactMessage = (entry.errorMessage || "")
+        .replace(/\n+/g, " ")
+        .substring(0, 220);
+
+      return `<tr>
+        <td style="padding:8px;border:1px solid #e5e7eb;vertical-align:top;">${time}</td>
+        <td style="padding:8px;border:1px solid #e5e7eb;vertical-align:top;">${entry.action || "-"}</td>
+        <td style="padding:8px;border:1px solid #e5e7eb;vertical-align:top;">${compactMessage || "(no details)"}</td>
+      </tr>`;
+    });
+
+    const htmlBody = `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;">
+        <h2 style="margin:0 0 10px 0;color:#b91c1c;">FilePino Error Alert Summary</h2>
+        <p style="margin:0 0 10px 0;"><strong>Date:</strong> ${today}</p>
+
+        <div style="margin-bottom:14px;padding:10px;border:1px solid #fecaca;background:#fef2f2;border-radius:6px;">
+          <p style="margin:0;"><strong>Processing Summary</strong><br>
+          Files processed: ${processingSummary.totalProcessed} | Errors: ${processingSummary.errors} | Flagged: ${processingSummary.flagged} | Departments touched: ${processingSummary.departmentsProcessed}</p>
+        </div>
+
+        <div style="margin-bottom:14px;padding:10px;border:1px solid #fee2e2;background:#fef2f2;border-radius:6px;">
+          <p style="margin:0;"><strong>AI/Fallback Details</strong><br>
+          Gemini success: ${aiStats.geminiSuccess} | OCR fallback: ${aiStats.ocrFallback} | Filename fallback: ${aiStats.filenameFallback}<br>
+          OCR due to Gemini quota reached: ${aiStats.quotaFallback} | OCR due to Gemini API 429: ${aiStats.api429Fallback}</p>
+        </div>
+
+        <div style="margin-bottom:14px;padding:10px;border:1px solid #e5e7eb;background:#f9fafb;border-radius:6px;">
+          <p style="margin:0;"><strong>Error Breakdown (from Audit Trail)</strong><br>
+          Logged errors today: ${todayErrors.length} | Gemini 429-related: ${gemini429Errors} | Gemini quota-related: ${geminiQuotaErrors} | Other/bug errors: ${Math.max(0, todayErrors.length - gemini429Errors - geminiQuotaErrors)}</p>
+        </div>
+
+        <h3 style="margin:0 0 8px 0;color:#111827;">Recent Error Details (latest 20)</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:12px;">
+          <thead>
+            <tr>
+              <th style="padding:8px;border:1px solid #e5e7eb;background:#f3f4f6;text-align:left;">Time</th>
+              <th style="padding:8px;border:1px solid #e5e7eb;background:#f3f4f6;text-align:left;">Action</th>
+              <th style="padding:8px;border:1px solid #e5e7eb;background:#f3f4f6;text-align:left;">Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${errorRows.length > 0 ? errorRows.join("") : '<tr><td colspan="3" style="padding:8px;border:1px solid #e5e7eb;">No detailed error rows found in today\'s Audit Trail.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    const subject = `FilePino Alert - ${processingSummary.errors} Processing Error(s) on ${today}`;
+    const sent = sendAlertEmail(
+      recipients.to,
+      recipients.cc,
+      subject,
+      htmlBody,
+    );
+
+    if (sent) {
+      logAudit(
+        "Error alert sent",
+        `Sent error summary to ${recipients.to.length} recipient(s) for ${today}`,
+      );
+    }
+  } catch (error) {
+    logError("Failed to send processing error alert", error);
   }
 }
 
@@ -2131,6 +2442,143 @@ function showSystemStatus() {
   ui.alert("System Status", statusMsg, ui.ButtonSet.OK);
 }
 
+function normalizeEmailAddress(email) {
+  return String(email || "")
+    .trim()
+    .toLowerCase();
+}
+
+function parseUniqueEmailList(emailCsv) {
+  const seen = {};
+  const parsed = [];
+
+  String(emailCsv || "")
+    .split(",")
+    .map((email) => normalizeEmailAddress(email))
+    .forEach((email) => {
+      if (!email) return;
+      if (!seen[email]) {
+        seen[email] = true;
+        parsed.push(email);
+      }
+    });
+
+  return parsed;
+}
+
+function isValidEmailAddress(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
+function formatEmailArrayPreview(emailList, maxItems) {
+  const limit = maxItems || 5;
+  if (!emailList || emailList.length === 0) return "none";
+
+  const shown = emailList.slice(0, limit).join(", ");
+  return emailList.length > limit
+    ? `${shown} ... (+${emailList.length - limit} more)`
+    : shown;
+}
+
+function getDepartmentRecipientPlan(departments) {
+  const toSet = new Set();
+  const ccSet = new Set();
+  const departmentIssues = [];
+
+  departments.forEach((dept) => {
+    const toList = parseUniqueEmailList(dept.emails);
+    const ccList = parseUniqueEmailList(dept.managerEmails);
+
+    if (toList.length === 0 && ccList.length === 0) {
+      departmentIssues.push(`${dept.name}: missing Emails and Manager Emails`);
+    } else if (toList.length === 0) {
+      departmentIssues.push(`${dept.name}: missing Emails`);
+    }
+
+    toList.forEach((email) => toSet.add(email));
+    ccList.forEach((email) => ccSet.add(email));
+  });
+
+  Array.from(toSet).forEach((email) => ccSet.delete(email));
+
+  const combinedUnique = Array.from(
+    new Set([...Array.from(toSet), ...Array.from(ccSet)]),
+  );
+  const validCombined = [];
+  const invalidCombined = [];
+
+  combinedUnique.forEach((email) => {
+    if (isValidEmailAddress(email)) {
+      validCombined.push(email);
+    } else {
+      invalidCombined.push(email);
+    }
+  });
+
+  const validLookup = new Set(validCombined);
+  const toRecipients = Array.from(toSet).filter((email) =>
+    validLookup.has(email),
+  );
+  const ccRecipients = Array.from(ccSet).filter((email) =>
+    validLookup.has(email),
+  );
+
+  return {
+    toRecipients: toRecipients,
+    ccRecipients: ccRecipients,
+    invalidRecipients: invalidCombined,
+    departmentIssues: departmentIssues,
+  };
+}
+
+function logRecipientPlanWarnings(contextLabel, recipientPlan) {
+  if (recipientPlan.departmentIssues.length > 0) {
+    logAudit(
+      "Email recipient warning",
+      `${contextLabel}: ${recipientPlan.departmentIssues.join(" | ")}`,
+    );
+  }
+
+  if (recipientPlan.invalidRecipients.length > 0) {
+    const invalidDetails = `${contextLabel}: removed invalid emails (${recipientPlan.invalidRecipients.length}) - ${formatEmailArrayPreview(recipientPlan.invalidRecipients, 15)}`;
+    logAudit(
+      "Invalid email addresses excluded",
+      invalidDetails,
+      "Error",
+      invalidDetails,
+    );
+  }
+}
+
+function checkEmailQuotaForSend(contextLabel, requiredRecipients) {
+  const remainingQuota = MailApp.getRemainingDailyQuota();
+  const hasEnoughQuota = remainingQuota >= requiredRecipients;
+
+  if (!hasEnoughQuota) {
+    const detail = `${contextLabel}: quota too low. Required ${requiredRecipients}, remaining ${remainingQuota}.`;
+    logAudit("Email blocked - quota exhausted", detail, "Error", detail);
+  }
+
+  return {
+    hasEnoughQuota: hasEnoughQuota,
+    remainingQuota: remainingQuota,
+    requiredRecipients: requiredRecipients,
+  };
+}
+
+function summarizeBatchFailures(failedBatches) {
+  if (!failedBatches || failedBatches.length === 0) {
+    return "No batch details.";
+  }
+
+  return failedBatches
+    .map(
+      (batch) =>
+        `Batch ${batch.batchNumber}: ${batch.errorMessage} (recipients: ${batch.recipientCount}; sample: ${batch.sampleRecipients || "n/a"})`,
+    )
+    .join(" | ");
+}
+
 /**
  * UPDATED: Send daily emails with search functionality
  */
@@ -2140,28 +2588,14 @@ function sendDailyEmails() {
     cleanupOldEmailData();
     const departments = getDepartments();
     const today = Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd");
-    const allEmailAddresses = new Set();
-    const allManagerEmails = new Set();
-
-    departments.forEach((dept) => {
-      if (dept.emails) {
-        dept.emails.split(",").forEach((email) => {
-          const cleanEmail = email.trim();
-          if (cleanEmail) allEmailAddresses.add(cleanEmail);
-        });
-      }
-      if (dept.managerEmails) {
-        dept.managerEmails.split(",").forEach((email) => {
-          const cleanEmail = email.trim();
-          if (cleanEmail) allManagerEmails.add(cleanEmail);
-        });
-      }
-    });
+    const recipientPlan = getDepartmentRecipientPlan(departments);
+    logRecipientPlanWarnings("Daily email", recipientPlan);
 
     const todaysProcessedFiles = getTodaysProcessedFilesWithDirectUrls(today);
 
     if (todaysProcessedFiles.length === 0) {
       logAudit("No emails sent", "No files processed today");
+      notifyNoFilesForDay(today, departments);
       SpreadsheetApp.getUi().alert(
         "No Emails Sent",
         "No files processed today.",
@@ -2170,8 +2604,9 @@ function sendDailyEmails() {
       return;
     }
 
-    if (allEmailAddresses.size === 0) {
-      logAudit("No email addresses", "No emails configured");
+    if (recipientPlan.toRecipients.length === 0) {
+      const reason = `No valid primary recipients for daily email. Invalid addresses: ${recipientPlan.invalidRecipients.length}. Department issues: ${recipientPlan.departmentIssues.length > 0 ? recipientPlan.departmentIssues.join(" | ") : "none"}`;
+      logAudit("No email addresses", reason, "Error", reason);
       SpreadsheetApp.getUi().alert(
         "No Email Addresses",
         "Configure emails in Dashboard.",
@@ -2180,9 +2615,20 @@ function sendDailyEmails() {
       return;
     }
 
-    const recipients = Array.from(allEmailAddresses).join(",");
-    const ccRecipients = Array.from(allManagerEmails).join(",");
-    const totalRecipients = allEmailAddresses.size + allManagerEmails.size;
+    const recipients = recipientPlan.toRecipients.join(",");
+    const ccRecipients = recipientPlan.ccRecipients.join(",");
+    const totalRecipients =
+      recipientPlan.toRecipients.length + recipientPlan.ccRecipients.length;
+
+    const quotaStatus = checkEmailQuotaForSend("Daily email", totalRecipients);
+    if (!quotaStatus.hasEnoughQuota) {
+      SpreadsheetApp.getUi().alert(
+        "Email Blocked",
+        `Cannot send email due to quota limit. Remaining: ${quotaStatus.remainingQuota}, Required: ${quotaStatus.requiredRecipients}.`,
+        SpreadsheetApp.getUi().ButtonSet.OK,
+      );
+      return;
+    }
 
     Logger.log(`Sending to ${totalRecipients} recipients`);
 
@@ -2194,6 +2640,19 @@ function sendDailyEmails() {
       ccRecipients,
       "daily",
     );
+
+    if (!result.success) {
+      const failureSummary = summarizeBatchFailures(result.failedBatches);
+      const errorDetails = `Daily email partially sent: ${result.batchesSent}/${result.totalBatches || 0} batches succeeded, ${result.errors || 0} failed. ${failureSummary}`;
+      logAudit("Email sending incomplete", errorDetails, "Error", errorDetails);
+
+      SpreadsheetApp.getUi().alert(
+        "Email Partially Sent",
+        `Some email batches failed.\n\nSuccessful batches: ${result.batchesSent}\nFailed batches: ${result.errors || 0}\n\nCheck Audit Trail for details.`,
+        SpreadsheetApp.getUi().ButtonSet.OK,
+      );
+      return;
+    }
 
     let completionMessage = `Email sent: ${todaysProcessedFiles.length} files`;
     if (result.batchesSent > 1) {
@@ -2242,23 +2701,8 @@ function sendWeeklyDigest() {
     logAudit("Weekly digest initiated", "User triggered weekly digest");
 
     const departments = getDepartments();
-    const allEmailAddresses = new Set();
-    const allManagerEmails = new Set();
-
-    departments.forEach((dept) => {
-      if (dept.emails) {
-        dept.emails.split(",").forEach((email) => {
-          const cleanEmail = email.trim();
-          if (cleanEmail) allEmailAddresses.add(cleanEmail);
-        });
-      }
-      if (dept.managerEmails) {
-        dept.managerEmails.split(",").forEach((email) => {
-          const cleanEmail = email.trim();
-          if (cleanEmail) allManagerEmails.add(cleanEmail);
-        });
-      }
-    });
+    const recipientPlan = getDepartmentRecipientPlan(departments);
+    logRecipientPlanWarnings("Weekly digest", recipientPlan);
 
     // Get this week's files
     const weekFiles = getThisWeeksProcessedFiles();
@@ -2269,8 +2713,9 @@ function sendWeeklyDigest() {
       return;
     }
 
-    if (allEmailAddresses.size === 0) {
-      logAudit("No email addresses", "No emails configured");
+    if (recipientPlan.toRecipients.length === 0) {
+      const reason = `No valid primary recipients for weekly digest. Invalid addresses: ${recipientPlan.invalidRecipients.length}. Department issues: ${recipientPlan.departmentIssues.length > 0 ? recipientPlan.departmentIssues.join(" | ") : "none"}`;
+      logAudit("No email addresses", reason, "Error", reason);
       ui.alert(
         "No Email Addresses",
         "Configure emails in Dashboard.",
@@ -2279,9 +2724,23 @@ function sendWeeklyDigest() {
       return;
     }
 
-    const recipients = Array.from(allEmailAddresses).join(",");
-    const ccRecipients = Array.from(allManagerEmails).join(",");
-    const totalRecipients = allEmailAddresses.size + allManagerEmails.size;
+    const recipients = recipientPlan.toRecipients.join(",");
+    const ccRecipients = recipientPlan.ccRecipients.join(",");
+    const totalRecipients =
+      recipientPlan.toRecipients.length + recipientPlan.ccRecipients.length;
+
+    const quotaStatus = checkEmailQuotaForSend(
+      "Weekly digest",
+      totalRecipients,
+    );
+    if (!quotaStatus.hasEnoughQuota) {
+      ui.alert(
+        "Email Blocked",
+        `Cannot send weekly digest due to quota limit. Remaining: ${quotaStatus.remainingQuota}, Required: ${quotaStatus.requiredRecipients}.`,
+        ui.ButtonSet.OK,
+      );
+      return;
+    }
 
     const today = Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd");
     const result = sendTodaysProcessedFilesEmail(
@@ -2291,6 +2750,19 @@ function sendWeeklyDigest() {
       ccRecipients,
       "weekly",
     );
+
+    if (!result.success) {
+      const failureSummary = summarizeBatchFailures(result.failedBatches);
+      const errorDetails = `Weekly digest partially sent: ${result.batchesSent}/${result.totalBatches || 0} batches succeeded, ${result.errors || 0} failed. ${failureSummary}`;
+      logAudit("Weekly digest incomplete", errorDetails, "Error", errorDetails);
+
+      ui.alert(
+        "Weekly Digest Partially Sent",
+        `Some weekly digest batches failed.\n\nSuccessful batches: ${result.batchesSent}\nFailed batches: ${result.errors || 0}\n\nCheck Audit Trail for details.`,
+        ui.ButtonSet.OK,
+      );
+      return;
+    }
 
     logAudit(
       "Weekly digest sent",
@@ -2334,23 +2806,8 @@ function scheduledWeeklyDigest() {
     );
 
     const departments = getDepartments();
-    const allEmailAddresses = new Set();
-    const allManagerEmails = new Set();
-
-    departments.forEach((dept) => {
-      if (dept.emails) {
-        dept.emails.split(",").forEach((email) => {
-          const cleanEmail = email.trim();
-          if (cleanEmail) allEmailAddresses.add(cleanEmail);
-        });
-      }
-      if (dept.managerEmails) {
-        dept.managerEmails.split(",").forEach((email) => {
-          const cleanEmail = email.trim();
-          if (cleanEmail) allManagerEmails.add(cleanEmail);
-        });
-      }
-    });
+    const recipientPlan = getDepartmentRecipientPlan(departments);
+    logRecipientPlanWarnings("Scheduled weekly digest", recipientPlan);
 
     const weekFiles = getThisWeeksProcessedFiles();
 
@@ -2359,16 +2816,27 @@ function scheduledWeeklyDigest() {
       return;
     }
 
-    if (allEmailAddresses.size === 0) {
-      logAudit("No email addresses", "No emails configured");
+    if (recipientPlan.toRecipients.length === 0) {
+      const reason = `Scheduled weekly digest skipped: no valid primary recipients. Invalid addresses: ${recipientPlan.invalidRecipients.length}. Department issues: ${recipientPlan.departmentIssues.length > 0 ? recipientPlan.departmentIssues.join(" | ") : "none"}`;
+      logAudit("No email addresses", reason, "Error", reason);
       return;
     }
 
-    const recipients = Array.from(allEmailAddresses).join(",");
-    const ccRecipients = Array.from(allManagerEmails).join(",");
+    const totalRecipients =
+      recipientPlan.toRecipients.length + recipientPlan.ccRecipients.length;
+    const quotaStatus = checkEmailQuotaForSend(
+      "Scheduled weekly digest",
+      totalRecipients,
+    );
+    if (!quotaStatus.hasEnoughQuota) {
+      return;
+    }
+
+    const recipients = recipientPlan.toRecipients.join(",");
+    const ccRecipients = recipientPlan.ccRecipients.join(",");
 
     const todayFormatted = Utilities.formatDate(today, TIMEZONE, "yyyy-MM-dd");
-    sendTodaysProcessedFilesEmail(
+    const result = sendTodaysProcessedFilesEmail(
       weekFiles,
       todayFormatted,
       recipients,
@@ -2376,9 +2844,21 @@ function scheduledWeeklyDigest() {
       "weekly",
     );
 
+    if (!result.success) {
+      const failureSummary = summarizeBatchFailures(result.failedBatches);
+      const errorDetails = `Scheduled weekly digest partially sent: ${result.batchesSent}/${result.totalBatches || 0} batches succeeded, ${result.errors || 0} failed. ${failureSummary}`;
+      logAudit(
+        "Scheduled weekly digest incomplete",
+        errorDetails,
+        "Error",
+        errorDetails,
+      );
+      return;
+    }
+
     logAudit(
       "Scheduled weekly digest sent",
-      `Sent digest: ${weekFiles.length} files`,
+      `Sent digest: ${weekFiles.length} files to ${totalRecipients} recipients`,
     );
   } catch (error) {
     logError("Scheduled weekly digest failed", error);
@@ -2446,24 +2926,38 @@ function sendTodaysProcessedFilesEmail(
   emailType = "daily",
 ) {
   try {
-    const toRecipients = recipients
-      .split(",")
-      .map((e) => e.trim())
-      .filter((e) => e);
-    const ccArray = ccRecipients
-      ? ccRecipients
-          .split(",")
-          .map((e) => e.trim())
-          .filter((e) => e)
-      : [];
+    const toRecipients = parseUniqueEmailList(recipients);
+    const ccArray = parseUniqueEmailList(ccRecipients).filter(
+      (email) => toRecipients.indexOf(email) === -1,
+    );
     const totalRecipients = toRecipients.length + ccArray.length;
+
+    if (totalRecipients === 0) {
+      const reason = `${emailType} email skipped: no valid recipients.`;
+      logAudit("Email skipped", reason, "Error", reason);
+      return {
+        success: false,
+        batchesSent: 0,
+        totalBatches: 0,
+        totalRecipients: 0,
+        errors: 1,
+        failedBatches: [
+          {
+            batchNumber: 0,
+            recipientCount: 0,
+            sampleRecipients: "none",
+            errorMessage: reason,
+          },
+        ],
+      };
+    }
 
     if (totalRecipients <= MAX_RECIPIENTS_PER_EMAIL) {
       sendSingleEmail(
         todaysFiles,
         date,
-        recipients,
-        ccRecipients,
+        toRecipients.join(","),
+        ccArray.join(","),
         1,
         1,
         emailType,
@@ -2471,7 +2965,10 @@ function sendTodaysProcessedFilesEmail(
       return {
         success: true,
         batchesSent: 1,
+        totalBatches: 1,
         totalRecipients: totalRecipients,
+        errors: 0,
+        failedBatches: [],
       };
     } else {
       return sendBatchEmails(
@@ -2504,15 +3001,17 @@ function sendBatchEmails(
     const totalBatches = Math.ceil(totalRecipients / MAX_RECIPIENTS_PER_EMAIL);
     let batchesSent = 0,
       errors = 0;
+    const failedBatches = [];
 
     for (let i = 0; i < totalBatches; i++) {
+      const startIndex = i * MAX_RECIPIENTS_PER_EMAIL;
+      const endIndex = Math.min(
+        startIndex + MAX_RECIPIENTS_PER_EMAIL,
+        totalRecipients,
+      );
+      const batchRecipients = allRecipients.slice(startIndex, endIndex);
+
       try {
-        const startIndex = i * MAX_RECIPIENTS_PER_EMAIL;
-        const endIndex = Math.min(
-          startIndex + MAX_RECIPIENTS_PER_EMAIL,
-          totalRecipients,
-        );
-        const batchRecipients = allRecipients.slice(startIndex, endIndex);
         const batchString = batchRecipients.join(",");
 
         sendSingleEmail(
@@ -2528,7 +3027,23 @@ function sendBatchEmails(
 
         if (i < totalBatches - 1) Utilities.sleep(EMAIL_BATCH_DELAY);
       } catch (batchError) {
+        const errorMessage = batchError.message || String(batchError);
+        const sampleRecipients = formatEmailArrayPreview(batchRecipients, 8);
+
         logError(`Batch ${i + 1} failed`, batchError);
+        logAudit(
+          "Batch email failed",
+          `Batch ${i + 1}/${totalBatches} failed for ${batchRecipients.length} recipients`,
+          "Error",
+          `${errorMessage}\nSample recipients: ${sampleRecipients}`,
+        );
+
+        failedBatches.push({
+          batchNumber: i + 1,
+          recipientCount: batchRecipients.length,
+          sampleRecipients: sampleRecipients,
+          errorMessage: errorMessage,
+        });
         errors++;
       }
     }
@@ -2545,6 +3060,7 @@ function sendBatchEmails(
       totalBatches: totalBatches,
       totalRecipients: totalRecipients,
       errors: errors,
+      failedBatches: failedBatches,
     };
   } catch (error) {
     logError("Batch sending failed", error);
@@ -2804,7 +3320,19 @@ function sendSingleEmail(
       `Email sent successfully (${emailType}, batch ${batchNumber}/${totalBatches})`,
     );
   } catch (error) {
-    logError(`Failed to send email (batch ${batchNumber})`, error);
+    const toPreview = formatEmailArrayPreview(
+      parseUniqueEmailList(recipients),
+      8,
+    );
+    const ccPreview = formatEmailArrayPreview(
+      parseUniqueEmailList(ccRecipients),
+      8,
+    );
+    const recipientDebug = `TO(${toPreview}) | CC(${ccPreview})`;
+    logError(
+      `Failed to send email (batch ${batchNumber}/${totalBatches}) - ${recipientDebug}`,
+      error,
+    );
     throw error;
   }
 }
@@ -2887,6 +3415,309 @@ function getGeminiModel() {
 }
 
 function showGeminiModelDialog() {
+  var ui = SpreadsheetApp.getUi();
+  var selectionResult = selectGeminiModelFromApi({
+    allowApiKeyPrompt: true,
+    promptTitle: "Set Gemini Model",
+  });
+
+  if (selectionResult.success) {
+    ui.alert("Model Saved", selectionResult.message, ui.ButtonSet.OK);
+    return;
+  }
+
+  if (selectionResult.cancelled) {
+    return;
+  }
+
+  ui.alert("Model Error", selectionResult.message, ui.ButtonSet.OK);
+}
+
+function configureGeminiModelDuringSetup() {
+  var ui = SpreadsheetApp.getUi();
+  var currentModel = getGeminiModel();
+  var shouldConfigure = ui.alert(
+    "Gemini Model Setup",
+    "Would you like to load the live Gemini model list from API and choose one now?\n\nCurrent model: " +
+      currentModel,
+    ui.ButtonSet.YES_NO,
+  );
+
+  if (shouldConfigure !== ui.Button.YES) {
+    return {
+      success: true,
+      changed: false,
+      message:
+        "Setup skipped model selection. Using current model: " + currentModel,
+    };
+  }
+
+  var selectionResult = selectGeminiModelFromApi({
+    allowApiKeyPrompt: true,
+    promptTitle: "Setup: Select Gemini Model",
+  });
+
+  if (selectionResult.success) {
+    return {
+      success: true,
+      changed: true,
+      message: "Selected model: " + selectionResult.model,
+    };
+  }
+
+  if (selectionResult.cancelled) {
+    return {
+      success: true,
+      changed: false,
+      message: "Model selection cancelled. Using: " + getGeminiModel(),
+    };
+  }
+
+  return {
+    success: false,
+    changed: false,
+    message:
+      "Model selection failed (" +
+      selectionResult.message +
+      "). Using: " +
+      getGeminiModel(),
+  };
+}
+
+function selectGeminiModelFromApi(options) {
+  options = options || {};
+  var ui = SpreadsheetApp.getUi();
+  var apiKey = getGeminiApiKey();
+
+  if (!apiKey && options.allowApiKeyPrompt) {
+    var setKeyNow = ui.alert(
+      "Gemini API Key Required",
+      "No Gemini API key is configured.\n\nSet API key now so we can load the live model list?",
+      ui.ButtonSet.YES_NO,
+    );
+
+    if (setKeyNow !== ui.Button.YES) {
+      return {
+        success: false,
+        cancelled: true,
+        message: "Model selection cancelled (API key not configured).",
+      };
+    }
+
+    setGeminiApiKey();
+    apiKey = getGeminiApiKey();
+  }
+
+  if (!apiKey) {
+    return {
+      success: false,
+      cancelled: false,
+      message:
+        "Gemini API key is not configured. Set API key first, then retry model selection.",
+    };
+  }
+
+  var apiModelsResult = fetchGeminiModelsFromApi(apiKey);
+  if (!apiModelsResult.success) {
+    return {
+      success: false,
+      cancelled: false,
+      message: apiModelsResult.message,
+    };
+  }
+
+  var allModels = apiModelsResult.models || [];
+  if (allModels.length === 0) {
+    return {
+      success: false,
+      cancelled: false,
+      message: "Gemini API returned no selectable models for this key/project.",
+    };
+  }
+
+  var maxShown = 15;
+  var selectableModels = allModels.slice(0, maxShown);
+  var promptResult = ui.prompt(
+    options.promptTitle || "Set Gemini Model",
+    buildGeminiModelSelectionPrompt(
+      getGeminiModel(),
+      selectableModels,
+      allModels.length,
+    ),
+    ui.ButtonSet.OK_CANCEL,
+  );
+
+  if (promptResult.getSelectedButton() !== ui.Button.OK) {
+    return {
+      success: false,
+      cancelled: true,
+      message: "Model selection cancelled.",
+    };
+  }
+
+  var parsedSelection = parseGeminiModelSelectionInput(
+    promptResult.getResponseText(),
+    selectableModels,
+  );
+  if (!parsedSelection.success) {
+    return {
+      success: false,
+      cancelled: false,
+      message: parsedSelection.message,
+    };
+  }
+
+  var saveResult = saveGeminiModel(parsedSelection.model);
+  if (!saveResult.success) {
+    return {
+      success: false,
+      cancelled: false,
+      message: saveResult.message,
+    };
+  }
+
+  return {
+    success: true,
+    cancelled: false,
+    model: parsedSelection.model,
+    message:
+      saveResult.message +
+      "\n\nLoaded " +
+      allModels.length +
+      " Gemini model(s) from API.",
+  };
+}
+
+function fetchGeminiModelsFromApi(apiKey) {
+  try {
+    var url =
+      "https://generativelanguage.googleapis.com/v1beta/models?key=" +
+      encodeURIComponent(apiKey);
+    var response = UrlFetchApp.fetch(url, {
+      method: "get",
+      muteHttpExceptions: true,
+    });
+    var statusCode = response.getResponseCode();
+    var responseText = response.getContentText();
+
+    if (statusCode !== 200) {
+      var errorMessage =
+        "Failed to load Gemini model list (code: " + statusCode + ")";
+      try {
+        var errorJson = JSON.parse(responseText);
+        if (errorJson && errorJson.error && errorJson.error.message) {
+          errorMessage += ": " + errorJson.error.message;
+        }
+      } catch (parseError) {}
+
+      return {
+        success: false,
+        models: [],
+        message: errorMessage,
+      };
+    }
+
+    var parsed = JSON.parse(responseText);
+    var rawModels = parsed && parsed.models ? parsed.models : [];
+    var dedupe = {};
+    var models = [];
+
+    rawModels.forEach(function (modelInfo) {
+      if (!modelInfo || !modelInfo.name) return;
+
+      var modelName = normalizeGeminiModelName(modelInfo.name);
+      if (!/^gemini-/i.test(modelName)) return;
+
+      var methods = modelInfo.supportedGenerationMethods || [];
+      var supportsGenerateContent = methods.some(function (method) {
+        return String(method).toLowerCase() === "generatecontent";
+      });
+      if (!supportsGenerateContent) return;
+
+      var key = modelName.toLowerCase();
+      if (!dedupe[key]) {
+        dedupe[key] = true;
+        models.push(modelName);
+      }
+    });
+
+    models.sort();
+    return {
+      success: true,
+      models: models,
+      message: "",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      models: [],
+      message: "Failed to load Gemini model list: " + (error.message || error),
+    };
+  }
+}
+
+function buildGeminiModelSelectionPrompt(
+  currentModel,
+  selectableModels,
+  totalCount,
+) {
+  var lines = selectableModels.map(function (modelName, index) {
+    return index + 1 + ". " + modelName;
+  });
+
+  var promptText =
+    "Current model: " +
+    currentModel +
+    "\n\nAvailable Gemini models from API:\n" +
+    lines.join("\n");
+
+  if (totalCount > selectableModels.length) {
+    promptText +=
+      "\n... and " +
+      (totalCount - selectableModels.length) +
+      " more model(s) not shown.";
+  }
+
+  promptText +=
+    "\n\nEnter a NUMBER from the list, or type a full model name (example: gemini-3.0-flash).";
+
+  return promptText;
+}
+
+function parseGeminiModelSelectionInput(userInput, selectableModels) {
+  var input = (userInput || "").trim();
+  if (!input) {
+    return {
+      success: false,
+      message: "Model selection cannot be empty.",
+    };
+  }
+
+  if (/^\d+$/.test(input)) {
+    var index = parseInt(input, 10) - 1;
+    if (index < 0 || index >= selectableModels.length) {
+      return {
+        success: false,
+        message:
+          "Invalid selection number. Enter a number between 1 and " +
+          selectableModels.length +
+          ".",
+      };
+    }
+
+    return {
+      success: true,
+      model: selectableModels[index],
+    };
+  }
+
+  return {
+    success: true,
+    model: normalizeGeminiModelName(input),
+  };
+}
+
+function showGeminiModelDialogLegacyManualEntry() {
   var ui = SpreadsheetApp.getUi();
   var currentModel = getGeminiModel();
 
