@@ -1,584 +1,239 @@
-# Automated Expiry Notification — Full Documentation
+# Automated Expiry Notification — Product Roadmap Checklist
 
 > **Last Updated**: February 2026  
-> **Script File**: `code.gs` (1,422 lines)
+> **Primary Implementation**: `code.gs`  
+> **Product/Operations Documentation**: `README.md`
 
-This document explains how the current Google Apps Script works, how to configure it, and what operations users must follow so reminders are sent correctly.
-
----
-
-## Table of Contents
-
-1. [Purpose](#1-purpose)
-2. [High-Level Behavior](#2-high-level-behavior)
-3. [Code Structure Overview](#3-code-structure-overview)
-4. [Prerequisites](#4-prerequisites)
-5. [Initial Setup (Required)](#5-initial-setup-required)
-6. [Menu Reference](#6-menu-reference)
-7. [Sheet and Column Requirements](#7-sheet-and-column-requirements)
-8. [Status Values](#8-status-values)
-9. [Notice Date Parsing Rules](#9-notice-date-parsing-rules)
-10. [Email Composition](#10-email-composition)
-11. [Logging (LOGS Sheet)](#11-logs-sheet)
-12. [Detailed Runtime Flow (runDailyCheck)](#12-detailed-runtime-flow-rundailycheck)
-13. [Testing and Diagnostics](#13-testing-and-diagnostics)
-14. [Troubleshooting Guide](#14-troubleshooting-guide)
-15. [Operational Notes](#15-operational-notes)
-16. [Maintenance Checklist](#16-maintenance-checklist)
+This file is the delivery roadmap and TODO checklist for upcoming features, with PM-style milestones, acceptance criteria, and execution notes.
 
 ---
 
-## 1) Purpose
+## 1) Current Baseline Audit (Already Implemented)
 
-This automation monitors visa/document expiry rows in a Google Sheet and sends reminder emails on the exact notice date.
+Validated against `code.gs`:
 
-Core outcomes:
-
-- Sends reminder emails automatically (daily trigger) or manually (menu).
-- Uses `Remarks` as the email body template with placeholder substitution.
-- Supports Drive file attachments.
-- Tracks progress and failures in `Status` and `LOGS`.
-- Supports selecting the working sheet tab through Initialization.
-- Auto-activates blank status rows for processing.
-
----
-
-## 2) High-Level Behavior
-
-The automation processes rows where `Status` is **Active** (case-insensitive) or blank.
-
-For each eligible row:
-
-1. Validate required fields.
-2. Parse `Notice Date` (dynamic regex parser).
-3. Compute `Target Date = Expiry Date - Notice Offset`.
-4. If target date is due (today or earlier), send email.
-5. On success:
-   - Set `Status = Sent`
-   - Write sender account into `Staff Email`
-   - Add `SENT` log entry
-6. On failure, set `Status = Error` and log details.
+- [x] Custom menu with status, initialization, schedule controls, diagnostics
+- [x] Configurable working sheet tab via `AUTOMATION_SHEET_NAME`
+- [x] Manual + scheduled runs share same processing logic
+- [x] Header mapping by row-2 names (with alias support)
+- [x] Active + blank status eligibility (blank auto-set to Active)
+- [x] Due/overdue sending (`targetDate <= today`)
+- [x] Placeholder-aware body template from `Remarks`
+- [x] Built-in fallback body when `Remarks` is empty
+- [x] Drive attachment parsing from links or file IDs
+- [x] Success updates: `Status = Sent` + sender written to `Staff Email`
+- [x] Diagnostics: preview dates, inspect row, send test by `No.`
+- [x] LOGS sheet creation + summary/error/sent/info logs
 
 ---
 
-## 3) Code Structure Overview
+## 2) Future Feature Backlog (Requested)
 
-The script is organized into the following function categories:
+### Epic A — Row-Level Send Control Upgrade
 
-### Configuration & Constants
-| Item | Description |
-|------|-------------|
-| `CONFIG` | Sheet names, header row, trigger hour, sender name |
-| `HEADERS` | Expected column header names |
-| `HEADER_ALIASES` | Alternate header mappings (e.g., "Assigned Staff Email" → "Staff Email") |
-| `STATUS` | Valid status values: Active, Sent, Error, Skipped |
-| `LOG_COL` | LOGS sheet column indices |
+**Goal**: Allow row-level control of whether sending is automatic, held, or manual.
 
-### Menu & UI Functions
-| Function | Purpose |
-|----------|---------|
-| `onOpen()` | Creates "Expiry Notifications" custom menu |
-| `showAutomationStatus()` | Alias for checkScheduleStatus() |
-| `initializeAutomationSheet()` | Select which sheet tab to use |
-| `checkScheduleStatus()` | Shows trigger status and last run summary |
-| `manualRunNow()` | Runs daily check manually with confirmation |
+#### Proposed model
 
-### Core Automation
-| Function | Purpose |
-|----------|---------|
-| `runDailyCheck()` | **Main entry point** - processes all eligible rows |
-| `buildColumnMap()` | Maps header names to column indices |
-| `validateColumnMap()` | Validates required columns exist |
+- New column (recommended): `Send Mode`
+- Suggested values:
+  - `Auto` (normal scheduled/manual processing)
+  - `Hold` (never send until changed)
+  - `Manual Only` (exclude from schedule, allow explicit test/manual command)
 
-### Date Helpers
-| Function | Purpose |
-|----------|---------|
-| `getMidnight()` | Returns date at 00:00:00 |
-| `isSameDay()` | Compares if two dates are the same day |
-| `isTargetDateDue()` | Checks if target date is today or earlier |
-| `parseNoticeOffset()` | Parses "N days/weeks/months before" |
-| `computeTargetDate()` | Calculates target date from expiry + offset |
-| `formatDate()` | Formats date as "DD MMM YYYY" |
+#### Tasks
 
-### Attachment Helpers
-| Function | Purpose |
-|----------|---------|
-| `extractDriveFileId()` | Extracts file ID from various Drive URL formats |
-| `resolveAttachments()` | Converts Drive URLs to email attachments |
+- [x] Define final dropdown values and default behavior
+- [x] Add column contract to docs (`README.md`)
+- [x] Update eligibility logic in `runDailyCheck()`
+- [x] Add per-row reason logging when skipped by mode
+- [x] Update diagnostics to display send mode and eligibility reason
+- [ ] Add regression test checklist for each mode
 
-### Email Helpers
-| Function | Purpose |
-|----------|---------|
-| `buildEmailBody()` | Creates HTML email from Remarks or default template |
-| `applyTemplatePlaceholders()` | Replaces [Client Name], [Expiry Date], etc. |
-| `buildEmailSubject()` | Creates subject line |
-| `sendReminderEmail()` | Sends email via GmailApp |
+#### Acceptance criteria
 
-### Logging
-| Function | Purpose |
-|----------|---------|
-| `ensureLogsSheet()` | Creates LOGS sheet if missing |
-| `appendLog()` | Adds log entry with color-coded action |
-
-### Trigger Management
-| Function | Purpose |
-|----------|---------|
-| `installTrigger()` | Creates daily 8 AM trigger |
-| `removeTrigger()` | Removes all daily triggers |
-
-### Diagnostic Functions
-| Function | Purpose |
-|----------|---------|
-| `previewTargetDates()` | Shows computed target dates without sending |
-| `diagnosticInspectRow()` | Inspects a specific row's parsed values |
-| `diagnosticSendTestRow()` | Sends test email by "No." value |
-| `testRunNow()` | Direct test runner (alias for runDailyCheck) |
+- [x] Schedule run respects send mode consistently
+- [x] Manual run behavior is explicit and documented
+- [x] Logs clearly explain mode-based skip/send outcomes
 
 ---
 
-## 4) Prerequisites
+### Epic B — Reply Keyword Tracking
 
-- Script is bound to the target spreadsheet.
-- Script account has access to:
-  - Gmail (send email)
-  - Drive (open attachment files)
-  - Spreadsheet (read/write rows and logs)
-- Spreadsheet contains row 2 headers and data starts at row 3.
-- Timezone expectation for scheduling: `Asia/Manila`.
-- Run once: `installTrigger()` to enable daily scheduling.
+**Goal**: Detect recipient replies containing configured keywords and reflect that in the sheet.
 
----
+#### Proposed model
 
-## 5) Initial Setup (Required)
+- New columns:
+  - `Reply Status` (e.g., Pending, Replied)
+  - `Replied At`
+  - `Reply Keyword`
 
-### 5.1 Reload Spreadsheet to Register Menu
+#### Tasks
 
-Open/reload the spreadsheet so `onOpen()` adds **Expiry Notifications** menu.
+- [x] Define keyword list (e.g., `ACK`, `RECEIVED`, `OK`)
+- [x] Store keywords in configurable script/document property
+- [x] Save outbound linkage metadata needed for matching replies
+- [x] Build periodic reply-scanner function
+- [x] Update sheet on keyword match
+- [x] Add logs for reply-detected events
+- [x] Add menu item to run reply scan manually
 
-### 5.2 Select Working Sheet Tab (Initialization)
+#### Acceptance criteria
 
-Use:
-
-`Expiry Notifications -> Initialize / Select Working Sheet`
-
-This saves selected sheet tab name in document properties (`AUTOMATION_SHEET_NAME`).
-
-If not initialized, script falls back to default `CONFIG.SHEET_NAME` (`VISA automation`).
-
-### 5.3 Activate Daily Trigger
-
-Use:
-
-`Expiry Notifications -> Activate Daily Schedule (8 AM)`
-
-This installs a daily trigger for `runDailyCheck()` at 8:00 AM Asia/Manila.
+- [x] Reply scan updates the correct row reliably
+- [x] Duplicate matches are handled safely
+- [x] False positives minimized through sender/thread checks
 
 ---
 
-## 6) Menu Reference
+### Epic C — Email Open/Read Visibility (Best Effort)
 
-### Expiry Notifications
+**Goal**: Provide visibility into whether reminder emails were opened/looked at.
 
-| Menu Item | Description |
-|-----------|-------------|
-| **Show Automation Status** | Displays trigger status, configured sheet tab, and latest summary run from `LOGS`. |
-| **Initialize / Select Working Sheet** | Lets user select which tab the automation reads. |
-| **Run Manual Check Now** | Runs same production logic immediately (`runDailyCheck`). |
-| **Check Schedule Status** | Same status dialog as above. |
-| **Activate Daily Schedule (8 AM)** | Creates daily trigger. |
-| **Deactivate Daily Schedule** | Deletes all existing `runDailyCheck` triggers. |
+> Note: true open tracking is client-dependent and privacy-limited.
 
-### Diagnostics Submenu
+#### Proposed model
 
-| Menu Item | Description |
-|-----------|-------------|
-| **Preview Target Dates (no emails sent)** | Logs computed target dates for active rows only. |
-| **Inspect Row...** | Debug by sheet row number. |
-| **Send Test Email by No....** | Finds row by `No.` column value and sends a real test email. Ignores `Status` and target-date matching. |
+- New columns:
+  - `First Opened At`
+  - `Last Opened At`
+  - `Open Count` (optional)
 
----
+#### Tasks
 
-## 7) Sheet and Column Requirements
+- [x] Decide tracking method (tracking pixel and/or tracked links)
+- [x] Implement tokenized per-row tracking metadata
+- [x] Capture and store open events when available
+- [x] Add fallback behavior when tracking is blocked
+- [x] Document privacy/accuracy limitations in README
 
-### 7.1 Row Structure
+#### Acceptance criteria
 
-- Row 1: free/visual header (ignored)
-- Row 2: actual column headers (used for mapping)
-- Row 3+: data rows
-
-### 7.2 Required Header Names (Row 2)
-
-Required for production run:
-
-| Column | Header Name |
-|--------|-------------|
-| Client Name | `Client Name` |
-| Client Email | `Client Email` |
-| Expiry Date | `Expiry Date` |
-| Notice Date | `Notice Date` |
-| Status | `Status` |
-
-Optional but used when present:
-
-| Column | Header Name |
-|--------|-------------|
-| No. | `No.` |
-| Document Type | `Type of ID/Document` |
-| Remarks | `Remarks` |
-| Attachments | `Attached Files` |
-| Staff Email | `Staff Email` |
-
-### 7.3 Header Aliases
-
-The script supports alternate header names (case-insensitive):
-
-| Standard Name | Alias Supported |
-|---------------|------------------|
-| `Staff Email` | `Assigned Staff Email` |
-
-> Column order can change; script maps by header text, not by fixed column position.
+- [x] Open data is written when events are captured
+- [x] No runtime failures if tracking signals are unavailable
 
 ---
 
-## 8) Status Values
+### Epic D — Fallback Body Strategy Hardening
 
-Recognized values:
+**Goal**: Improve resilience and maintainability of fallback email content.
 
-| Status | Behavior |
-|--------|----------|
-| `Active` (case-insensitive) | Processed in normal runs |
-| blank | Auto-set to `Active`, then processed |
-| `Sent` | Ignored in normal runs |
-| `Error` | Ignored unless manually reset to Active |
+#### Current state
 
-During production/manual run:
+- Implemented: hardcoded fallback in `buildEmailBody()` when `Remarks` is empty.
 
-- Success → `Sent`
-- Validation or send failure → `Error`
+#### Enhancements
 
-### Auto-Activation
+- [x] Decide fallback source:
+  - [x] Keep hardcoded
+  - [ ] Move to configurable sheet template
+  - [x] Move to script property template
+- [x] Add placeholder support parity with remarks template
+- [x] Add versioned fallback template note in docs
+- [x] Add diagnostics to preview resolved fallback body
 
-When a row has **blank Status**:
-1. Script automatically sets it to `Active`
-2. Processes the row in the same run
-3. Logs an INFO message: "Blank Status auto-set to Active for processing."
+#### Acceptance criteria
 
----
-
-## 9) Notice Date Parsing Rules
-
-`Notice Date` is parsed dynamically using pattern:
-
-```
-N day(s)/week(s)/month(s) before
-```
-
-Also supports:
-
-- `On expiry date`
-- `On the expiry date`
-
-### Supported Formats
-
-| Input | Offset Applied |
-|-------|----------------|
-| `7 days before` | Minus 7 days |
-| `1 day before` | Minus 1 day |
-| `2 weeks before` | Minus 14 days |
-| `1 week before` | Minus 7 days |
-| `2 months before` | Minus 2 calendar months |
-| `1 month before` | Minus 1 calendar month |
-| `On expiry date` | Minus 0 days (send on expiry) |
-
-If parsing fails, row is set to `Error` and logged.
+- [x] Empty `Remarks` always produces a valid body
+- [x] Fallback content can be maintained without breaking sends
 
 ---
 
-## 10) Email Composition
+### Epic E — AI Integration Menu + Content Generation
 
-### 10.1 Subject
+**Goal**: Add optional AI-generated email content when `Remarks` is empty.
 
-```
-Reminder: [Type of ID/Document] Expiry on [DD MMM YYYY] - [Client Name]
-```
+#### Proposed UX
 
-If `Type of ID/Document` is empty, uses `Visa/Permit`.
+- New top-level menu group: `AI Integration`
+  - `Set API Key`
+  - `Select Model`
+  - `Test AI Connection`
+  - `View AI Status`
 
-### 10.2 Body Source
+#### Runtime behavior (target)
 
-Primary source: `Remarks` column.
+1. If `Remarks` exists -> use template as-is.
+2. If `Remarks` is empty and AI configured -> generate body with selected model.
+3. If AI is not configured or generation fails -> use fallback body.
 
-If empty, script uses a default fallback message:
+#### Tasks
 
-```
-Good day, [Client Name],
+- [x] Add secure API key storage in script properties
+- [x] Add Gemini model selection storage
+- [x] Add AI settings/status helpers
+- [x] Add model list retrieval and validation flow
+- [x] Add AI generation path in body builder
+- [x] Add timeout/retry/fallback handling
+- [x] Add logs for AI-generated vs fallback-used outcomes
 
-This is a reminder that your visa/permit is expiring on [Expiry Date].
+#### Acceptance criteria
 
-Please take the necessary steps before the expiry date.
-
-Thank you.
-```
-
-### 10.3 Supported Placeholders (Case-Insensitive)
-
-| Placeholder | Replaced With |
-|--------------|----------------|
-| `[Client Name]` | Client Name |
-| `[client name]` | Client Name |
-| `[Date of Expiration]` | Expiry Date (DD MMM YYYY) |
-| `[date of expiration]` | Expiry Date |
-| `[Date of Expiry]` | Expiry Date |
-| `[date of expiry]` | Expiry Date |
-| `[Expiry Date]` | Expiry Date |
-| `[expiry date]` | Expiry Date |
-| `[Document Type]` | Type of ID/Document (or "Visa/Permit") |
-
-### 10.4 Attachments
-
-`Attached Files` supports comma-separated list of:
-
-- `https://drive.google.com/file/d/FILE_ID/view`
-- `https://drive.google.com/open?id=FILE_ID`
-- `https://drive.google.com/uc?id=FILE_ID`
-- Raw file ID (20+ alphanumeric characters)
-
-If any attachment reference is invalid/inaccessible, row is marked `Error` and send is skipped.
-
-### 10.5 Recipient Logic
-
-- **To**: `Client Email`
-- **CC**: Current `Staff Email` value (if present)
-
-After successful send, `Staff Email` is **overwritten** with sender account email (from `Session.getEffectiveUser()`).
+- [x] AI path is optional and safe-by-default
+- [x] No send failures caused by missing/invalid AI settings
+- [x] Fallback path always works
 
 ---
 
-## 11) Logging (`LOGS` Sheet)
+## 3) Milestone-Based Delivery Plan
 
-`LOGS` is auto-created if missing.
+### Milestone 1 (Now) — Control + Stability
 
-### Columns
+- [x] Epic A (Send Mode)
+- [x] Epic D enhancements (fallback configurability)
+- [x] Documentation refresh for new data contract
 
-| Column | Index | Description |
-|--------|-------|-------------|
-| Timestamp | A | Date/time of action |
-| Client Name | B | Client name for reference |
-| Action | C | Action type (color-coded) |
-| Detail | D | Detailed message |
+### Milestone 2 (Next) — Reply Intelligence
 
-### Action Types
+- [x] Epic B (Reply keyword tracking)
+- [x] Initial event audit logs and monitoring
 
-| Action | Color | Description |
-|--------|-------|-------------|
-| `SENT` | Green | Email sent successfully |
-| `ERROR` | Red | Validation or send failure |
-| `SKIPPED` | Yellow | Row skipped (not due yet) |
-| `SUMMARY` | Blue | End-of-run summary |
-| `INFO` | None | General information |
+### Milestone 3 (Later) — Engagement + AI
 
-### Summary Format
-
-```
-Run complete. Total Rows: X | Eligible (Active/Blank): Y | Auto-Activated: A | Sent: Z | Errors: N
-```
-
-Where:
-- **Total Rows**: All rows in the sheet
-- **Eligible**: Rows with Active or blank status
-- **Auto-Activated**: Blank statuses converted to Active
-- **Sent**: Successfully sent emails
-- **Errors**: Failed validations or sends
+- [x] Epic C (open/read best effort)
+- [x] Epic E (AI integration)
 
 ---
 
-## 12) Detailed Runtime Flow (`runDailyCheck`)
+## 4) Dependencies, Risks, and Constraints
 
-```
-1. Resolve configured sheet tab
-      ↓
-2. Ensure LOGS sheet exists
-      ↓
-3. Build and validate column map from row 2 headers
-      ↓
-4. Read all data rows (row 3+)
-      ↓
-5. Filter eligible rows (Active + blank Status)
-      ↓
-6. For each eligible row:
-   ├─ 6a. Auto-activate blank status → Active
-   ├─ 6b. Validate required fields (Client Name, Client Email, Expiry Date, Notice Date)
-   ├─ 6c. Parse expiry date
-   ├─ 6d. Parse notice offset
-   ├─ 6e. Compute target date
-   ├─ 6f. Skip if target date is in the future
-   ├─ 6g. Resolve attachments (if any)
-   ├─ 6h. Build email subject and body
-   ├─ 6i. Send email via GmailApp
-   ├─ 6j. On success:
-   │    ├─ Set Status = Sent
-   │    ├─ Set Staff Email = sender account
-   │    └─ Log SENT
-   └─ 6k. On failure:
-        ├─ Set Status = Error
-        └─ Log ERROR
-      ↓
-7. Write summary log
-```
+- [ ] Gmail/Apps Script quotas evaluated for added scanners/triggers
+- [ ] Privacy/compliance review for open tracking approach
+- [x] Secure handling of API keys (never in sheet cells)
+- [x] Backward compatibility with existing sheets
+- [x] Duplicate trigger protection retained after new jobs are added
 
 ---
 
-## 13) Testing and Diagnostics
+## 5) Definition of Done (Roadmap Items)
 
-### 13.1 Preview Without Sending
+For each epic, all must be true:
 
-**Menu**: `Diagnostics → Preview Target Dates (no emails sent)`
-
-Shows:
-- All active/blank rows
-- Computed target dates
-- Which rows will send now (due/overdue)
-
-Use this to verify date calculations before going live.
-
-### 13.2 Inspect a Row
-
-**Menu**: `Diagnostics → Inspect Row...`
-
-Enter a row number to see:
-- All parsed field values
-- Target date calculation
-- Whether it's send-eligible now
-
-### 13.3 Send Real Test by No.
-
-**Menu**: `Diagnostics → Send Test Email by No....`
-
-1. Enter a value from the `No.` column
-2. Script finds the matching row
-3. Shows preview of what will be sent
-4. Confirms before sending
-
-**Behavior**:
-- If no row matches → alert error
-- If multiple rows match → warns and uses first match
-- **Ignores Status and target date checks** - always sends
+- [x] Functional behavior implemented in `code.gs`
+- [x] Menu/UI flow implemented where required
+- [x] Logging and diagnostics updated
+- [x] `README.md` updated to match behavior
+- [x] `plans.md` checklist status updated
+- [ ] Manual test scenarios documented and executed
 
 ---
 
-## 14) Troubleshooting Guide
+## 6) Open Product Decisions
 
-### Issue: `Configured sheet "..." not found`
-
-**Cause**: Tab renamed/deleted after initialization.
-
-**Fix**: Run `Initialize / Select Working Sheet` and reselect the correct tab.
-
----
-
-### Issue: `Processed/Active is 0`
-
-**Likely causes**:
-- `Status` not Active (must be "Active" or blank)
-- Required fields missing
-- Wrong configured sheet tab
-
-**Fix**: Use status dialog + preview diagnostics to investigate.
+- [x] Send mode final values and semantics confirmed
+- [x] Reply keywords finalized
+- [x] Open tracking strategy chosen (or deferred)
+- [x] AI scope confirmed (Gemini-only vs multi-provider)
+- [x] Fallback template source finalized
 
 ---
 
-### Issue: `Cannot parse Notice Date`
+## 7) Backlog Parking Lot (Nice-to-Have)
 
-**Cause**: Notice text not matching supported format.
-
-**Fix**: Use one of:
-- `On expiry date` or `On the expiry date`
-- `N days before` (e.g., "7 days before")
-- `N weeks before` (e.g., "2 weeks before")
-- `N months before` (e.g., "1 month before")
+- [ ] Per-client localization of email templates
+- [ ] Business-hour send window constraints
+- [ ] Department/owner-based sender naming rules
+- [ ] Weekly KPI summary email for operations managers
 
 ---
-
-### Issue: `No row found for No. "..."`
-
-**Cause**: No exact/compatible value in `No.` column.
-
-**Fix**: Check value format and whitespace; retry.
-
----
-
-### Issue: Attachment error
-
-**Cause**: Invalid Drive URL/ID or missing file permission.
-
-**Fix**: Validate Drive links/IDs and sharing access.
-
----
-
-### Issue: Duplicate triggers
-
-**Cause**: Multiple daily triggers installed.
-
-**Fix**: Run `Deactivate Daily Schedule` then `Activate Daily Schedule (8 AM)`.
-
----
-
-### Issue: Email not sending but no error
-
-**Cause**: Target date is still in the future.
-
-**Fix**: Check `Preview Target Dates` to see when row will be due.
-
----
-
-## 15) Operational Notes
-
-- Manual run and scheduled run use the same core logic (`runDailyCheck`).
-- Trigger duplicates can happen if manually created multiple times; deactivate then activate once.
-- `Staff Email` acts as both CC source and sender-audit field after successful send.
-- To resend an item, change `Status` back to `Active` (it will send once target date is due/overdue).
-- Blank status rows are automatically activated on first run.
-- All actions are logged in the `LOGS` sheet with color-coded action types.
-
----
-
-## 16) Maintenance Checklist
-
-- [ ] Verify headers in row 2 are intact
-- [ ] Keep `Notice Date` values consistent with supported patterns
-- [ ] Periodically review `LOGS` summary and errors
-- [ ] Re-run initialization if sheet tab names change
-- [ ] Confirm trigger remains active after major edits or account changes
-- [ ] Check for duplicate triggers monthly
-- [ ] Archive or clear old LOGS entries periodically
-
----
-
-## Quick Reference
-
-### Entry Points
-
-| Function | When Called |
-|----------|-------------|
-| `runDailyCheck()` | Daily trigger (8 AM) or manual run |
-| `installTrigger()` | One-time setup |
-| `testRunNow()` | Direct test (alias) |
-
-### Key Variables
-
-```javascript
-CONFIG.SHEET_NAME        // Default: "VISA automation"
-CONFIG.LOGS_SHEET_NAME   // Default: "LOGS"
-CONFIG.HEADER_ROW        // Default: 2
-CONFIG.DATA_START_ROW    // Default: 3
-CONFIG.TRIGGER_HOUR      // Default: 8 (8 AM)
-CONFIG.SENDER_NAME       // Default: "DDS Office"
-```
-
-### Status Flow
-
-```
-(blank) → [Auto-Activate] → Active → [Send Success] → Sent
-                                           → [Failure] → Error
-                                           → [Future Date] → Active (skipped)
-```
