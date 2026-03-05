@@ -33,7 +33,10 @@ interface Props {
     description: number;
     remarks: number;
   };
-  onResizeDivider: (leftField: keyof Props["columnWidths"], deltaX: number) => void;
+  onResizeDivider: (
+    leftField: keyof Props["columnWidths"],
+    deltaX: number,
+  ) => void;
 }
 
 const AutoResizeTextArea = ({
@@ -47,20 +50,10 @@ const AutoResizeTextArea = ({
   className?: string;
   align?: "left" | "center" | "right";
 }) => {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const adjustHeight = () => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
-    }
-  };
-  useEffect(() => {
-    adjustHeight();
-  }, [value]);
   if (!onChange) {
     return (
       <span
-        className={`block whitespace-pre-wrap break-words ${className}`}
+        className={`block whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${className}`}
         style={{ textAlign: align }}
       >
         {value}
@@ -68,17 +61,25 @@ const AutoResizeTextArea = ({
     );
   }
   return (
-    <textarea
-      ref={textareaRef}
-      rows={1}
-      value={value}
-      onChange={(e) => {
-        onChange(e.target.value);
-        adjustHeight();
-      }}
-      className={`w-full bg-transparent outline-none font-medium placeholder-slate-400 resize-none overflow-hidden ${className}`}
-      style={{ textAlign: align }}
-    />
+    <div className="grid w-full" style={{ gridTemplateColumns: "1fr" }}>
+      <textarea
+        rows={1}
+        wrap="soft"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`w-full min-w-0 bg-transparent outline-none font-medium placeholder-slate-400 resize-none leading-tight overflow-hidden ${className}`}
+        style={{
+          textAlign: align,
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+          wordBreak: "break-word",
+          gridArea: "1 / 1 / 2 / 2",
+          height: "auto",
+          minHeight: "1.25em",
+          fieldSizing: "content" as React.CSSProperties["fieldSizing"],
+        }}
+      />
+    </div>
   );
 };
 
@@ -111,7 +112,9 @@ const ComboBox = ({
 
   if (!onChange) {
     return (
-      <span className={`block whitespace-pre-wrap break-words ${className}`}>
+      <span
+        className={`block whitespace-pre-wrap break-all [overflow-wrap:anywhere] ${className}`}
+      >
         {value}
       </span>
     );
@@ -266,7 +269,7 @@ export const TransmittalTemplate: React.FC<Props> = ({
     : "bg-white text-slate-800 w-full max-w-[8.5in] mx-auto shadow-2xl font-sans relative min-h-[11in]";
 
   const cellClass =
-    "border border-slate-300 px-2 py-2 align-top text-sm break-words relative transition-all duration-200";
+    "border border-slate-300 px-2 py-2 align-top text-sm break-words whitespace-normal [overflow-wrap:anywhere] relative transition-all duration-200";
   const headerCellClass =
     "border border-slate-300 bg-slate-50 px-1 py-2 font-bold text-center text-sm uppercase text-slate-700 align-middle select-none";
   const exactWidthStyle = (width: number) => ({
