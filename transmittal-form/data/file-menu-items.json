@@ -1,0 +1,72 @@
+[
+  {
+    "id": "new-transmittal",
+    "icon": "FilePlus2",
+    "label": "New Transmittal",
+    "description": "Clears the current form and starts a fresh transmittal. Any unsaved work will be lost, so save first if needed."
+  },
+  {
+    "id": "open",
+    "icon": "FolderOpen",
+    "label": "Open...",
+    "shortcut": "⌘/Ctrl+O",
+    "description": "Opens a list of your previously saved transmittals so you can reopen and continue editing any of them."
+  },
+  {
+    "id": "save",
+    "icon": "Save",
+    "label": "Save / Update",
+    "shortcut": "⌘/Ctrl+S",
+    "description": "Saves the current transmittal to the cloud database. If you are editing an existing transmittal, this updates it in place."
+  },
+  {
+    "id": "export-pdf",
+    "icon": "FileText",
+    "label": "Export as PDF",
+    "description": "Generates a print-ready PDF of the transmittal form and lets you download it locally or upload it directly to Google Drive."
+  },
+  {
+    "id": "export-word",
+    "icon": "FileDown",
+    "label": "Export as Word",
+    "description": "Exports the transmittal as a DOCX file compatible with Microsoft Word and Google Docs."
+  },
+  {
+    "id": "preview-word",
+    "icon": "Printer",
+    "label": "Preview Word Document",
+    "description": "Shows a rendered preview of the Word export inside the app before you download it."
+  },
+  {
+    "id": "export-csv",
+    "icon": "FileSpreadsheet",
+    "label": "Export as CSV",
+    "description": "Exports the item list as a CSV spreadsheet, useful for logging or importing into other systems."
+  },
+  {
+    "id": "email-recipient",
+    "icon": "Mail",
+    "label": "Email Recipient",
+    "description": "Opens your default mail client with the recipient's email pre-filled, ready for you to attach the transmittal."
+  },
+  {
+    "id": "ai-key-settings",
+    "icon": "KeyRound",
+    "label": "AI Key Settings",
+    "important": true,
+    "importantNote": "Recommended — set your personal Gemini API key here to avoid shared quota limits and ensure AI parsing always works for you.",
+    "description": "Opens the Gemini API key settings. You can save a personal AI key so the system uses your quota instead of the shared key."
+  },
+  {
+    "id": "clear-workspace",
+    "icon": "RotateCcw",
+    "label": "Clear Workspace",
+    "description": "Resets the current form fields without deleting the saved transmittal. Use this to start fresh from a blank slate."
+  },
+  {
+    "id": "sign-out",
+    "icon": "LogOut",
+    "label": "Sign Out",
+    "description": "Signs you out of Smart Transmittal. Your saved transmittals stay in the database and will be there when you sign back in."
+  }
+]

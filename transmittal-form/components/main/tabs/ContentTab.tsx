@@ -69,7 +69,7 @@ export const ContentTab: React.FC<ContentTabProps> = ({
           )}
         </div>
         <div className="space-y-4">
-          <div className="relative">
+          <div className="relative" data-tour="smart-input">
             <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
               <Link2 className="w-4 h-4" />
             </div>
@@ -100,6 +100,7 @@ export const ContentTab: React.FC<ContentTabProps> = ({
           </p>
           <div className="grid grid-cols-2 gap-3">
             <Button
+              data-tour="upload-files"
               onClick={onOpenUploadModal}
               disabled={isDocumentProcessing}
               variant="outline"
@@ -113,6 +114,7 @@ export const ContentTab: React.FC<ContentTabProps> = ({
               {isDocumentProcessing ? "Processing Files" : "Upload Files"}
             </Button>
             <Button
+              data-tour="browse-drive"
               onClick={onOpenDriveModal}
               disabled={!isDriveReady || isDocumentProcessing}
               variant="outline"
@@ -129,7 +131,7 @@ export const ContentTab: React.FC<ContentTabProps> = ({
         </div>
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-4" data-tour="transmission">
         <div className="flex justify-between items-center">
           <h2 className="text-xs font-black text-slate-800 uppercase tracking-[0.2em]">
             Transmission

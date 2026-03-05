@@ -66,6 +66,31 @@ import {
 import { FolderPickerModal } from "../modals/FolderPickerModal";
 import { FileUploadModal } from "../modals/FileUploadModal";
 import { PreviewToolbar, ZOOM_STEPS } from "./PreviewToolbar";
+import {
+  OnboardingTour,
+  type TourStep,
+  type TourStepItem,
+} from "../OnboardingTour";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import tourStepsRaw from "../../data/onboarding-steps.json";
+import fileMenuItemsRaw from "../../data/file-menu-items.json";
+
+const FILE_MENU_ITEMS: TourStepItem[] = fileMenuItemsRaw as TourStepItem[];
+
+const TOUR_STEPS: TourStep[] = (tourStepsRaw as TourStep[]).map((step) =>
+  step.id === "file-menu" ? { ...step, items: FILE_MENU_ITEMS } : step,
+);
+const ONBOARDING_KEY = "transmittal_onboarding_state_v1";
+const AI_KEY_PROMPT_DISMISS_PREFIX = "transmittal_ai_key_prompt_dismissed_v1";
 
 // Add type declaration
 declare global {
@@ -88,6 +113,34 @@ type DbAgency = {
   updatedAt: string;
 };
 
+type TransmittalSuggestions = {
+  projectNames: string[];
+  departments: string[];
+  preparedByNames: string[];
+  preparedByRoles: string[];
+  notedByNames: string[];
+  notedByRoles: string[];
+};
+
+const EMPTY_SUGGESTIONS: TransmittalSuggestions = {
+  projectNames: [],
+  departments: [],
+  preparedByNames: [],
+  preparedByRoles: [],
+  notedByNames: [],
+  notedByRoles: [],
+};
+
+const toSuggestionList = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value
+        .map((entry) => String(entry || "").trim())
+        .filter((entry) => entry.length > 0)
+    : [];
+
+const getAiPromptDismissKey = (userId: string): string =>
+  `${AI_KEY_PROMPT_DISMISS_PREFIX}:${userId}`;
+
 const DEFAULT_COLUMN_WIDTHS = {
   qty: 55,
   noOfItems: 65,
@@ -106,14 +159,16 @@ const COLUMN_ORDER: ColumnWidthField[] = [
   "remarks",
 ];
 
-const COLUMN_WIDTH_LIMITS: Record<ColumnWidthField, { min: number; max: number }> =
-  {
-    noOfItems: { min: 55, max: 140 },
-    qty: { min: 55, max: 120 },
-    documentNumber: { min: 100, max: 260 },
-    description: { min: 160, max: 360 },
-    remarks: { min: 120, max: 260 },
-  };
+const COLUMN_WIDTH_LIMITS: Record<
+  ColumnWidthField,
+  { min: number; max: number }
+> = {
+  noOfItems: { min: 55, max: 140 },
+  qty: { min: 55, max: 120 },
+  documentNumber: { min: 100, max: 260 },
+  description: { min: 160, max: 360 },
+  remarks: { min: 120, max: 260 },
+};
 
 const createInitialData = (): AppData => ({
   recipient: {
@@ -340,13 +395,52 @@ const AppContent: React.FC = () => {
     null,
   );
   const [showPreview, setShowPreview] = useState(false);
+  const [suggestions, setSuggestions] =
+    useState<TransmittalSuggestions>(EMPTY_SUGGESTIONS);
 
-  const [columnWidths, setColumnWidths] = useState({ ...DEFAULT_COLUMN_WIDTHS });
+  const [columnWidths, setColumnWidths] = useState({
+    ...DEFAULT_COLUMN_WIDTHS,
+  });
   const [isDriveReady, setIsDriveReady] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [autoFitZoom, setAutoFitZoom] = useState(100);
   const [isManualZoom, setIsManualZoom] = useState(false);
   const previewContainerRef = useRef<HTMLDivElement>(null);
+
+  const [isTourOpen, setIsTourOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+  const [isAiPromptOpen, setIsAiPromptOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(ONBOARDING_KEY);
+      if (!stored || stored === "pending") {
+        const timer = setTimeout(() => setIsTourOpen(true), 600);
+        return () => clearTimeout(timer);
+      }
+    } catch {}
+  }, []);
+
+  const handleTourSkip = () => {
+    setIsTourOpen(false);
+    setTourStep(0);
+    try {
+      localStorage.setItem(ONBOARDING_KEY, "dismissed");
+    } catch {}
+  };
+
+  const handleTourFinish = () => {
+    setIsTourOpen(false);
+    setTourStep(0);
+    try {
+      localStorage.setItem(ONBOARDING_KEY, "completed");
+    } catch {}
+  };
+
+  const handleStartTour = () => {
+    setTourStep(0);
+    setIsTourOpen(true);
+  };
 
   useEffect(() => {
     const handleResize = () => {
@@ -486,6 +580,120 @@ const AppContent: React.FC = () => {
       fetchNextTransmittalNumber();
     }
   }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user || !apiBaseUrl) {
+      setSuggestions(EMPTY_SUGGESTIONS);
+      return;
+    }
+
+    const controller = new AbortController();
+    let isActive = true;
+
+    const loadSuggestions = async () => {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/transmittal-suggestions`,
+          {
+            credentials: "include",
+            signal: controller.signal,
+          },
+        );
+        if (!response.ok) {
+          throw new Error("Failed to load transmittal suggestions");
+        }
+
+        const payload = await response.json().catch(() => ({}));
+        if (!isActive) return;
+
+        setSuggestions({
+          projectNames: toSuggestionList(payload?.projectNames),
+          departments: toSuggestionList(payload?.departments),
+          preparedByNames: toSuggestionList(payload?.preparedByNames),
+          preparedByRoles: toSuggestionList(payload?.preparedByRoles),
+          notedByNames: toSuggestionList(payload?.notedByNames),
+          notedByRoles: toSuggestionList(payload?.notedByRoles),
+        });
+      } catch (error: any) {
+        if (error?.name === "AbortError") return;
+        console.error("Failed to load transmittal suggestions", error);
+        if (isActive) {
+          setSuggestions(EMPTY_SUGGESTIONS);
+        }
+      }
+    };
+
+    loadSuggestions();
+
+    return () => {
+      isActive = false;
+      controller.abort();
+    };
+  }, [session?.user?.id, apiBaseUrl]);
+
+  useEffect(() => {
+    if (!session?.user?.id || !apiBaseUrl || isTourOpen) return;
+
+    try {
+      const onboardingState = localStorage.getItem(ONBOARDING_KEY);
+      if (!onboardingState || onboardingState === "pending") return;
+    } catch {}
+
+    try {
+      const dismissed = localStorage.getItem(
+        getAiPromptDismissKey(session.user.id),
+      );
+      if (dismissed === "dismissed") return;
+    } catch {}
+
+    const controller = new AbortController();
+    let isActive = true;
+
+    const loadAiSettingsStatus = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/user-ai-settings`, {
+          credentials: "include",
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+
+        const payload = await response.json().catch(() => ({}));
+        if (!isActive) return;
+        if (!payload?.hasCustomGeminiKey) {
+          setIsAiPromptOpen(true);
+        }
+      } catch (error: any) {
+        if (error?.name === "AbortError") return;
+        console.error("Failed to check user AI settings", error);
+      }
+    };
+
+    loadAiSettingsStatus();
+
+    return () => {
+      isActive = false;
+      controller.abort();
+    };
+  }, [session?.user?.id, apiBaseUrl, isTourOpen]);
+
+  const handleAiPromptYes = () => {
+    setIsAiPromptOpen(false);
+    window.dispatchEvent(new Event("open-ai-settings"));
+  };
+
+  const handleAiPromptNo = () => {
+    setIsAiPromptOpen(false);
+    if (session?.user?.id) {
+      try {
+        localStorage.setItem(getAiPromptDismissKey(session.user.id), "dismissed");
+      } catch {}
+    }
+    setStatusType("info");
+    setStatusMsg(
+      "The system will use the system's existing AI keys, but you can still add your API key later on.",
+    );
+    setTimeout(() => setStatusMsg(""), 5000);
+  };
 
   const loadAgenciesFromDb = async () => {
     if (!session?.user || !apiBaseUrl) return;
@@ -1889,6 +2097,7 @@ const AppContent: React.FC = () => {
           isDriveReady={isDriveReady}
           showPreview={showPreview}
           onTogglePreview={setShowPreview}
+          onStartTour={handleStartTour}
         />
 
         <SidebarMenuBar
@@ -1902,7 +2111,9 @@ const AppContent: React.FC = () => {
           onExportCsv={handleExportCSV}
           onSendEmail={handleSendEmail}
           onPreviewDocx={handlePreviewDocx}
-          onOpenAiSettings={() => window.dispatchEvent(new Event("open-ai-settings"))}
+          onOpenAiSettings={() =>
+            window.dispatchEvent(new Event("open-ai-settings"))
+          }
           onSignOut={handleSignOut}
           onResetWorkspace={resetForNewAnalysis}
           isGeneratingPdf={isGeneratingPdf}
@@ -1950,13 +2161,22 @@ const AppContent: React.FC = () => {
           )}
 
           {activeTab === "project" && (
-            <ProjectTab project={data.project} onUpdateField={updateField} />
+            <ProjectTab
+              project={data.project}
+              onUpdateField={updateField}
+              projectNameSuggestions={suggestions.projectNames}
+              departmentSuggestions={suggestions.departments}
+            />
           )}
 
           {activeTab === "signatories" && (
             <SignatoriesTab
               signatories={data.signatories}
               onUpdateSignatory={handleUpdateSignatory}
+              preparedBySuggestions={suggestions.preparedByNames}
+              preparedByRoleSuggestions={suggestions.preparedByRoles}
+              notedBySuggestions={suggestions.notedByNames}
+              notedByRoleSuggestions={suggestions.notedByRoles}
             />
           )}
         </div>
@@ -1964,6 +2184,7 @@ const AppContent: React.FC = () => {
 
       {/* ─── Preview Panel ─── */}
       <div
+        data-tour="preview-panel"
         ref={previewContainerRef}
         className={`${showPreview ? "flex" : "hidden"} lg:flex flex-1 h-full overflow-y-auto overflow-x-hidden bg-slate-200 custom-scrollbar w-full absolute inset-0 lg:static z-10 flex-col items-center`}
       >
@@ -2108,6 +2329,31 @@ const AppContent: React.FC = () => {
         isDriveReady={isDriveReady}
         onSignOut={handleSignOut}
       />
+
+      <OnboardingTour
+        steps={TOUR_STEPS}
+        isOpen={isTourOpen}
+        currentStep={tourStep}
+        onNext={() => setTourStep((s) => s + 1)}
+        onBack={() => setTourStep((s) => s - 1)}
+        onSkip={handleTourSkip}
+        onFinish={handleTourFinish}
+      />
+      <AlertDialog open={isAiPromptOpen} onOpenChange={setIsAiPromptOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>No Personal AI Key Detected</AlertDialogTitle>
+            <AlertDialogDescription>
+              We noticed that you don&apos;t have an AI API key yet. Can you paste
+              your AI API key now?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleAiPromptNo}>No</AlertDialogCancel>
+            <AlertDialogAction onClick={handleAiPromptYes}>Yes</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <style>{`
                 .scrollbar-hide::-webkit-scrollbar { display: none; }

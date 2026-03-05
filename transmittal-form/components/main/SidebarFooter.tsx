@@ -103,7 +103,10 @@ export const SidebarMenuBar: React.FC<SidebarMenuBarProps> = ({
       <div className="flex items-center px-6 pt-1 pb-0 gap-1 bg-white/40">
         {/* File menu */}
         <DropdownMenu>
-          <DropdownMenuTrigger className="px-3 py-1 rounded-md text-[11px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors outline-none cursor-default">
+          <DropdownMenuTrigger
+            data-tour="file-menu"
+            className="px-3 py-1 rounded-md text-[11px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors outline-none cursor-default"
+          >
             File
           </DropdownMenuTrigger>
           <DropdownMenuContent

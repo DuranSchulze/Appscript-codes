@@ -1,0 +1,92 @@
+[
+  {
+    "id": "welcome",
+    "targetSelector": "[data-tour=\"sidebar-header\"]",
+    "title": "Welcome to Smart Transmittal",
+    "body": "Smart Transmittal helps you create, manage, and export professional transmittal forms. This quick tour will walk you through every part of the system so you can get started with confidence."
+  },
+  {
+    "id": "file-menu",
+    "targetSelector": "[data-tour=\"file-menu\"]",
+    "title": "File Menu",
+    "body": "The File menu is your main control panel. Here is a breakdown of every action inside it:"
+  },
+  {
+    "id": "smart-input",
+    "targetSelector": "[data-tour=\"smart-input\"]",
+    "title": "Intelligent Import",
+    "body": "Paste a Google Drive file link, folder link, or Google Sheets URL here and click Import. The system will automatically extract document numbers, descriptions, and remarks from the files using AI."
+  },
+  {
+    "id": "upload-files",
+    "targetSelector": "[data-tour=\"upload-files\"]",
+    "title": "Upload Files",
+    "body": "Upload PDF, DOCX, or image files directly from your computer. The AI parser will read each file and pre-fill document number and description fields automatically, saving you manual entry time."
+  },
+  {
+    "id": "browse-drive",
+    "targetSelector": "[data-tour=\"browse-drive\"]",
+    "title": "Browse Drive",
+    "body": "Browse and select files from your linked Google Drive account. Requires a connected Google account. Once connected, you can navigate folders and import documents in bulk."
+  },
+  {
+    "id": "transmission",
+    "targetSelector": "[data-tour=\"transmission\"]",
+    "title": "Transmission Method",
+    "body": "Select how the documents will be delivered: Hand Delivered, Pick-up, Courier, or Registered Mail. You can select multiple methods. These appear on the printed transmittal form."
+  },
+  {
+    "id": "tab-bar",
+    "targetSelector": "[data-tour=\"tab-bar\"]",
+    "title": "Form Tabs",
+    "body": "These five tabs organize the transmittal form into sections. Content handles document items and import. Brand sets the sender agency. Recipient fills in the receiving party. Project holds contract and reference details. Sign-off captures signatories."
+  },
+  {
+    "id": "tab-brand",
+    "targetSelector": "[data-tour=\"tab-brand\"]",
+    "title": "Brand Tab",
+    "body": "Set or select the sending organization. You can save multiple agency profiles (logos, addresses, contact details) and switch between them. The selected agency appears as the letterhead on the transmittal form."
+  },
+  {
+    "id": "tab-recipient",
+    "targetSelector": "[data-tour=\"tab-recipient\"]",
+    "title": "Recipient Tab",
+    "body": "Enter the details of the person or organization receiving the documents: their name, company, address, email, and contact number. These appear in the To: block of the transmittal form."
+  },
+  {
+    "id": "tab-project",
+    "targetSelector": "[data-tour=\"tab-project\"]",
+    "title": "Project Tab",
+    "body": "Fill in project-level metadata: Contract/Project Title, Project Number, Engagement Reference, Department, and Transmittal ID. The Transmittal ID is auto-generated but can be edited. Project Number is separate from the Transmittal ID."
+  },
+  {
+    "id": "tab-signoff",
+    "targetSelector": "[data-tour=\"tab-signoff\"]",
+    "title": "Sign-off Tab",
+    "body": "Set Prepared By and Noted By names and roles. These appear in the signature block of the transmittal form. You can also set the time the transmittal was released. Suggestions are drawn from your saved transmittals."
+  },
+  {
+    "id": "preview-panel",
+    "targetSelector": "[data-tour=\"preview-panel\"]",
+    "title": "Live Preview",
+    "body": "This panel shows a real-time preview of the transmittal form as you fill it in. The preview matches what will be printed or exported. Switch between the sidebar and full preview using the toggle on mobile."
+  },
+  {
+    "id": "preview-toolbar",
+    "targetSelector": "[data-tour=\"preview-toolbar\"]",
+    "title": "Preview Toolbar",
+    "body": "Use the zoom controls to scale the preview up or down. The Reset Widths button restores the item table columns to their default sizes if you have resized them. The Transmittal ID badge shows the current document identifier."
+  },
+  {
+    "id": "floating-account",
+    "targetSelector": "[data-tour=\"floating-account\"]",
+    "title": "Account & Settings",
+    "body": "Your account avatar sits in the bottom-right corner. Click it to see your profile, Google Drive connection status, AI Key Settings (save a personal Gemini API key), and Sign Out. You can also return to this tour using the ⓘ button in the header."
+  },
+  {
+    "id": "summary",
+    "targetSelector": null,
+    "title": "You're all set!",
+    "body": "Transmittals are saved securely to the cloud database and can be reopened from File → Open. Google Drive features require a linked Google account. Exports support PDF, Word (DOCX), and CSV formats. You can relaunch this tour anytime using the ⓘ button next to the Smart Transmittal title."
+  }
+]

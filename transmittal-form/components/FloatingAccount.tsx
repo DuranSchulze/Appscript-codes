@@ -281,7 +281,9 @@ export const FloatingAccount: React.FC<FloatingAccountProps> = ({
               <div className="grid grid-cols-3 gap-2">
                 <button
                   onClick={saveAiKey}
-                  disabled={isSavingAiKey || isDeletingAiKey || isLoadingAiSettings}
+                  disabled={
+                    isSavingAiKey || isDeletingAiKey || isLoadingAiSettings
+                  }
                   className="col-span-2 rounded-xl bg-brand-600 text-white py-2 text-[10px] font-bold uppercase tracking-widest hover:bg-brand-700 disabled:opacity-50"
                 >
                   {isSavingAiKey ? "Saving..." : "Save / Test Key"}
@@ -311,7 +313,7 @@ export const FloatingAccount: React.FC<FloatingAccountProps> = ({
         </div>
       )}
 
-      <div className="fixed bottom-6 right-6 z-50">
+      <div data-tour="floating-account" className="fixed bottom-6 right-6 z-50">
         <button
           onClick={() => setIsOpen(true)}
           className="w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all duration-200 bg-gradient-to-br from-brand-500 to-brand-700 hover:scale-105"

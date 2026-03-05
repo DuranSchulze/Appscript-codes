@@ -29,7 +29,10 @@ export const PreviewToolbar: React.FC<PreviewToolbarProps> = ({
   const displayTransmittalNumber = transmittalNumber?.trim() || "Draft";
 
   return (
-    <div className="sticky top-0 z-10 flex flex-col items-center gap-1.5 py-2 px-4">
+    <div
+      data-tour="preview-toolbar"
+      className="sticky top-0 z-10 flex flex-col items-center gap-1.5 py-2 px-4"
+    >
       <div className="flex items-center justify-center gap-2">
         <div className="flex items-center gap-2 bg-white/90 backdrop-blur-md border border-slate-200/80 rounded-xl shadow-sm px-3 py-1">
           <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">

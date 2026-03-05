@@ -21,11 +21,11 @@ Recommended implementation order:
 2. In-app onboarding guided tour
 3. Column width / position control improvements
 4. Project Number UX clarity
-5. Project & Sign-Off extra rows (`TO BE DEVELOPED`)
+5. Project + Sign-Off suggestion dropdowns (type + select)
 
 This order prioritizes system reliability, user self-service, and reduced support burden before lower-risk UI refinements.
 
-## Feature 1: User-Saved AI API Key Support
+## Feature 1: User-Saved AI API Key Support ✅ FINISHED
 
 ### Feature Objective
 
@@ -98,6 +98,10 @@ Do not include in phase 1:
   - [x] when the personal key is active
   - [x] when the shared system key is used instead
   - [x] when AI still falls back due to missing or failed keys
+- [x] Add post-login prompt for users without a personal key:
+  - [x] `Yes` opens AI Key Settings modal
+  - [x] `No` dismisses prompt and keeps system-key fallback messaging
+  - [x] prompt is not shown again after user declines
 
 Implemented with additive-only schema and API changes; no existing transmittal, agency, or auth data paths were removed.
 
@@ -116,7 +120,7 @@ Implemented with additive-only schema and API changes; no existing transmittal, 
 - Validation must be strict enough to catch obvious bad keys without blocking valid ones unnecessarily.
 - Logging and API responses must not leak secrets.
 
-## Feature 2: In-App Onboarding Guided Tour
+## Feature 2: In-App Onboarding Guided Tour ✅ FINISHED
 
 ### Feature Objective
 
@@ -149,39 +153,39 @@ Do not include in phase 1:
 
 ### Detailed TODO Checklist
 
-- [ ] Define onboarding trigger rules.
-- [ ] Auto-open on the first successful login per browser.
-- [ ] Do not auto-open again after completion or dismissal.
-- [ ] Persist onboarding completion or dismissal in `localStorage`.
-- [ ] Recommended key: `transmittal_onboarding_state_v1`.
-- [ ] Add a manual `Help / Tour` relaunch control.
-- [ ] Recommended location: `SidebarHeader` or the floating account menu.
-- [ ] Create a multi-step guided tour covering:
-  - [ ] sign-in / account context
-  - [ ] intelligent import input
-  - [ ] upload files
-  - [ ] browse Drive
-  - [ ] transmission settings
-  - [ ] sender tab
-  - [ ] recipient tab
-  - [ ] project tab
-  - [ ] signatories tab
-  - [ ] live preview
-  - [ ] save transmittal
-  - [ ] export actions
-  - [ ] reopen saved transmittals
-- [ ] For each step, define:
-  - [ ] target UI element
-  - [ ] short explanation
-  - [ ] expected user outcome
-- [ ] Add `Next`, `Back`, `Skip`, and `Finish` controls.
-- [ ] Make the tour resilient when a target element is temporarily hidden or unavailable.
-- [ ] Add a final summary step explaining:
-  - [ ] transmittals are saved to the database
-  - [ ] Drive access depends on linked Google sign-in
-  - [ ] exports support local download and Drive upload
-- [ ] Ensure the tour works in both desktop and mobile layouts.
-- [ ] Ensure the tour is dismissible and never traps the user in a blocked state.
+- [x] Define onboarding trigger rules.
+- [x] Auto-open on the first successful login per browser.
+- [x] Do not auto-open again after completion or dismissal.
+- [x] Persist onboarding completion or dismissal in `localStorage`.
+- [x] Recommended key: `transmittal_onboarding_state_v1`.
+- [x] Add a manual `Help / Tour` relaunch control.
+- [x] Recommended location: `SidebarHeader` or the floating account menu.
+- [x] Create a multi-step guided tour covering:
+  - [x] sign-in / account context
+  - [x] intelligent import input
+  - [x] upload files
+  - [x] browse Drive
+  - [x] transmission settings
+  - [x] sender tab
+  - [x] recipient tab
+  - [x] project tab
+  - [x] signatories tab
+  - [x] live preview
+  - [x] save transmittal
+  - [x] export actions
+  - [x] reopen saved transmittals
+- [x] For each step, define:
+  - [x] target UI element
+  - [x] short explanation
+  - [x] expected user outcome
+- [x] Add `Next`, `Back`, `Skip`, and `Finish` controls.
+- [x] Make the tour resilient when a target element is temporarily hidden or unavailable.
+- [x] Add a final summary step explaining:
+  - [x] transmittals are saved to the database
+  - [x] Drive access depends on linked Google sign-in
+  - [x] exports support local download and Drive upload
+- [x] Ensure the tour works in both desktop and mobile layouts.
+- [x] Ensure the tour is dismissible and never traps the user in a blocked state.
 
 ### Acceptance Criteria
 
@@ -324,24 +328,26 @@ Do not include:
 
 ### Detailed TODO Checklist
 
-- [ ] Review and clarify labels used in the Project tab for:
-  - [ ] project title
-  - [ ] project number
-  - [ ] engagement reference
-  - [ ] transmittal number
-- [ ] Add or refine helper text so users understand:
-  - [ ] `Project Number` is editable and project-specific
-  - [ ] `Transmittal ID` is auto-generated but still editable when needed
-- [ ] Ensure `Project Number` is visually clear and not treated as a secondary field.
-- [ ] Review the preview label `Project No:` and align wording if needed with the editing UI.
-- [ ] Review import merge behavior and document it clearly in the future implementation spec.
-- [ ] Lock this phase as UX-only:
-  - [ ] no overwrite-behavior changes
-  - [ ] no backend changes
-- [ ] Add subtle inline guidance to explain the difference between:
-  - [ ] project number
-  - [ ] transmittal number
-  - [ ] engagement reference
+- [x] Review and clarify labels used in the Project tab for:
+  - [x] project title
+  - [x] project number
+  - [x] engagement reference
+  - [x] transmittal number
+- [x] Add or refine helper text so users understand:
+  - [x] `Project Number` is editable and project-specific
+  - [x] `Transmittal ID` is auto-generated but still editable when needed
+- [x] Ensure `Project Number` is visually clear and not treated as a secondary field.
+- [x] Review the preview label `Project No:` and align wording if needed with the editing UI.
+- [x] Review import merge behavior and document it clearly in the future implementation spec.
+- [x] Lock this phase as UX-only:
+  - [x] no overwrite-behavior changes
+  - [x] no backend changes
+- [x] Add subtle inline guidance to explain the difference between:
+  - [x] project number
+  - [x] transmittal number
+  - [x] engagement reference
+
+Implemented in this phase by adding a dedicated `Project Number` input in the Project tab and updating helper copy so users can clearly distinguish `Project Number` from `Transmittal ID`.
 
 ### Acceptance Criteria
 
@@ -355,9 +361,77 @@ Do not include:
 - Too much helper text could clutter the sidebar.
 - This should remain a lightweight UX improvement, not grow into a form redesign.
 
-## Deferred / TO BE DEVELOPED
+## Feature 5: Project + Sign-Off Suggestion Dropdowns
 
-### Feature 5: Project & Sign-Off Extra Rows
+### Feature Objective
+
+Speed up repetitive entry in Project and Sign-Off fields by allowing users to either type freely or select from their own previously used values.
+
+### User Problem
+
+Users repeatedly type the same project titles and signatory names/roles. This is time-consuming and error-prone when values are long or frequently reused.
+
+### Current State
+
+- Project and Sign-Off fields supported free typing only.
+- There was no history-based suggestion source.
+- Users could not quickly reuse values from previous transmittals.
+
+### Scope
+
+Include:
+
+- suggestion dropdowns for:
+  - `Project Title` (`project.projectName`)
+  - `Prepared By Name` (`signatories.preparedBy`)
+  - `Prepared By Role` (`signatories.preparedByRole`)
+  - `Noted By Name` (`signatories.notedBy`)
+  - `Noted By Role` (`signatories.notedByRole`)
+- user-scoped suggestions (current signed-in user only)
+- free typing remains fully allowed
+- shared API endpoint and reusable combobox UI pattern
+
+Do not include:
+
+- cross-user/global suggestions
+- enforced dropdown-only selection
+- schema/model changes
+- save payload changes
+
+### Detailed TODO Checklist
+
+- [x] Add authenticated `GET /api/transmittal-suggestions`.
+- [x] Query transmittal history with user scope only (`where: { userId }`).
+- [x] Return only the 5 suggestion lists needed by Project/Sign-Off inputs.
+- [x] Deduplicate values case-insensitively while preserving most-recent casing.
+- [x] Trim values and exclude empty strings from response.
+- [x] Add one-time suggestion loading in `App.tsx` after session is ready.
+- [x] Keep graceful degradation: if fetch fails, tabs still work as normal inputs.
+- [x] Wire `Project Title` to combobox type+select behavior.
+- [x] Wire 4 Sign-Off fields to combobox type+select behavior.
+- [x] Keep existing update callbacks and save flow unchanged.
+- [x] Keep `Project Number`, `Transmittal ID`, `Purpose`, `Department`, and time fields unchanged.
+- [x] Keep feature additive with no schema changes and no destructive operations.
+
+Implemented in this phase with a new authenticated read-only suggestions API and combobox inputs in Project/Sign-Off tabs. Free typing remains the default behavior, selection is optional, and suggestions are scoped to each user’s own transmittal history only.
+
+### Acceptance Criteria
+
+- Users can type freely in all 5 targeted fields without selecting suggestions.
+- Matching suggestions are available for quick selection in those fields.
+- Suggestions are scoped to the signed-in user only.
+- Save/load behavior and payload shape remain unchanged.
+- If suggestions fail to load, inputs remain usable with plain typing.
+
+### Risks / Dependencies
+
+- Suggestion quality depends on historical data quality.
+- Large history sets are bounded server-side to protect UI responsiveness.
+- Privacy relies on strict user-scoped query filters on the API route.
+
+## Closed Items
+
+### Feature 6: Project & Sign-Off Extra Rows (Closed / Superseded)
 
 ### Feature Objective
 
@@ -375,29 +449,25 @@ Some users may eventually need more flexible project metadata rows or additional
 
 ### Scope
 
-This item is intentionally deferred and should not be treated as build-ready.
+This item is closed. The requested UX outcome for Project and Sign-Off tabs is satisfied by Feature 5 (type + select suggestion dropdowns sourced from user history), so no additional extra-row implementation is planned in this roadmap.
 
 ### Detailed TODO Checklist
 
-- [ ] Mark this feature as `TO BE DEVELOPED`.
-- [ ] Document clearly that the final behavior is not yet defined.
-- [ ] Capture the open design question:
-  - [ ] should this become custom key/value metadata rows
-  - [ ] should this become additional fixed built-in fields
-  - [ ] should this become repeatable sign-off blocks
-- [ ] Defer schema design until real user examples are collected.
-- [ ] Revisit only after the onboarding and AI-key features are completed or better defined.
+- [x] Confirm user intent for Project and Sign-Off tab improvement.
+- [x] Deliver suggestion dropdowns for Project/Sign-Off fields via Feature 5.
+- [x] Keep free typing behavior (no forced selection).
+- [x] Keep implementation additive with no schema changes.
+- [x] Mark extra-rows concept as superseded for current roadmap scope.
 
 ### Acceptance Criteria
 
-- The roadmap preserves the idea for future discussion.
-- The roadmap makes it clear this is not implementation-ready.
-- No engineer should treat this item as a build task without a separate follow-up spec.
+- The roadmap clearly states Feature 6 is closed/superseded.
+- Engineers should use Feature 5 as the implemented Project/Sign-Off UX enhancement.
+- No additional extra-row work is implied in this roadmap version.
 
 ### Risks / Dependencies
 
-- This feature touches printable layout, state shape, persistence, and exports.
-- Choosing the wrong abstraction too early would create future migration cost.
+- If a future requirement explicitly asks for repeatable extra rows, a new separate spec should be created rather than reopening this closed item implicitly.
 
 ## Important Changes Or Additions To Public APIs / Interfaces / Types
 
@@ -478,34 +548,43 @@ The following scenarios should be considered mandatory when each feature is late
 
 ### Onboarding
 
-- [ ] First login shows the guided tour.
-- [ ] User skips the tour and it stays dismissed.
-- [ ] User finishes the tour and it stays completed.
-- [ ] User can manually reopen the tour later.
-- [ ] The tour does not break when a target UI element is hidden or unavailable.
-- [ ] The tour remains usable on smaller screens.
+- [x] First login shows the guided tour.
+- [x] User skips the tour and it stays dismissed.
+- [x] User finishes the tour and it stays completed.
+- [x] User can manually reopen the tour later.
+- [x] The tour does not break when a target UI element is hidden or unavailable.
+- [x] The tour remains usable on smaller screens.
 
 ### Project Number UX
 
-- [ ] Users can clearly identify the editable project number field.
-- [ ] Users understand the difference between project number and transmittal number.
-- [ ] Saving and reopening transmittals behaves exactly as it does today.
-- [ ] No backend payload or schema changes are required.
+- [x] Users can clearly identify the editable project number field.
+- [x] Users understand the difference between project number and transmittal number.
+- [x] Saving and reopening transmittals behaves exactly as it does today.
+- [x] No backend payload or schema changes are required.
+
+### Project + Sign-Off Suggestions
+
+- [x] Project Title supports type + optional select from suggestions.
+- [x] Prepared/Noted name and role fields support type + optional select.
+- [x] Suggestions are user-history only (no cross-user exposure).
+- [x] Unauthenticated suggestion request is blocked (`401`).
+- [x] Free typing still works when suggestion lists are empty or fetch fails.
+- [x] Save/load behavior remains unchanged.
 
 ### User AI API Key
 
-- [ ] User saves a valid Gemini key.
-- [ ] The system confirms the key is active without returning the raw secret.
-- [ ] Parsing prefers the user key when present.
-- [ ] Removing the key restores shared-key behavior.
-- [ ] Invalid key save attempts return user-friendly errors.
-- [ ] If the user key fails during parsing, fallback parsing still completes safely.
-- [ ] One user can never access another user’s stored key or raw status details beyond their own account context.
+- [x] User saves a valid Gemini key.
+- [x] The system confirms the key is active without returning the raw secret.
+- [x] Parsing prefers the user key when present.
+- [x] Removing the key restores shared-key behavior.
+- [x] Invalid key save attempts return user-friendly errors.
+- [x] If the user key fails during parsing, fallback parsing still completes safely.
+- [x] One user can never access another user’s stored key or raw status details beyond their own account context.
 
-### Deferred Project & Sign-Off Rows
+### Closed Project & Sign-Off Rows Item
 
-- [ ] The item remains clearly marked as deferred.
-- [ ] The roadmap wording does not make it appear build-ready.
+- [x] The item is marked closed/superseded by Feature 5.
+- [x] The roadmap does not treat it as an active build target.
 
 ## Notes And Assumptions
 
@@ -514,6 +593,6 @@ The following scenarios should be considered mandatory when each feature is late
 - “Movable columns” is locked to width / position control only, not true column reordering.
 - Column layout persistence is local-only in phase 1.
 - “Editable Project Number” is already functionally present; the future work is UX clarity only.
-- “Project & Sign Off add row” remains intentionally deferred and should stay marked `TO BE DEVELOPED` until the workflow is better defined.
-- AI API key support is planned as a server-backed per-user setting with encrypted storage and shared-key fallback.
+- The previous “Project & Sign Off add row” note is closed in this roadmap revision and superseded by the implemented suggestion-dropdown UX in Feature 5.
+- AI API key support is implemented as a server-backed per-user setting with encrypted storage and shared-key fallback.
 - The current fallback document-number logic remains the baseline safety net and is not being redesigned as part of this roadmap document.
