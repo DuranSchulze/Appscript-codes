@@ -43,6 +43,68 @@ const isTransientNetworkError = (error: unknown): boolean => {
   );
 };
 
+const parsePositiveInt = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+};
+
+const ACCELERATE_MAX_ATTEMPTS = parsePositiveInt(
+  process.env.PRISMA_ACCELERATE_MAX_ATTEMPTS,
+  3,
+);
+
+const ACCELERATE_RETRY_BASE_MS = parsePositiveInt(
+  process.env.PRISMA_ACCELERATE_RETRY_BASE_MS,
+  300,
+);
+
+const isTransientAccelerateError = (error: unknown): boolean => {
+  const message = String(
+    typeof error === "object" && error && "message" in error
+      ? (error as { message?: string }).message
+      : error,
+  );
+
+  return (
+    /fetch failed/i.test(message) ||
+    /timeout/i.test(message) ||
+    /und_err_connect_timeout/i.test(message) ||
+    /econnreset/i.test(message) ||
+    /enotfound/i.test(message) ||
+    /eai_again/i.test(message)
+  );
+};
+
+const accelerateFetchWithRetry = async (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> => {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= ACCELERATE_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      lastError = error;
+
+      if (!isTransientAccelerateError(error) || attempt === ACCELERATE_MAX_ATTEMPTS) {
+        throw error;
+      }
+
+      console.warn(
+        `[prisma-accelerate] fetch failed, retrying (${attempt}/${ACCELERATE_MAX_ATTEMPTS})`,
+        error,
+      );
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, ACCELERATE_RETRY_BASE_MS * attempt),
+      );
+    }
+  }
+
+  throw lastError || new Error("Prisma Accelerate request failed");
+};
+
 const exchangeGoogleAuthorizationCode = async ({
   providerId,
   clientId,
@@ -140,7 +202,11 @@ const exchangeGoogleAuthorizationCode = async ({
 
 export const prisma = new PrismaClient({
   accelerateUrl: process.env.DATABASE_URL,
-}).$extends(withAccelerate());
+}).$extends(
+  withAccelerate({
+    fetch: accelerateFetchWithRetry,
+  }),
+);
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: typeof prisma;

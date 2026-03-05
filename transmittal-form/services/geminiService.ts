@@ -446,11 +446,12 @@ export const parseTransmittalDocument = async (
     content: string, 
     mimeType: string, 
     isText: boolean = false,
-    fileName?: string
+    fileName?: string,
+    keyOverride?: string
 ): Promise<ParseResult> => {
 
   try {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = String(keyOverride || "").trim() || resolveGeminiApiKey();
     if (!apiKey) {
         const userMessage = "AI parser is not configured (missing Gemini API key).";
 

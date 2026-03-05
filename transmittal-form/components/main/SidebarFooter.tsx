@@ -12,6 +12,7 @@ import {
   RotateCcw,
   FilePlus2,
   FolderOpen,
+  KeyRound,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -46,6 +47,7 @@ export interface SidebarMenuBarProps {
   onSendEmail?: () => void;
   onPreviewDocx?: () => void;
   onSignOut: () => void;
+  onOpenAiSettings?: () => void;
   onResetWorkspace: () => void;
   isGeneratingPdf: boolean;
   isGeneratingDocx: boolean;
@@ -63,6 +65,7 @@ export const SidebarMenuBar: React.FC<SidebarMenuBarProps> = ({
   onSendEmail,
   onPreviewDocx,
   onSignOut,
+  onOpenAiSettings,
   onResetWorkspace,
   isGeneratingPdf,
   isGeneratingDocx,
@@ -177,6 +180,12 @@ export const SidebarMenuBar: React.FC<SidebarMenuBarProps> = ({
             )}
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
+              {onOpenAiSettings && (
+                <DropdownMenuItem onClick={onOpenAiSettings}>
+                  <KeyRound className="mr-2 h-4 w-4" />
+                  AI Key Settings
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setShowResetDialog(true)}>
                 <RotateCcw className="mr-2 h-4 w-4" />
                 Clear Workspace

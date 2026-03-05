@@ -41,7 +41,6 @@ import {
 } from "../../types";
 import * as mammoth from "mammoth";
 import {
-  parseTransmittalDocument,
   ParseResult,
   resolveDocumentNumberWithFallback,
 } from "../../services/geminiService";
@@ -88,6 +87,33 @@ type DbAgency = {
   logoBase64: string | null;
   updatedAt: string;
 };
+
+const DEFAULT_COLUMN_WIDTHS = {
+  qty: 55,
+  noOfItems: 65,
+  documentNumber: 130,
+  description: 260,
+  remarks: 150,
+} as const;
+
+type ColumnWidthField = keyof typeof DEFAULT_COLUMN_WIDTHS;
+
+const COLUMN_ORDER: ColumnWidthField[] = [
+  "noOfItems",
+  "qty",
+  "documentNumber",
+  "description",
+  "remarks",
+];
+
+const COLUMN_WIDTH_LIMITS: Record<ColumnWidthField, { min: number; max: number }> =
+  {
+    noOfItems: { min: 55, max: 140 },
+    qty: { min: 55, max: 120 },
+    documentNumber: { min: 100, max: 260 },
+    description: { min: 160, max: 360 },
+    remarks: { min: 120, max: 260 },
+  };
 
 const createInitialData = (): AppData => ({
   recipient: {
@@ -254,6 +280,30 @@ const resolveSessionErrorNotice = (error: unknown): string | undefined => {
   return "We could not restore your session. Please sign in again.";
 };
 
+const parseTransmittalViaApi = async (
+  apiBaseUrl: string,
+  input: {
+    content: string;
+    mimeType: string;
+    isText?: boolean;
+    fileName?: string;
+  },
+): Promise<ParseResult> => {
+  const response = await fetch(`${apiBaseUrl}/api/parse-transmittal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || "Failed to analyze document.");
+  }
+
+  return payload as ParseResult;
+};
+
 const AppContent: React.FC = () => {
   const [smartInput, setSmartInput] = useState("");
   const [isAnalyzingText, setIsAnalyzingText] = useState(false);
@@ -291,12 +341,7 @@ const AppContent: React.FC = () => {
   );
   const [showPreview, setShowPreview] = useState(false);
 
-  const [columnWidths, setColumnWidths] = useState({
-    qty: 55,
-    noOfItems: 65,
-    documentNumber: 130,
-    remarks: 150, // Increased from 100 to 150
-  });
+  const [columnWidths, setColumnWidths] = useState({ ...DEFAULT_COLUMN_WIDTHS });
   const [isDriveReady, setIsDriveReady] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [autoFitZoom, setAutoFitZoom] = useState(100);
@@ -785,12 +830,12 @@ const AppContent: React.FC = () => {
 
     try {
       const { base64, mimeType } = await getFileContentAsBase64(file.id);
-      const result = await parseTransmittalDocument(
-        base64,
-        mimeType || file.mimeType || "application/pdf",
-        false,
-        file.name,
-      );
+      const result = await parseTransmittalViaApi(apiBaseUrl, {
+        content: base64,
+        mimeType: mimeType || file.mimeType || "application/pdf",
+        isText: false,
+        fileName: file.name,
+      });
 
       const parsedItems = Array.isArray(result.items) ? result.items : [];
       if (parsedItems.length === 0) {
@@ -987,10 +1032,60 @@ const AppContent: React.FC = () => {
     });
   };
 
-  const handleColumnResize = (
-    field: keyof typeof columnWidths,
-    newWidth: number,
-  ) => setColumnWidths((prev) => ({ ...prev, [field]: newWidth }));
+  const handleResizeDivider = (leftField: ColumnWidthField, deltaX: number) => {
+    if (!Number.isFinite(deltaX) || deltaX === 0) return;
+
+    setColumnWidths((prev) => {
+      const leftIndex = COLUMN_ORDER.indexOf(leftField);
+      if (leftIndex < 0 || leftIndex >= COLUMN_ORDER.length - 1) {
+        return prev;
+      }
+
+      const rightField = COLUMN_ORDER[leftIndex + 1];
+
+      const leftCurrent = prev[leftField];
+      const rightCurrent = prev[rightField];
+
+      const leftLimits = COLUMN_WIDTH_LIMITS[leftField];
+      const rightLimits = COLUMN_WIDTH_LIMITS[rightField];
+
+      const maxGrowLeft = Math.min(
+        leftLimits.max - leftCurrent,
+        rightCurrent - rightLimits.min,
+      );
+      const maxShrinkLeft = Math.min(
+        leftCurrent - leftLimits.min,
+        rightLimits.max - rightCurrent,
+      );
+
+      let effectiveDelta = deltaX;
+      if (deltaX > 0) {
+        effectiveDelta = Math.min(deltaX, maxGrowLeft);
+      } else {
+        effectiveDelta = -Math.min(-deltaX, maxShrinkLeft);
+      }
+
+      if (!Number.isFinite(effectiveDelta) || Math.abs(effectiveDelta) < 0.01) {
+        return prev;
+      }
+
+      const nextLeft = Math.round(leftCurrent + effectiveDelta);
+      const nextRight = Math.round(rightCurrent - effectiveDelta);
+
+      if (nextLeft === leftCurrent && nextRight === rightCurrent) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [leftField]: nextLeft,
+        [rightField]: nextRight,
+      };
+    });
+  };
+
+  const handleResetColumnWidths = () =>
+    setColumnWidths({ ...DEFAULT_COLUMN_WIDTHS });
 
   const {
     processFiles: processDocs,
@@ -999,12 +1094,12 @@ const AppContent: React.FC = () => {
     error: processingError,
   } = useFileProcessing<any>(
     async (base64, mimeType, fileName) => {
-      const result = await parseTransmittalDocument(
-        base64,
+      const result = await parseTransmittalViaApi(apiBaseUrl, {
+        content: base64,
         mimeType,
-        false,
+        isText: false,
         fileName,
-      );
+      });
       const hasParsedItems =
         Array.isArray(result.items) && result.items.length > 0;
       const usedFallback =
@@ -1807,6 +1902,7 @@ const AppContent: React.FC = () => {
           onExportCsv={handleExportCSV}
           onSendEmail={handleSendEmail}
           onPreviewDocx={handlePreviewDocx}
+          onOpenAiSettings={() => window.dispatchEvent(new Event("open-ai-settings"))}
           onSignOut={handleSignOut}
           onResetWorkspace={resetForNewAnalysis}
           isGeneratingPdf={isGeneratingPdf}
@@ -1876,6 +1972,7 @@ const AppContent: React.FC = () => {
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
           onZoomReset={handleZoomReset}
+          onResetColumnWidths={handleResetColumnWidths}
           onZoomSet={handleZoomSet}
           transmittalNumber={data.project.transmittalNumber}
           showSaveNotice={hasFormData}
@@ -1910,8 +2007,10 @@ const AppContent: React.FC = () => {
                 onUpdateFooter={handleUpdateFooter}
                 onUpdateNotes={handleUpdateNotes}
                 isGeneratingPdf={isGeneratingPdf}
-                columnWidths={columnWidths}
-                onColumnResize={handleColumnResize}
+                columnWidths={
+                  isGeneratingPdf ? DEFAULT_COLUMN_WIDTHS : columnWidths
+                }
+                onResizeDivider={handleResizeDivider}
               />
             </div>
           </div>
@@ -2005,6 +2104,7 @@ const AppContent: React.FC = () => {
           email: session?.user?.email,
           image: session?.user?.image,
         }}
+        apiBaseUrl={apiBaseUrl}
         isDriveReady={isDriveReady}
         onSignOut={handleSignOut}
       />

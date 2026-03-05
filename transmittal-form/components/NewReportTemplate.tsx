@@ -30,12 +30,10 @@ interface Props {
     qty: number;
     noOfItems: number;
     documentNumber: number;
+    description: number;
     remarks: number;
   };
-  onColumnResize: (
-    field: keyof Props["columnWidths"],
-    newWidth: number,
-  ) => void;
+  onResizeDivider: (leftField: keyof Props["columnWidths"], deltaX: number) => void;
 }
 
 const AutoResizeTextArea = ({
@@ -168,25 +166,22 @@ const ComboBox = ({
 const ResizableHeader = ({
   width,
   label,
-  onResize,
-  minWidth = 30,
+  onResizeDelta,
   className,
 }: {
   width?: number;
   label: string;
-  onResize?: (w: number) => void;
-  minWidth?: number;
+  onResizeDelta?: (deltaX: number) => void;
   className?: string;
 }) => {
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (!onResize || !width) return;
+    if (!onResizeDelta || !width) return;
     e.preventDefault();
-    const startX = e.pageX;
-    const startWidth = width;
+    let lastX = e.pageX;
     const handleMouseMove = (moveEvent: MouseEvent) => {
-      const delta = moveEvent.pageX - startX;
-      const newWidth = Math.max(minWidth, startWidth + delta);
-      onResize(newWidth);
+      const deltaX = moveEvent.pageX - lastX;
+      lastX = moveEvent.pageX;
+      onResizeDelta(deltaX);
     };
     const handleMouseUp = () => {
       document.removeEventListener("mousemove", handleMouseMove);
@@ -201,11 +196,13 @@ const ResizableHeader = ({
       style={width ? { width: `${width}px` } : {}}
     >
       {label}
-      {onResize && (
+      {onResizeDelta && (
         <div
-          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-brand-400 active:bg-brand-600 transition-colors z-10"
+          className="absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 group"
           onMouseDown={handleMouseDown}
-        />
+        >
+          <div className="absolute right-0 top-1 bottom-1 w-px bg-slate-300 group-hover:bg-brand-500 group-active:bg-brand-600 transition-colors" />
+        </div>
       )}
     </th>
   );
@@ -226,7 +223,7 @@ export const TransmittalTemplate: React.FC<Props> = ({
   onUpdateNotes,
   isGeneratingPdf = false,
   columnWidths,
-  onColumnResize,
+  onResizeDivider,
 }) => {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -272,6 +269,11 @@ export const TransmittalTemplate: React.FC<Props> = ({
     "border border-slate-300 px-2 py-2 align-top text-sm break-words relative transition-all duration-200";
   const headerCellClass =
     "border border-slate-300 bg-slate-50 px-1 py-2 font-bold text-center text-sm uppercase text-slate-700 align-middle select-none";
+  const exactWidthStyle = (width: number) => ({
+    width: `${width}px`,
+    minWidth: `${width}px`,
+    maxWidth: `${width}px`,
+  });
 
   const leftData = [
     { label: "To:", value: data.recipient.to },
@@ -421,9 +423,9 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       <ResizableHeader
                         label="No. of Items"
                         width={columnWidths.noOfItems}
-                        onResize={
+                        onResizeDelta={
                           !isGeneratingPdf
-                            ? (w) => onColumnResize("noOfItems", w)
+                            ? (deltaX) => onResizeDivider("noOfItems", deltaX)
                             : undefined
                         }
                         className={headerCellClass}
@@ -431,9 +433,9 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       <ResizableHeader
                         label="QTY"
                         width={columnWidths.qty}
-                        onResize={
+                        onResizeDelta={
                           !isGeneratingPdf
-                            ? (w) => onColumnResize("qty", w)
+                            ? (deltaX) => onResizeDivider("qty", deltaX)
                             : undefined
                         }
                         className={headerCellClass}
@@ -441,22 +443,27 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       <ResizableHeader
                         label="Document # / Ref #"
                         width={columnWidths.documentNumber}
-                        onResize={
+                        onResizeDelta={
                           !isGeneratingPdf
-                            ? (w) => onColumnResize("documentNumber", w)
+                            ? (deltaX) =>
+                                onResizeDivider("documentNumber", deltaX)
                             : undefined
                         }
                         className={headerCellClass}
                       />
-                      <th className={headerCellClass}>Description</th>
+                      <ResizableHeader
+                        label="Description"
+                        width={columnWidths.description}
+                        onResizeDelta={
+                          !isGeneratingPdf
+                            ? (deltaX) => onResizeDivider("description", deltaX)
+                            : undefined
+                        }
+                        className={headerCellClass}
+                      />
                       <ResizableHeader
                         label="Remarks"
                         width={columnWidths.remarks}
-                        onResize={
-                          !isGeneratingPdf
-                            ? (w) => onColumnResize("remarks", w)
-                            : undefined
-                        }
                         className={headerCellClass}
                       />
                       {!isGeneratingPdf && (
@@ -486,14 +493,20 @@ export const TransmittalTemplate: React.FC<Props> = ({
                           onDrop={(e) => handleDrop(e, index)}
                           className={`row-item group avoid-break ${draggedIndex === index ? "drag-row-active" : "hover:bg-slate-50/80"} ${dragOverIndex === index ? "drop-indicator" : ""}`}
                         >
-                          <td className={cellClass}>
+                          <td
+                            className={cellClass}
+                            style={exactWidthStyle(columnWidths.noOfItems)}
+                          >
                             <AutoResizeTextArea
                               value={item.noOfItems}
                               className="text-center text-slate-800"
                               align="center"
                             />
                           </td>
-                          <td className={cellClass}>
+                          <td
+                            className={cellClass}
+                            style={exactWidthStyle(columnWidths.qty)}
+                          >
                             {isGeneratingPdf ? (
                               <AutoResizeTextArea
                                 value={item.qty}
@@ -529,7 +542,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                               </div>
                             )}
                           </td>
-                          <td className={cellClass}>
+                          <td
+                            className={cellClass}
+                            style={exactWidthStyle(columnWidths.documentNumber)}
+                          >
                             <AutoResizeTextArea
                               value={item.documentNumber}
                               onChange={
@@ -541,7 +557,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                               className="text-slate-800"
                             />
                           </td>
-                          <td className={cellClass}>
+                          <td
+                            className={cellClass}
+                            style={exactWidthStyle(columnWidths.description)}
+                          >
                             <AutoResizeTextArea
                               value={item.description}
                               onChange={
@@ -552,7 +571,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                               className="text-slate-800"
                             />
                           </td>
-                          <td className={cellClass}>
+                          <td
+                            className={cellClass}
+                            style={exactWidthStyle(columnWidths.remarks)}
+                          >
                             <ComboBox
                               value={item.remarks}
                               onChange={

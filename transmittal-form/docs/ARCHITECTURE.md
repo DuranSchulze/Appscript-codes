@@ -1,132 +1,248 @@
-# Architecture & Data Flow
+# Architecture And Data Flow
 
-## High-level architecture
+## High-Level Architecture
 
-This project is a **single-page React app**.
+This project is a Next.js App Router application.
 
-- Entry: `index.html` → `index.tsx` → `App.tsx`
-- `App.tsx` is the orchestrator (state + handlers)
-- `TransmittalTemplate` is primarily a presentational component
-- Services and hooks provide:
-  - AI parsing
-  - Drive access
-  - File processing
-  - DOCX generation
+- UI entrypoint: `app/page.tsx`
+- Main client shell: `components/main/App.tsx`
+- Root layout and external scripts: `app/layout.tsx`
+- API routes: `app/api/**`
+- Auth and database wiring: `server/auth.ts`
 
-## Entry points
+The browser owns the active editing state through `AppData`, but persistence and authenticated integrations are server-backed.
 
-- `index.html`
-  - Includes CDN scripts:
-    - Tailwind (`cdn.tailwindcss.com`)
-    - `html2canvas` and `html2pdf.js`
-    - Google scripts (GIS + `gapi`)
-  - Mounts React at `<div id="root"></div>`
-  - Loads `/index.tsx`
+## Core Module Boundaries
 
-- `index.tsx`
-  - Creates React root and renders `<App />`
-
-- `App.tsx`
-  - Defines the core state (`AppData`)
-  - Owns import / parse / export actions
-  - Persists history snapshots
-
-## Main state
-
-`AppContent` owns:
-
-- `data: AppData`
-- Import state:
-  - `smartInput`, `isAnalyzingText`, parsing progress via `useFileProcessing`
-- Export state:
-  - `isGeneratingPdf`, `isGeneratingDocx`, docx preview modal state
-- Drive state:
-  - `googleClientId`, `isDriveReady`, `isDriveAuthorized`, `driveAuthError`
-- UI state:
-  - `activeTab`, `columnWidths`
-- Persistence:
-  - `history` (loaded/saved to `localStorage`)
-
-## Data flow (imports)
-
-### A) Local upload (PDF/images)
-
-1. User selects files
-2. `handleBatchUpload` calls `processDocs(files, onItemComplete)`
-3. `useFileProcessing`:
-   - Validates MIME type
-   - Reads base64 (`readAsDataURL`) and strips prefix
-   - If image: resizes with canvas for speed/limits
-   - Runs concurrency-limited processing
-4. For each file:
-   - `parseTransmittalDocument(base64, mimeType, false, fileName)`
-   - Maps result → `TransmittalItem[]`
-5. `addItems` appends items and reindexes `noOfItems`
-6. `mergeHeaderData` merges extracted header fields into `recipient`/`project`
-
-### B) Google Drive picker (file contents)
-
-1. User connects Drive (OAuth token)
-2. User opens picker and selects files
-3. For each selected file:
-   - `getFileContentAsBase64(file.id)` downloads the file bytes
-   - `parseTransmittalDocument(...)`
-   - Items/header are merged into state
-
-### C) Smart input (text or Drive folder link)
-
-1. User pastes text in textarea
-2. `handleSmartAnalysis`:
-   - If Drive folder link: `extractFolderIdFromLink` → `listFilesInFolder`
-     - Adds placeholder items based on file names
-   - Else: `parseTransmittalDocument(text, 'text/plain', true)`
-     - On failures in text mode: local regex fallback in `geminiService.ts`
-
-## Data flow (exports)
-
-### A) PDF
-
-- `handlePrint`:
-  - Uses `window.html2pdf()` on the element `#print-container`
-  - Adds page numbering after render
-
-PDF is a capture of the DOM layout produced by `TransmittalTemplate`.
-
-### B) DOCX
-
-- `handleDownloadDocx`:
-  - Calls `generateTransmittalDocx(data)` → `Blob`
-  - Downloads via `URL.createObjectURL`
-
-DOCX is generated programmatically in `services/docxGenerator.ts`.
-
-### C) DOCX Preview
-
-- `handlePreviewDocx`:
-  - Generates the same DOCX blob
-  - Converts to HTML via `mammoth.convertToHtml`
-  - Displays inside a modal
-
-## Key files and responsibilities
-
-- `App.tsx`
-  - Orchestration, state, handlers, persistence
+- `components/main/App.tsx`
+  - main client orchestrator
+  - owns `AppData`
+  - restores session state
+  - coordinates imports, saves, exports, and modals
 - `components/NewReportTemplate.tsx`
-  - Printable transmittal layout + item table editing/reordering
+  - printable transmittal layout
+  - editable item table and form sections used by the live preview
+- `lib/auth-client.ts`
+  - Better Auth client setup for browser session and OAuth actions
+- `server/auth.ts`
+  - Better Auth server configuration
+  - Prisma client setup
+  - Google OAuth provider definitions
 - `services/geminiService.ts`
-  - Gemini structured extraction + fallback parsing
+  - Gemini parsing logic
+  - response schema
+  - document-number fallback resolution
 - `services/googleDriveService.ts`
-  - Google API init + OAuth + picker + download/list
+  - gets Google access token from `/api/google-token`
+  - Drive file metadata, download, search, folder listing, and upload
+- `services/googleSheetsService.ts`
+  - linked spreadsheet ID storage in `localStorage`
+  - reads `Sheet1`
+  - appends summary rows to `Sheet1`
 - `services/docxGenerator.ts`
-  - DOCX generation
+  - builds the DOCX export with `docx`
 - `hooks/useFileProcessing.ts`
-  - Batch processing + resizing + progress tracking
-- `types.ts`
-  - Type definitions
+  - upload preprocessing
+  - image resizing
+  - sequential/concurrency-limited parsing queue
 
-## Environment and configuration
+## Runtime Flow
 
-- `vite.config.ts` injects:
-  - `process.env.API_KEY` from `GEMINI_API_KEY`
+### Startup And Session
 
-This is why the browser code can call `new GoogleGenAI({ apiKey: process.env.API_KEY })`.
+1. `app/page.tsx` renders `App`.
+2. `App` uses `useSession()` from Better Auth.
+3. If no session is present, the login screen is shown.
+4. If a session is present:
+   - Drive access is checked
+   - `GET /api/transmittals/next-number` is called
+   - `GET /api/agencies` is called
+
+### Import Pipelines
+
+#### Local Uploads
+
+1. User selects PDF or image files.
+2. `useFileProcessing` reads the file as base64.
+3. Images may be resized before parsing.
+4. `parseTransmittalDocument()` is called.
+5. Parsed items are merged into `data.items`.
+6. Parsed header fields are merged into recipient/project fields when available.
+
+#### Google Drive File Selection
+
+1. The app lists Drive files using the current session token.
+2. Selected files are downloaded from Drive.
+3. Each file is parsed with Gemini.
+4. If parsing fails or the file is not analyzable, the app creates a fallback row.
+
+#### Google Drive Folder Link
+
+1. The folder ID is extracted from the pasted link.
+2. Files in the folder are listed.
+3. Each file runs through the same AI-or-fallback import path as Drive selection.
+
+#### Google Drive Single File Link
+
+1. The file ID is extracted from the pasted link.
+2. The file metadata is loaded.
+3. The file runs through the same AI-or-fallback import path as Drive selection.
+
+#### Google Sheets Link
+
+1. The sheet ID is extracted from the pasted link.
+2. `Sheet1` is read.
+3. Headers are mapped to likely item columns.
+4. Rows are converted into `TransmittalItem` entries.
+
+### Save Pipeline
+
+#### Create
+
+1. `POST /api/transmittals`
+2. The server validates the authenticated user.
+3. The server generates the next monthly transmittal number inside a transaction.
+4. The server stores:
+   - top-level transmittal fields
+   - JSON snapshots (`project`, `sender`, `receivedBy`, `footerNotes`)
+   - recipients
+   - item rows
+5. The response returns the saved transmittal, including the server-assigned number.
+6. On create only, if a linked Google Sheet ID exists, the client appends a summary row to the sheet.
+
+#### Update
+
+1. `PUT /api/transmittals/[id]`
+2. The server validates ownership.
+3. The server validates duplicate transmittal number conflicts.
+4. Existing recipients and items are replaced with the submitted set.
+5. The updated transmittal is returned.
+
+### Export Pipeline
+
+- PDF
+  - generated from `#print-container` using `html2pdf.js` and `html2canvas`
+- DOCX
+  - generated by `services/docxGenerator.ts`
+- DOCX Preview
+  - generates the same DOCX blob, then converts it to HTML using `mammoth`
+- CSV
+  - generated client-side from `data.items`
+- Drive upload
+  - uploads the generated blob to a selected Drive folder
+
+## Parsing And Document-Number Fallback
+
+`services/geminiService.ts` is responsible for parsing documents and normalizing document numbers.
+
+The logic is:
+
+1. Resolve a Gemini API key from environment variables.
+2. If no key is available:
+   - text imports use a local regex/line parser
+   - file imports return a fallback parse result
+3. If Gemini returns data:
+   - each item is inspected
+   - weak document-number values are rejected
+   - a stronger document number is derived from labels, tokens, filenames, descriptions, or deterministic placeholders
+4. If Gemini fails entirely:
+   - text imports use regex fallback
+   - file imports return a fallback parse result with an error message
+
+This fallback path is an active part of the production code, not a future enhancement.
+
+## API Surface
+
+### Authenticated Routes
+
+- `GET /api/transmittals`
+  - auth required
+  - returns all transmittals for the current user
+  - includes items, recipients, and agency
+- `POST /api/transmittals`
+  - auth required
+  - accepts `{ data }` where `data` follows the `AppData` shape
+  - creates a new transmittal and assigns the next monthly transmittal number
+- `PUT /api/transmittals/[id]`
+  - auth required
+  - accepts `{ data }`
+  - updates a transmittal owned by the current user
+- `DELETE /api/transmittals/[id]`
+  - auth required
+  - deletes a transmittal owned by the current user
+- `GET /api/transmittals/next-number`
+  - auth required
+  - returns the next available transmittal number for the current month
+- `GET /api/agencies`
+  - auth required
+  - returns saved agencies for the current user
+- `POST /api/agencies`
+  - auth required
+  - accepts `{ agency }`
+  - upserts a saved agency by `(userId, name)`
+- `PUT /api/agencies/[id]`
+  - auth required
+  - accepts `{ agency }`
+  - updates a saved agency owned by the current user
+- `DELETE /api/agencies/[id]`
+  - auth required
+  - deletes a saved agency owned by the current user
+- `GET /api/google-token`
+  - auth required
+  - returns the current Google access token for the linked account
+  - may refresh the token server-side before returning it
+
+### Other Routes
+
+- `POST /api/parse-transmittal`
+  - no explicit auth check in the route
+  - accepts `content`, `mimeType`, `isText`, and optional `fileName`
+  - returns parsed items/header or an error
+- `GET /api/export-transmittals`
+  - token-protected with `SEND_API_TOKEN`
+  - returns flattened export rows across transmittals
+  - accepts the token from `x-api-token` or the `token` query param
+- `/api/auth/[...all]`
+  - Better Auth handler for sign-in, callback, session, and sign-out flows
+
+## Core Client Types
+
+These types are defined in `types.ts` and shape the live editing state:
+
+- `AppData`
+- `TransmittalItem`
+- `RecipientInfo`
+- `ProjectInfo`
+- `SenderInfo`
+- `Signatories`
+- `ReceivedBy`
+- `FooterNotes`
+
+`AppData` is the client-side source of truth while editing. It is serialized and sent to the server when saving.
+
+## Persistence Model
+
+The main Prisma models are:
+
+- `Transmittal`
+  - parent record for one saved form
+  - stores structured JSON snapshots plus top-level searchable fields
+- `Recipient`
+  - recipient rows related to a transmittal
+- `TransmittalItem`
+  - item rows related to a transmittal
+- `Agency`
+  - reusable sender/branding preset associated with a user
+
+Better Auth also uses:
+
+- `User`
+- `Account`
+- `Session`
+- `Verification`
+
+## Important Note About Older Documentation
+
+Some older docs and notes describe the app as a browser-only SPA with local history snapshots. That is no longer the active architecture.
+
+The current implementation uses database-backed transmittals and agencies. `localStorage` is only used for lightweight local values such as the linked Google Sheet ID.

@@ -1,97 +1,75 @@
 # System Overview — Smart Transmittal
 
-## What this system is
+## What This System Is
 
-Smart Transmittal is a client-side web application that helps you generate a formal **Transmittal Form** by importing documents (or lists of documents), extracting metadata, letting you review/edit the results, and exporting the final transmittal as **PDF** and **DOCX**.
+Smart Transmittal is an authenticated web application for creating, saving, reopening, updating, deleting, and exporting formal transmittal forms.
 
-It is built as a **single-page app** (no routing) and runs entirely in the browser.
+The UI runs in the browser, but the system is not browser-only. Authentication, transmittal persistence, agency persistence, token exchange, and export data APIs are handled through Next.js server routes backed by Prisma and PostgreSQL.
 
-## Primary user workflows
+## Primary User Workflow
 
-### 1) Import documents / file lists
+1. The user signs in through Better Auth using either the `google` or `google-dds` provider.
+2. The app restores the session, loads saved agencies, and requests the next transmittal number.
+3. The user builds a transmittal by importing or manually editing line items and header fields.
+4. The user saves the transmittal to the database.
+5. The user exports the transmittal as PDF, DOCX, or CSV, or uploads the export to Google Drive.
+6. The user can reopen and update previously saved transmittals later.
 
-Supported sources:
+## Supported Import Sources
 
 - Local uploads:
-  - PDF files (`application/pdf`)
-  - Images (`image/*`)
-- Google Drive:
-  - Drive picker selection (download file contents and parse)
-  - Drive folder link (list file names and create placeholder items)
-- Smart paste:
-  - Paste file names / text lines (AI parsing, with local regex fallback)
+  - PDF files
+  - image files
+- Google Drive file selection from the in-app Drive browser
+- Google Drive folder link
+- Google Drive single file link
+- Google Sheets link
 
-### 2) Review & edit
+## Review And Editing Surface
 
-- Edit transmittal header fields:
-  - Recipient
-  - Project
-  - Sender branding (including logo)
-  - Signatories / time released
-  - Transmission method checkboxes
-  - Notes / instructions
-- Edit the item table:
-  - Change values (qty, doc number, description, remarks)
-  - Reorder items via drag-and-drop
-  - Remove items
-  - Bulk import rows from spreadsheet-style text
+The app uses a split interface:
 
-### 3) Export / deliver
+- Sidebar tabs for:
+  - content
+  - sender
+  - recipient
+  - project
+  - signatories
+- A live printable transmittal preview rendered from the current `AppData`
 
-- Export **PDF** (HTML → canvas → PDF)
-- Export **DOCX** (generated programmatically with `docx`)
-- Preview DOCX (generated DOCX → HTML via `mammoth`)
-- Export **CSV** of item rows
-- Open a pre-filled **mailto:** link (does not attach files)
+The user can:
 
-## Core modules (by responsibility)
+- edit transmittal header fields
+- edit item rows
+- reorder rows
+- adjust quantities
+- remove rows
+- bulk import rows from supported sources
+- manage reusable agency presets
 
-- **UI orchestration**: `App.tsx`
-  - Owns the full `AppData` state
-  - Handles imports, parsing, merging, export, history snapshots
-- **Transmittal layout/template**: `components/NewReportTemplate.tsx`
-  - Receives `AppData` and callbacks
-  - Renders the printable transmittal layout
-- **AI parsing**: `services/geminiService.ts`
-  - Calls Gemini (`@google/genai`) with a structured JSON schema
-  - Provides fallback parsing for text lists
-- **Google Drive integration**: `services/googleDriveService.ts`
-  - Initializes Google API + picker
-  - OAuth token flow
-  - List folder contents
-  - Download file contents
-- **DOCX generation**: `services/docxGenerator.ts`
-  - Generates Word document using `docx` → `Blob`
-- **Batch file processing**: `hooks/useFileProcessing.ts`
-  - Reads files as base64
-  - Resizes images
-  - Concurrency-limited processing + progress reporting
+## Export And Delivery Options
 
-## Data model
+- PDF export
+- DOCX export
+- CSV export of item rows
+- Upload exported files to Google Drive
+- `mailto:` helper for opening a prefilled email draft
 
-The single source of truth is `AppData` (`types.ts`).
+## Persistence Model
 
-Key objects:
+Primary persistence is server-backed:
 
-- `AppData`
-  - `recipient`, `project`, `sender`, `signatories`, `receivedBy`, `footerNotes`, `notes`
-  - `items: TransmittalItem[]`
+- transmittals are stored in PostgreSQL
+- agencies are stored in PostgreSQL
+- transmittal items and recipients are stored relationally
 
-`TransmittalItem` represents one line in the item table.
+Client-side browser storage is still used for a small amount of local configuration:
 
-## Persistence
+- the linked Google Sheet ID is stored in `localStorage`
 
-- History snapshots are stored in `localStorage` under `transmittal_history` (limited to the latest 20).
-- Google OAuth Client ID is stored in `localStorage` under `google_client_id`.
+## Important Current Constraints
 
-## External services
-
-- **Gemini** (Google Generative AI)
-  - Key is supplied as `GEMINI_API_KEY` via Vite env injection.
-- **Google Drive**
-  - Uses Google Identity Services and Drive API (readonly scopes).
-
-## Known constraints / tradeoffs
-
-- This app runs in the browser; **Gemini API key is effectively client-exposed** in production builds. This is acceptable for internal tools/prototyping but not recommended for public deployment.
-- Google Drive integration requires a valid OAuth Client ID and user consent.
+- Gemini API access is currently environment-driven, not per-user.
+- Parsing can fall back when Gemini fails, returns invalid output, or returns a weak document number.
+- Document-number fallback uses deterministic extraction and placeholder generation from file names, descriptions, and detected tokens.
+- Google Drive actions depend on an authenticated session with a linked Google account and a valid access token from `/api/google-token`.

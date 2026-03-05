@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseTransmittalDocument } from "@/services/geminiService";
+import { auth } from "@/server/auth";
+import { getDecryptedUserGeminiApiKey } from "@/server/user-ai-settings";
 
 export const runtime = "nodejs";
 
@@ -7,6 +9,22 @@ const MAX_CONTENT_LENGTH = 25 * 1024 * 1024;
 
 export async function POST(request: Request) {
   try {
+    let userGeminiApiKey: string | undefined;
+    try {
+      const session = await auth.api.getSession({
+        headers: request.headers as any,
+      });
+      if (session?.user?.id) {
+        const decrypted = await getDecryptedUserGeminiApiKey(session.user.id);
+        if (decrypted) {
+          userGeminiApiKey = decrypted;
+        }
+      }
+    } catch (sessionError) {
+      // Allow parser to continue with env-key fallback when session resolution fails.
+      console.warn("Session lookup failed for parse route:", sessionError);
+    }
+
     const body = await request.json();
     const content = String(body?.content || "");
     const mimeType = String(body?.mimeType || "");
@@ -32,6 +50,7 @@ export async function POST(request: Request) {
       mimeType,
       isText,
       fileName,
+      userGeminiApiKey,
     );
 
     return NextResponse.json(result);

@@ -10,6 +10,7 @@ interface PreviewToolbarProps {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
+  onResetColumnWidths: () => void;
   onZoomSet: (percent: number) => void;
   transmittalNumber?: string;
   showSaveNotice?: boolean;
@@ -20,6 +21,7 @@ export const PreviewToolbar: React.FC<PreviewToolbarProps> = ({
   onZoomIn,
   onZoomOut,
   onZoomReset,
+  onResetColumnWidths,
   onZoomSet,
   transmittalNumber,
   showSaveNotice = false,
@@ -81,6 +83,13 @@ export const PreviewToolbar: React.FC<PreviewToolbarProps> = ({
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
         </div>
+        <button
+          onClick={onResetColumnWidths}
+          className="inline-flex items-center gap-1.5 bg-white/90 backdrop-blur-md border border-slate-200/80 rounded-xl shadow-sm px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-600 hover:bg-white hover:text-slate-800 transition-colors"
+          title="Reset column widths"
+        >
+          Reset Widths
+        </button>
       </div>
 
       {showSaveNotice ? (
