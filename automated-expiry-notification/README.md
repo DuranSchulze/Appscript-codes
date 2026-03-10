@@ -148,6 +148,7 @@ The wizard auto-registers the tab in Script Properties and sets `headerRow = 1`,
   - `Reply Status` → `Replied`
   - `Replied At` → reply timestamp
   - `Reply Keyword` → matched keyword
+- After a row is marked `Replied`, later non-final reminder emails are suppressed for that row; the final expiry-day email can still send
 - Rows without `Sent Thread Id` are skipped
 
 ---
@@ -300,6 +301,7 @@ The wizard auto-registers the tab in Script Properties and sets `headerRow = 1`,
    - Validate required fields
    - Parse Notice Date offset → compute target date
    - Skip if target date is in the future
+   - Skip later non-final reminders when `Reply Status = Replied` (but still allow the final expiry-day send)
    - Resolve Drive attachments (failed attachments → fallback links in email body)
    - Build email body (Remarks → fallback template)
    - Inject reply acknowledgement phrase (first configured keyword, bold + underlined)

@@ -14,11 +14,19 @@ import {
 } from "@/components/ui/combobox";
 import { ProjectInfo } from "@/types";
 
+type TransmittalValidationState = {
+  normalizedValue: string;
+  isDuplicate: boolean;
+  conflictingTransmittalId: string | null;
+  message: string;
+};
+
 interface ProjectTabProps {
   project: ProjectInfo;
   projectNameSuggestions: string[];
   departmentSuggestions: string[];
   onUpdateField: (section: "project", field: string, value: any) => void;
+  transmittalValidation: TransmittalValidationState;
 }
 
 export const ProjectTab: React.FC<ProjectTabProps> = ({
@@ -26,6 +34,7 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
   projectNameSuggestions,
   departmentSuggestions,
   onUpdateField,
+  transmittalValidation,
 }) => {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -47,7 +56,10 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
               onUpdateField("project", "projectName", value)
             }
           >
-            <ComboboxInput className="w-full" placeholder="Enter project title" />
+            <ComboboxInput
+              className="w-full"
+              placeholder="Enter project title"
+            />
             <ComboboxContent>
               <ComboboxEmpty>No saved project titles yet.</ComboboxEmpty>
               <ComboboxList>
@@ -81,17 +93,27 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
             Transmittal ID
           </Label>
           <Input
-            className="font-mono text-[10px]"
+            className={`font-mono text-[10px] transition-all ${
+              transmittalValidation.isDuplicate
+                ? "border-red-400 bg-red-50 text-red-700 shadow-[0_0_0_3px_rgba(248,113,113,0.18)] ring-2 ring-red-300/70 focus-visible:ring-red-400"
+                : ""
+            }`}
             value={project.transmittalNumber}
             onChange={(e) =>
               onUpdateField("project", "transmittalNumber", e.target.value)
             }
             placeholder="Auto-generated (e.g. 202602-0001)"
           />
-          <p className="text-[9px] text-slate-400 ml-2">
-            Auto-generated document number for this transmittal. Editable, but
-            must stay unique across all transmittals.
-          </p>
+          {transmittalValidation.isDuplicate ? (
+            <p className="text-[9px] text-red-600 ml-2 font-semibold">
+              {transmittalValidation.message}
+            </p>
+          ) : (
+            <p className="text-[9px] text-slate-400 ml-2">
+              Auto-generated document number for this transmittal. Editable, but
+              must stay unique across all transmittals.
+            </p>
+          )}
         </div>
         <div className="space-y-1">
           <Label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest ml-2">
@@ -119,7 +141,10 @@ export const ProjectTab: React.FC<ProjectTabProps> = ({
                 onUpdateField("project", "department", value)
               }
             >
-              <ComboboxInput className="w-full" placeholder="Enter department" />
+              <ComboboxInput
+                className="w-full"
+                placeholder="Enter department"
+              />
               <ComboboxContent>
                 <ComboboxEmpty>No saved departments yet.</ComboboxEmpty>
                 <ComboboxList>

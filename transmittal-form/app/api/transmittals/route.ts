@@ -89,34 +89,50 @@ export async function POST(request: Request) {
       }
     }
 
-    const TRANSMITTAL_PREFIX = "TR-FP-";
-
-    // Generate the transmittal number atomically inside a transaction
-    // to prevent duplicate numbers from race conditions
     const transmittal = await db.$transaction(async (tx) => {
+      const requestedTransmittalNumber = String(
+        data.project?.transmittalNumber || "",
+      ).trim();
       const now = new Date();
       const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-      const prefix = `${TRANSMITTAL_PREFIX}${yearMonth}-`;
+      const prefix = `TR-FP-${yearMonth}-`;
+      let dbTransmittalNumber = ensureDbTransmittalPrefix(requestedTransmittalNumber);
 
-      const existing = await tx.transmittal.findMany({
-        where: {
-          transmittalNumber: { startsWith: prefix },
-        },
-        select: { transmittalNumber: true },
-      });
-
-      let maxSeq = 0;
-      for (const row of existing) {
-        if (!row.transmittalNumber) continue;
-        const suffix = row.transmittalNumber.slice(prefix.length);
-        const num = Number(suffix);
-        if (!Number.isNaN(num) && num > maxSeq) {
-          maxSeq = num;
+      if (dbTransmittalNumber) {
+        const duplicate = await tx.transmittal.findFirst({
+          where: {
+            userId: session.user.id,
+            transmittalNumber: dbTransmittalNumber,
+          },
+          select: { id: true },
+        });
+        if (duplicate) {
+          throw new Error(
+            `Transmittal number "${requestedTransmittalNumber}" is already in use.`,
+          );
         }
-      }
+      } else {
+        const existing = await tx.transmittal.findMany({
+          where: {
+            userId: session.user.id,
+            transmittalNumber: { startsWith: prefix },
+          },
+          select: { transmittalNumber: true },
+        });
 
-      const nextSeq = maxSeq + 1;
-      const dbTransmittalNumber = `${prefix}${String(nextSeq).padStart(4, "0")}`;
+        let maxSeq = 0;
+        for (const row of existing) {
+          if (!row.transmittalNumber) continue;
+          const suffix = row.transmittalNumber.slice(prefix.length);
+          const num = Number(suffix);
+          if (!Number.isNaN(num) && num > maxSeq) {
+            maxSeq = num;
+          }
+        }
+
+        const nextSeq = maxSeq + 1;
+        dbTransmittalNumber = `${prefix}${String(nextSeq).padStart(4, "0")}`;
+      }
       const department = String(data.project?.department || "").trim();
 
       const project = {
@@ -186,6 +202,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ transmittal: mapTransmittalForApi(transmittal) });
   } catch (error: any) {
     console.error("Save transmittal error:", error);
+    if (
+      error?.message?.includes("already in use") ||
+      error?.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: error.message || "Transmittal number is already in use." },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

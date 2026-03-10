@@ -8,6 +8,7 @@ import {
   FolderOpen,
   CalendarDays,
   X,
+  Copy,
 } from "lucide-react";
 import { format, parse } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ interface TransmittalListModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenTransmittal: (id: string) => void;
+  onCopyTransmittal: (id: string) => Promise<void>;
   onDeleteTransmittal: (id: string) => Promise<void>;
   apiBaseUrl: string;
 }
@@ -40,6 +42,7 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
   isOpen,
   onClose,
   onOpenTransmittal,
+  onCopyTransmittal,
   onDeleteTransmittal,
   apiBaseUrl,
 }) => {
@@ -101,6 +104,11 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
     } finally {
       setDeletingId(null);
     }
+  };
+
+  const handleCopy = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await onCopyTransmittal(id);
   };
 
   if (!isOpen) return null;
@@ -243,18 +251,27 @@ export const TransmittalListModal: React.FC<TransmittalListModalProps> = ({
                     {t.itemCount !== 1 ? "s" : ""}
                   </p>
                 </div>
-                <button
-                  onClick={(e) => handleDelete(t.id, e)}
-                  disabled={deletingId === t.id}
-                  className="opacity-0 group-hover:opacity-100 p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all"
-                  title="Delete transmittal"
-                >
-                  {deletingId === t.id ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-3.5 h-3.5" />
-                  )}
-                </button>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                  <button
+                    onClick={(e) => handleCopy(t.id, e)}
+                    className="p-2 rounded-xl text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition-all"
+                    title="Copy transmittal"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={(e) => handleDelete(t.id, e)}
+                    disabled={deletingId === t.id}
+                    className="p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all"
+                    title="Delete transmittal"
+                  >
+                    {deletingId === t.id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
               </div>
             ))
           )}

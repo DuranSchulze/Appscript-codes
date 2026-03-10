@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { Pencil, Eye, Loader2 } from "lucide-react";
 import { TransmittalTemplate } from "../NewReportTemplate";
 import { FloatingAccount } from "../FloatingAccount";
@@ -138,6 +138,72 @@ const toSuggestionList = (value: unknown): string[] =>
         .filter((entry) => entry.length > 0)
     : [];
 
+type SavedTransmittalRecord = {
+  id: string;
+  project?: {
+    transmittalNumber?: string;
+    date?: string;
+    timeGenerated?: string;
+    [key: string]: unknown;
+  };
+  recipients?: Array<{
+    recipientName?: string;
+    recipientAgencyEmail?: string;
+    recipientOrganization?: string;
+    recipientAttention?: string;
+    recipientFullAddress?: string;
+    recipientAgencyContactNumber?: string;
+  }>;
+  items?: any[];
+  agency?: { id?: string | null } | null;
+  agencyId?: string | null;
+  sender?: Record<string, unknown>;
+  receivedBy?: Record<string, unknown>;
+  footerNotes?: Record<string, unknown>;
+  projectName?: string;
+  projectNumber?: string;
+  engagementRefNumber?: string;
+  projectPurpose?: string;
+  department?: string;
+  preparedBy?: string;
+  preparedByRole?: string;
+  notedBy?: string;
+  notedByRole?: string;
+  timeReleased?: string;
+  notes?: string;
+  handDelivery?: boolean;
+  pickUp?: boolean;
+  courier?: boolean;
+  registeredMail?: boolean;
+};
+
+type TransmittalNumberValidation = {
+  normalizedValue: string;
+  isDuplicate: boolean;
+  conflictingTransmittalId: string | null;
+  message: string;
+};
+
+const TRANSMITTAL_PREFIX = "TR-FP-";
+
+const createCurrentDateString = () => new Date().toISOString().split("T")[0];
+
+const createCurrentTimeString = () =>
+  new Date().toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const stripTransmittalPrefix = (value: string) => {
+  const trimmed = String(value || "").trim();
+  return trimmed.startsWith(TRANSMITTAL_PREFIX)
+    ? trimmed.slice(TRANSMITTAL_PREFIX.length)
+    : trimmed;
+};
+
+const normalizeTransmittalNumberInput = (value: string) =>
+  stripTransmittalPrefix(value).toUpperCase();
+
 const getAiPromptDismissKey = (userId: string): string =>
   `${AI_KEY_PROMPT_DISMISS_PREFIX}:${userId}`;
 
@@ -186,11 +252,8 @@ const createInitialData = (): AppData => ({
     purpose: "",
     transmittalNumber: "",
     department: "Admin",
-    date: new Date().toISOString().split("T")[0],
-    timeGenerated: new Date().toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
+    date: createCurrentDateString(),
+    timeGenerated: createCurrentTimeString(),
   },
   sender: {
     agencyName: "FILEPINO",
@@ -207,10 +270,7 @@ const createInitialData = (): AppData => ({
     preparedByRole: "Admin Staff",
     notedBy: "Operations Manager",
     notedByRole: "Operations Manager",
-    timeReleased: new Date().toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
+    timeReleased: createCurrentTimeString(),
   },
   transmissionMethod: {
     personalDelivery: false,
@@ -394,6 +454,9 @@ const AppContent: React.FC = () => {
   const [activeTransmittalId, setActiveTransmittalId] = useState<string | null>(
     null,
   );
+  const [savedTransmittals, setSavedTransmittals] = useState<
+    SavedTransmittalRecord[]
+  >([]);
   const [showPreview, setShowPreview] = useState(false);
   const [suggestions, setSuggestions] =
     useState<TransmittalSuggestions>(EMPTY_SUGGESTIONS);
@@ -547,7 +610,7 @@ const AppContent: React.FC = () => {
     }
   }, [session]);
 
-  const fetchNextTransmittalNumber = async (force = false) => {
+  const requestNextTransmittalNumber = async (): Promise<string | null> => {
     if (!apiBaseUrl) return;
     try {
       const response = await fetch(
@@ -556,23 +619,111 @@ const AppContent: React.FC = () => {
           credentials: "include",
         },
       );
-      if (!response.ok) return;
+      if (!response.ok) return null;
       const payload = await response.json().catch(() => ({}));
-      if (payload?.transmittalNumber) {
-        setData((prev) => {
-          if (!force && prev.project.transmittalNumber) return prev;
-          return {
-            ...prev,
-            project: {
-              ...prev.project,
-              transmittalNumber: payload.transmittalNumber,
-            },
-          };
-        });
-      }
+      return payload?.transmittalNumber
+        ? String(payload.transmittalNumber)
+        : null;
     } catch (error) {
       console.error("Failed to fetch next transmittal number", error);
+      return null;
     }
+  };
+
+  const fetchNextTransmittalNumber = async (force = false) => {
+    const nextNumber = await requestNextTransmittalNumber();
+    if (!nextNumber) return null;
+    setData((prev) => {
+      if (!force && prev.project.transmittalNumber) return prev;
+      return {
+        ...prev,
+        project: {
+          ...prev.project,
+          transmittalNumber: nextNumber,
+        },
+      };
+    });
+    return nextNumber;
+  };
+
+  const loadTransmittalsFromDb = async (): Promise<
+    SavedTransmittalRecord[]
+  > => {
+    if (!apiBaseUrl) return [];
+    const response = await fetch(`${apiBaseUrl}/api/transmittals`, {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error("Failed to fetch transmittals");
+    }
+    const payload = await response.json().catch(() => ({}));
+    const transmittals = Array.isArray(payload.transmittals)
+      ? (payload.transmittals as SavedTransmittalRecord[])
+      : [];
+    setSavedTransmittals(transmittals);
+    return transmittals;
+  };
+
+  const transmittalNumberValidation =
+    useMemo<TransmittalNumberValidation>(() => {
+      const normalizedValue = normalizeTransmittalNumberInput(
+        data.project.transmittalNumber,
+      );
+      if (!normalizedValue) {
+        return {
+          normalizedValue,
+          isDuplicate: false,
+          conflictingTransmittalId: null,
+          message: "",
+        };
+      }
+      const conflict = savedTransmittals.find((transmittal) => {
+        if (activeTransmittalId && transmittal.id === activeTransmittalId) {
+          return false;
+        }
+        const existingValue = normalizeTransmittalNumberInput(
+          String(transmittal.project?.transmittalNumber || ""),
+        );
+        return existingValue === normalizedValue;
+      });
+      return {
+        normalizedValue,
+        isDuplicate: Boolean(conflict),
+        conflictingTransmittalId: conflict?.id || null,
+        message: conflict
+          ? `Transmittal ID "${normalizedValue}" already exists. Use a different ID before saving.`
+          : "",
+      };
+    }, [
+      activeTransmittalId,
+      data.project.transmittalNumber,
+      savedTransmittals,
+    ]);
+
+  const buildCopiedDraftData = async (
+    transmittal: SavedTransmittalRecord,
+  ): Promise<AppData> => {
+    const appData = mapDbTransmittalToAppData(transmittal);
+    const suggestedTransmittalNumber =
+      (await requestNextTransmittalNumber()) ||
+      createInitialData().project.transmittalNumber;
+    return {
+      ...appData,
+      project: {
+        ...appData.project,
+        transmittalNumber: suggestedTransmittalNumber,
+        date: createCurrentDateString(),
+        timeGenerated: createCurrentTimeString(),
+      },
+      signatories: {
+        ...appData.signatories,
+        timeReleased: createCurrentTimeString(),
+      },
+      items: appData.items.map((item, index) => ({
+        ...item,
+        id: `copy-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+      })),
+    };
   };
 
   useEffect(() => {
@@ -580,6 +731,17 @@ const AppContent: React.FC = () => {
       fetchNextTransmittalNumber();
     }
   }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user || !apiBaseUrl) {
+      setSavedTransmittals([]);
+      return;
+    }
+    loadTransmittalsFromDb().catch((error) => {
+      console.error("Failed to load transmittals", error);
+      setSavedTransmittals([]);
+    });
+  }, [session?.user?.id, apiBaseUrl]);
 
   useEffect(() => {
     if (!session?.user || !apiBaseUrl) {
@@ -685,7 +847,10 @@ const AppContent: React.FC = () => {
     setIsAiPromptOpen(false);
     if (session?.user?.id) {
       try {
-        localStorage.setItem(getAiPromptDismissKey(session.user.id), "dismissed");
+        localStorage.setItem(
+          getAiPromptDismissKey(session.user.id),
+          "dismissed",
+        );
       } catch {}
     }
     setStatusType("info");
@@ -851,8 +1016,8 @@ const AppContent: React.FC = () => {
     const payload = await response.json().catch(() => ({}));
     if (payload?.transmittal) {
       setActiveTransmittalId(payload.transmittal.id);
+      await loadTransmittalsFromDb().catch(() => {});
 
-      // Sync the form with the server-assigned transmittal number
       const serverProject = payload.transmittal.project || {};
       const serverNumber = String(serverProject.transmittalNumber || "");
       if (serverNumber) {
@@ -862,7 +1027,6 @@ const AppContent: React.FC = () => {
         }));
       }
 
-      // Append row to linked Google Sheet (non-blocking, only on create)
       if (!isEditing && getLinkedSheetId()) {
         const methods: string[] = [];
         if (data.transmissionMethod?.personalDelivery)
@@ -890,14 +1054,7 @@ const AppContent: React.FC = () => {
   const handleOpenTransmittal = async (id: string) => {
     if (!apiBaseUrl) return;
     try {
-      const response = await fetch(`${apiBaseUrl}/api/transmittals`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch transmittals");
-      const payload = await response.json();
-      const transmittals = Array.isArray(payload.transmittals)
-        ? payload.transmittals
-        : [];
+      const transmittals = await loadTransmittalsFromDb();
       const match = transmittals.find((t: any) => t.id === id);
       if (!match) throw new Error("Transmittal not found");
 
@@ -915,6 +1072,31 @@ const AppContent: React.FC = () => {
     }
   };
 
+  const handleCopyTransmittal = async (id: string) => {
+    try {
+      const transmittals =
+        savedTransmittals.length > 0
+          ? savedTransmittals
+          : await loadTransmittalsFromDb();
+      const match = transmittals.find((transmittal) => transmittal.id === id);
+      if (!match) {
+        throw new Error("Transmittal not found");
+      }
+      const copiedDraft = await buildCopiedDraftData(match);
+      setData(copiedDraft);
+      setActiveTransmittalId(null);
+      setActiveTab("project");
+      setIsTransmittalListOpen(false);
+      setStatusMsg("Transmittal copied as new draft");
+      setStatusType("info");
+      setTimeout(() => setStatusMsg(""), 4000);
+    } catch (error: any) {
+      setStatusMsg(error?.message || "Failed to copy transmittal");
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 5000);
+    }
+  };
+
   const handleDeleteTransmittal = async (id: string) => {
     if (!apiBaseUrl) return;
     const response = await fetch(`${apiBaseUrl}/api/transmittals/${id}`, {
@@ -925,7 +1107,9 @@ const AppContent: React.FC = () => {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error || "Failed to delete");
     }
-    // If the deleted transmittal is currently active, clear the workspace
+    setSavedTransmittals((prev) =>
+      prev.filter((transmittal) => transmittal.id !== id),
+    );
     if (activeTransmittalId === id) {
       setData(createInitialData());
       setActiveTransmittalId(null);
@@ -1940,6 +2124,13 @@ const AppContent: React.FC = () => {
 
   const handleSaveTransmittal = async () => {
     const isEditing = Boolean(activeTransmittalId);
+    if (transmittalNumberValidation.isDuplicate) {
+      setActiveTab("project");
+      setStatusMsg(transmittalNumberValidation.message);
+      setStatusType("error");
+      setTimeout(() => setStatusMsg(""), 5000);
+      return;
+    }
     try {
       await saveTransmittalToDb();
       setStatusMsg(isEditing ? "Transmittal updated" : "Transmittal saved");
@@ -2166,6 +2357,7 @@ const AppContent: React.FC = () => {
               onUpdateField={updateField}
               projectNameSuggestions={suggestions.projectNames}
               departmentSuggestions={suggestions.departments}
+              transmittalValidation={transmittalNumberValidation}
             />
           )}
 
@@ -2251,6 +2443,7 @@ const AppContent: React.FC = () => {
         isOpen={isTransmittalListOpen}
         onClose={() => setIsTransmittalListOpen(false)}
         onOpenTransmittal={handleOpenTransmittal}
+        onCopyTransmittal={handleCopyTransmittal}
         onDeleteTransmittal={handleDeleteTransmittal}
         apiBaseUrl={apiBaseUrl}
       />
@@ -2344,13 +2537,15 @@ const AppContent: React.FC = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>No Personal AI Key Detected</AlertDialogTitle>
             <AlertDialogDescription>
-              We noticed that you don&apos;t have an AI API key yet. Can you paste
-              your AI API key now?
+              We noticed that you don&apos;t have an AI API key yet. Can you
+              paste your AI API key now?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={handleAiPromptNo}>No</AlertDialogCancel>
-            <AlertDialogAction onClick={handleAiPromptYes}>Yes</AlertDialogAction>
+            <AlertDialogAction onClick={handleAiPromptYes}>
+              Yes
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

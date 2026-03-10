@@ -144,6 +144,57 @@ var TAB_CONFIG_KEYS = {
   LAST_SELECTED: "LAST_SELECTED",
 };
 
+var LIBRARY_CONTEXT = {
+  spreadsheetId: "",
+  spreadsheet: null,
+};
+
+function withLibrarySpreadsheetContext_(spreadsheetIdOrInstance, callback) {
+  var previousId = LIBRARY_CONTEXT.spreadsheetId;
+  var previousSpreadsheet = LIBRARY_CONTEXT.spreadsheet;
+  var spreadsheet = null;
+  var spreadsheetId = "";
+
+  if (spreadsheetIdOrInstance) {
+    if (
+      typeof spreadsheetIdOrInstance.getId === "function" &&
+      typeof spreadsheetIdOrInstance.getSheetByName === "function"
+    ) {
+      spreadsheet = spreadsheetIdOrInstance;
+      spreadsheetId = spreadsheet.getId();
+    } else {
+      spreadsheetId = String(spreadsheetIdOrInstance || "").trim();
+      if (spreadsheetId) spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    }
+  }
+
+  LIBRARY_CONTEXT.spreadsheetId = spreadsheetId;
+  LIBRARY_CONTEXT.spreadsheet = spreadsheet;
+
+  try {
+    return callback(spreadsheet);
+  } finally {
+    LIBRARY_CONTEXT.spreadsheetId = previousId;
+    LIBRARY_CONTEXT.spreadsheet = previousSpreadsheet;
+  }
+}
+
+function getLibraryContextSpreadsheet_() {
+  return LIBRARY_CONTEXT.spreadsheet || null;
+}
+
+function getLibraryContextSpreadsheetId_() {
+  if (LIBRARY_CONTEXT.spreadsheetId) return LIBRARY_CONTEXT.spreadsheetId;
+  var spreadsheet = getLibraryContextSpreadsheet_();
+  return spreadsheet ? spreadsheet.getId() : "";
+}
+
+function getScopedPropertyKey_(key) {
+  var spreadsheetId = getLibraryContextSpreadsheetId_();
+  if (!spreadsheetId) return key;
+  return "SPREADSHEET::" + spreadsheetId + "::" + key;
+}
+
 var FLEXIBLE_HEADER_ALIASES = {
   NO: [
     "No.",
@@ -2085,8 +2136,7 @@ function configureAutomationSheets() {
  *   - legacy: plain comma-separated string
  */
 function getConfiguredTabEntries() {
-  var props = PropertiesService.getDocumentProperties();
-  var saved = props.getProperty(CONFIG.AUTOMATION_SHEET_PROPERTY_KEY);
+  var saved = getPropString(CONFIG.AUTOMATION_SHEET_PROPERTY_KEY, "");
   if (!saved || saved.trim() === "") {
     return [{ id: null, name: CONFIG.SHEET_NAME }];
   }
@@ -2145,10 +2195,7 @@ function setConfiguredTabEntries(entries) {
     return e && (e.name || e.id);
   });
   if (clean.length === 0) return;
-  PropertiesService.getDocumentProperties().setProperty(
-    CONFIG.AUTOMATION_SHEET_PROPERTY_KEY,
-    JSON.stringify(clean),
-  );
+  setPropString(CONFIG.AUTOMATION_SHEET_PROPERTY_KEY, JSON.stringify(clean));
 }
 
 /**
@@ -2156,7 +2203,7 @@ function setConfiguredTabEntries(entries) {
  * Tries to resolve sheet IDs from the active spreadsheet when possible.
  */
 function setConfiguredSheetNames(namesArray) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getAutomationSpreadsheet();
   var entries = (namesArray || [])
     .filter(function (n) {
       return !!String(n || "").trim();
@@ -2322,7 +2369,7 @@ function promptSelectConfiguredSheet(ss, title) {
  * Returns document properties object used by this automation.
  */
 function getAutomationProperties() {
-  return PropertiesService.getDocumentProperties();
+  return PropertiesService.getScriptProperties();
 }
 
 /**
@@ -2340,6 +2387,9 @@ function rememberSpreadsheetId(ss) {
  * Returns spreadsheet in active context, or opens by stored ID.
  */
 function getAutomationSpreadsheet() {
+  var contextSpreadsheet = getLibraryContextSpreadsheet_();
+  if (contextSpreadsheet) return contextSpreadsheet;
+
   var active = null;
   try {
     active = SpreadsheetApp.getActiveSpreadsheet();
@@ -2364,7 +2414,7 @@ function getAutomationSpreadsheet() {
  * Returns a string property with optional fallback.
  */
 function getPropString(key, fallbackValue) {
-  var value = getAutomationProperties().getProperty(key);
+  var value = getAutomationProperties().getProperty(getScopedPropertyKey_(key));
   if (value === null || value === undefined || String(value).trim() === "") {
     return fallbackValue || "";
   }
@@ -2378,17 +2428,17 @@ function setPropString(key, value) {
   var props = getAutomationProperties();
   var text = String(value === null || value === undefined ? "" : value).trim();
   if (!text) {
-    props.deleteProperty(key);
+    props.deleteProperty(getScopedPropertyKey_(key));
     return;
   }
-  props.setProperty(key, text);
+  props.setProperty(getScopedPropertyKey_(key), text);
 }
 
 /**
  * Returns boolean property value with fallback.
  */
 function getPropBoolean(key, fallbackValue) {
-  var raw = getAutomationProperties().getProperty(key);
+  var raw = getAutomationProperties().getProperty(getScopedPropertyKey_(key));
   if (raw === null || raw === undefined || String(raw).trim() === "") {
     return !!fallbackValue;
   }
@@ -2399,7 +2449,10 @@ function getPropBoolean(key, fallbackValue) {
  * Saves boolean property value.
  */
 function setPropBoolean(key, value) {
-  getAutomationProperties().setProperty(key, value ? "true" : "false");
+  getAutomationProperties().setProperty(
+    getScopedPropertyKey_(key),
+    value ? "true" : "false",
+  );
 }
 
 function isValidEmail(email) {
@@ -3393,7 +3446,7 @@ function getTabColumnMapping(tabName) {
  */
 function clearTabColumnMapping(tabName) {
   var key = getTabConfigKey(tabName, TAB_CONFIG_KEYS.COLUMN_MAP);
-  getAutomationProperties().deleteProperty(key);
+  getAutomationProperties().deleteProperty(getScopedPropertyKey_(key));
 }
 
 /**
@@ -6560,3 +6613,28 @@ function diagnosticSendTestRow() {
     ui.alert("Failed to send: " + e.message);
   }
 }
+
+var ExpiryLib = (function () {
+  function runDailyCheckForSpreadsheet(spreadsheetIdOrInstance) {
+    return withLibrarySpreadsheetContext_(
+      spreadsheetIdOrInstance,
+      function () {
+        return runDailyCheck();
+      },
+    );
+  }
+
+  function runReplyScanForSpreadsheet(spreadsheetIdOrInstance) {
+    return withLibrarySpreadsheetContext_(
+      spreadsheetIdOrInstance,
+      function () {
+        return runReplyScan();
+      },
+    );
+  }
+
+  return {
+    runDailyCheckForSpreadsheet: runDailyCheckForSpreadsheet,
+    runReplyScanForSpreadsheet: runReplyScanForSpreadsheet,
+  };
+})();
