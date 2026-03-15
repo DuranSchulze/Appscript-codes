@@ -101,11 +101,9 @@ The wizard auto-registers the tab in Script Properties and sets `headerRow = 1`,
   - `[Client Name]`
   - `[Date of Expiration]`, `[Date of Expiry]`, `[Expiry Date]`
   - `[Document Type]`
-- **Reply acknowledgement phrase** — every outgoing email includes a styled callout:
-
-  > Kindly reply **"RECEIVED"** to confirm that you have received and read this reminder.
-
-  The phrase uses the first configured reply keyword (bold + underlined, blue callout box). This prompts the client to reply, which the reply scan detects automatically.
+- **Acknowledgement tracking** — outgoing emails no longer instruct the client to reply with a specific phrase. Delivery visibility comes from:
+  - reply scanning using configured keywords found anywhere in the client's reply body/subject, case-insensitively
+  - open tracking when the tracking pixel is loaded
 
 - **Sender name** — derives from the running account's email domain (for example, `@duranschulze.com` → `Duranschulze`, `@filepino.com` → `Filepino`); falls back to `Office`
 - **Recipients:** primary from `Client Email`; optional CC from `Staff Email` column and/or default CC list
@@ -143,11 +141,12 @@ The wizard auto-registers the tab in Script Properties and sets `headerRow = 1`,
 - **Configurable keywords** — default: `ACK`, `RECEIVED`, `OK`; stored in Script Properties
 - **2x daily reply scan** — runs at **9:00 AM and 3:00 PM** (Asia/Manila) when activated
 - Manual run available via `Run & Diagnostics → Run Reply Scan Now`
-- Scan looks up sent Gmail threads by `Sent Thread Id`, reads replies from the client's address after the send timestamp, and checks body/subject for configured keywords
+- Scan looks up sent Gmail threads by `Sent Thread Id`, reads replies from the client's address after the send timestamp, and checks body/subject for configured keywords found anywhere in the reply, case-insensitively
 - On match, updates:
   - `Reply Status` → `Replied`
   - `Replied At` → reply timestamp
   - `Reply Keyword` → matched keyword
+- Open tracking also marks the row as acknowledged by setting `Reply Status = Replied` and writing `Reply Keyword = OPEN_TRACKED` or `CLICK_TRACKED`
 - After a row is marked `Replied`, later non-final reminder emails are suppressed for that row; the final expiry-day email can still send
 - Rows without `Sent Thread Id` are skipped
 
@@ -304,7 +303,7 @@ The wizard auto-registers the tab in Script Properties and sets `headerRow = 1`,
    - Skip later non-final reminders when `Reply Status = Replied` (but still allow the final expiry-day send)
    - Resolve Drive attachments (failed attachments → fallback links in email body)
    - Build email body (Remarks → fallback template)
-   - Inject reply acknowledgement phrase (first configured keyword, bold + underlined)
+   - Inject open tracking pixel when configured
    - Send email via GmailApp
    - On success: update Status, Staff Email, sent metadata, Reply Status
    - On failure: update Status to Error

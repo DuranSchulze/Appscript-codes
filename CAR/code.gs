@@ -44,6 +44,9 @@ const CONFIG_DEFAULTS = {
     REMARKS: "Remarks",
     STAFF_EMAIL: "Staff Email",
     CLIENT_EMAIL: "Client Email",
+    REVISIT_DATE: "Revisit Date",
+    REVISIT_STATUS: "Revisit Status",
+    REVISIT_NOTES: "Revisit Notes",
   },
   STATUS: {
     ONGOING: "On Going",
@@ -64,6 +67,13 @@ const CONFIG_DEFAULTS = {
 
 // Keep CONFIG as alias to defaults so any legacy direct references don't hard-break.
 const CONFIG = CONFIG_DEFAULTS;
+const EMAIL_RECIPIENT_MODES = {
+  STAFF_ONLY: "staff_only",
+  STAFF_AND_CLIENT: "staff_and_client",
+};
+const REVISIT_OPEN_STATUSES = ["open", "pending", "for revisit", "revisit"];
+const DEFAULT_AUTOMATION_HOUR = 8;
+const DEFAULT_AUTOMATION_MINUTE = 0;
 
 // ============================================================================
 // RUNTIME CONFIG — reads Script Properties, falls back to defaults
@@ -74,6 +84,7 @@ let _configCache = null;
 function getConfig() {
   if (_configCache) return _configCache;
 
+  migrateLegacySettings();
   const props = PropertiesService.getScriptProperties().getProperties();
 
   const sheets = {};
@@ -95,6 +106,9 @@ function getConfig() {
 
   const headerRowProp = parseInt(props["HEADER_ROW"], 10);
   const dataStartRowProp = parseInt(props["DATA_START_ROW"], 10);
+  const automationHourProp = parseInt(props["AUTOMATION_HOUR"], 10);
+  const automationMinuteProp = parseInt(props["AUTOMATION_MINUTE"], 10);
+  const workingSheets = parseJsonArrayProperty(props["WORKING_SHEETS"]);
 
   _configCache = {
     SHEETS: sheets,
@@ -106,6 +120,15 @@ function getConfig() {
     CGT_RULE: CONFIG_DEFAULTS.CGT_RULE,
     HEADER_ROW: isNaN(headerRowProp) ? null : headerRowProp,
     DATA_START_ROW: isNaN(dataStartRowProp) ? null : dataStartRowProp,
+    WORKING_SHEETS: workingSheets,
+    AUTOMATION_HOUR: isNaN(automationHourProp)
+      ? DEFAULT_AUTOMATION_HOUR
+      : automationHourProp,
+    AUTOMATION_MINUTE: isNaN(automationMinuteProp)
+      ? DEFAULT_AUTOMATION_MINUTE
+      : automationMinuteProp,
+    EMAIL_RECIPIENT_MODE:
+      props["EMAIL_RECIPIENT_MODE"] || EMAIL_RECIPIENT_MODES.STAFF_ONLY,
   };
 
   return _configCache;
@@ -113,6 +136,77 @@ function getConfig() {
 
 function invalidateConfigCache() {
   _configCache = null;
+}
+
+function parseJsonArrayProperty(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function migrateLegacySettings() {
+  const props = PropertiesService.getScriptProperties();
+  const legacyWorkingSheet = props.getProperty("WORKING_SHEET");
+  const workingSheets = props.getProperty("WORKING_SHEETS");
+
+  if (legacyWorkingSheet && !workingSheets) {
+    props.setProperty("WORKING_SHEETS", JSON.stringify([legacyWorkingSheet]));
+    props.deleteProperty("WORKING_SHEET");
+  }
+}
+
+function getWorkingSheets() {
+  return getConfig().WORKING_SHEETS || [];
+}
+
+function setWorkingSheets(sheetNames) {
+  const cleaned = Array.from(
+    new Set(
+      (sheetNames || [])
+        .map((name) => (name || "").toString().trim())
+        .filter(Boolean),
+    ),
+  );
+  const props = PropertiesService.getScriptProperties();
+  if (cleaned.length === 0) props.deleteProperty("WORKING_SHEETS");
+  else props.setProperty("WORKING_SHEETS", JSON.stringify(cleaned));
+  props.deleteProperty("WORKING_SHEET");
+  invalidateConfigCache();
+}
+
+function getConfiguredAutomationTime() {
+  const cfg = getConfig();
+  return { hour: cfg.AUTOMATION_HOUR, minute: cfg.AUTOMATION_MINUTE };
+}
+
+function setConfiguredAutomationTime(hour, minute) {
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty("AUTOMATION_HOUR", String(hour));
+  props.setProperty("AUTOMATION_MINUTE", String(minute));
+  invalidateConfigCache();
+}
+
+function getEmailRecipientMode() {
+  return getConfig().EMAIL_RECIPIENT_MODE || EMAIL_RECIPIENT_MODES.STAFF_ONLY;
+}
+
+function setEmailRecipientMode(mode) {
+  PropertiesService.getScriptProperties().setProperty(
+    "EMAIL_RECIPIENT_MODE",
+    mode,
+  );
+  invalidateConfigCache();
+}
+
+function formatTimeLabel(hour, minute) {
+  const safeHour = Number(hour) || 0;
+  const safeMinute = Number(minute) || 0;
+  const date = new Date(2000, 0, 1, safeHour, safeMinute, 0, 0);
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), "hh:mm a");
 }
 
 // ============================================================================
@@ -257,48 +351,48 @@ function clearNotificationEmails() {
 }
 
 function getWorkingSheet() {
-  return (
-    PropertiesService.getScriptProperties().getProperty("WORKING_SHEET") || null
-  );
+  const sheets = getWorkingSheets();
+  return sheets.length === 1 ? sheets[0] : null;
 }
 
 function setWorkingSheet(sheetName) {
-  PropertiesService.getScriptProperties().setProperty(
-    "WORKING_SHEET",
-    sheetName,
-  );
+  setWorkingSheets(sheetName ? [sheetName] : []);
 }
 
-function selectWorkingSheet() {
-  const ui = SpreadsheetApp.getUi();
+function getEligibleAutomationSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const cfg = getConfig();
-
   const systemSheets = [
     cfg.SHEETS.COMPLETED,
     cfg.SHEETS.DASHBOARD,
     cfg.SHEETS.ACTIVITY_LOG,
   ];
 
-  const allSheets = ss
+  return ss
     .getSheets()
-    .map((s) => s.getName())
+    .map((sheet) => sheet.getName())
     .filter((name) => !systemSheets.includes(name));
+}
+
+function selectWorkingSheets() {
+  const ui = SpreadsheetApp.getUi();
+  const allSheets = getEligibleAutomationSheets();
 
   if (allSheets.length === 0) {
     ui.alert("No sheets found. Please add a data sheet first.");
     return;
   }
 
-  const current = getWorkingSheet();
-  const currentLabel = current
-    ? `Current: "${current}"`
-    : "Current: (all detected sheets)";
+  const current = getWorkingSheets();
+  const currentLabel =
+    current.length > 0
+      ? `Current: ${current.join(", ")}`
+      : "Current: (auto-detect eligible sheets)";
   const list = allSheets.map((name, i) => `  ${i + 1}. ${name}`).join("\n");
 
   const response = ui.prompt(
-    "Step 1 — Select Working Sheet Tab",
-    `${currentLabel}\n\nAvailable sheets:\n${list}\n\nEnter the number of the sheet the automation should work on.\nLeave blank to use all auto-detected project sheets:`,
+    "Quick Setup — Automation Tabs",
+    `${currentLabel}\n\nAvailable sheets:\n${list}\n\nEnter one or more numbers separated by commas (example: 1,3,4).\nLeave blank to use all eligible sheets automatically:`,
     ui.ButtonSet.OK_CANCEL,
   );
   if (response.getSelectedButton() !== ui.Button.OK) return;
@@ -306,38 +400,53 @@ function selectWorkingSheet() {
   const input = response.getResponseText().trim();
 
   if (input === "") {
-    PropertiesService.getScriptProperties().deleteProperty("WORKING_SHEET");
-    invalidateConfigCache();
-    logActivity("SYSTEM", "Working Sheet", "Reset to auto-detect all sheets");
+    setWorkingSheets([]);
+    logActivity(
+      "SYSTEM",
+      "Automation Tabs",
+      "Reset to auto-detect all eligible sheets",
+    );
     ui.alert(
-      "Working sheet cleared. Automation will run on all detected project sheets.",
+      "Automation tabs cleared. The script will use all eligible project sheets automatically.",
     );
     return;
   }
 
-  const index = parseInt(input, 10) - 1;
-  if (isNaN(index) || index < 0 || index >= allSheets.length) {
+  const indexes = Array.from(
+    new Set(
+      input
+        .split(",")
+        .map((part) => parseInt(part.trim(), 10) - 1)
+        .filter((value) => !isNaN(value)),
+    ),
+  );
+  if (
+    indexes.length === 0 ||
+    indexes.some((index) => index < 0 || index >= allSheets.length)
+  ) {
     ui.alert(
-      `Invalid selection. Enter a number between 1 and ${allSheets.length}.`,
+      `Invalid selection. Enter one or more numbers between 1 and ${allSheets.length}.`,
     );
     return;
   }
 
-  const selected = allSheets[index];
-  setWorkingSheet(selected);
-  invalidateConfigCache();
-  logActivity("SYSTEM", "Working Sheet", `Set to "${selected}"`);
+  const selected = indexes.map((index) => allSheets[index]);
+  setWorkingSheets(selected);
+  logActivity("SYSTEM", "Automation Tabs", `Set to ${selected.join(", ")}`);
   ui.alert(
-    `Working sheet set to: "${selected}"\n\nProceed to Step 2 to configure the header and data rows.`,
+    `Automation tabs set to:\n\n${selected.join("\n")}\n\nNext, confirm the header row and data start row.`,
   );
 }
 
+function selectWorkingSheet() {
+  selectWorkingSheets();
+}
+
 function getProjectSheets() {
-  const working = getWorkingSheet();
-  if (working) {
+  const selected = getWorkingSheets();
+  if (selected.length > 0) {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = ss.getSheetByName(working);
-    return sheet ? [working] : [];
+    return selected.filter((sheetName) => !!ss.getSheetByName(sheetName));
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -393,6 +502,9 @@ function getHeaderAliases() {
     [cfg.HEADERS.DST_REMAINING]: ["Remaining Days", "DST Remaining Days"],
     [cfg.HEADERS.CGT_REMAINING]: ["Remaining Days", "CGT Remaining Days"],
     [cfg.HEADERS.REMINDER]: ["Reminder", "Alert"],
+    [cfg.HEADERS.REVISIT_DATE]: ["Revisit Date", "Follow-up Date"],
+    [cfg.HEADERS.REVISIT_STATUS]: ["Revisit Status", "Follow-up Status"],
+    [cfg.HEADERS.REVISIT_NOTES]: ["Revisit Notes", "Follow-up Notes"],
   };
 }
 
@@ -621,6 +733,11 @@ function showSettings() {
   const ui = SpreadsheetApp.getUi();
   const props = PropertiesService.getScriptProperties().getProperties();
   const cfg = getConfig();
+  const workingSheets = getWorkingSheets();
+  const automationTime = formatTimeLabel(
+    cfg.AUTOMATION_HOUR,
+    cfg.AUTOMATION_MINUTE,
+  );
 
   let msg = "CAR Monitoring — Current Settings\n";
   msg += "=".repeat(44) + "\n\n";
@@ -639,59 +756,123 @@ function showSettings() {
   msg += "\nSTATUS VALUES\n";
   msg += `  STATUS_ONGOING: "${cfg.STATUS.ONGOING}"${props["STATUS_ONGOING"] ? " (custom)" : " (default)"}\n`;
   msg += `  STATUS_COMPLETED: "${cfg.STATUS.COMPLETED}"${props["STATUS_COMPLETED"] ? " (custom)" : " (default)"}\n`;
-  const workingSheet = getWorkingSheet();
   msg += "\nAUTOMATION TARGET\n";
-  msg += `  WORKING_SHEET: ${workingSheet || "(all detected project sheets)"}${workingSheet ? " (custom)" : ""}\n`;
+  msg += `  WORKING_SHEETS: ${workingSheets.length > 0 ? workingSheets.join(", ") : "(auto-detect eligible sheets)"}${workingSheets.length > 0 ? " (custom)" : ""}\n`;
   msg += "\nROW LAYOUT\n";
   msg += `  HEADER_ROW: ${cfg.HEADER_ROW || "(auto-detect)"}${props["HEADER_ROW"] ? " (custom)" : ""}\n`;
   msg += `  DATA_START_ROW: ${cfg.DATA_START_ROW || "(header row + 1)"}${props["DATA_START_ROW"] ? " (custom)" : ""}\n`;
-  msg += "\n— To change any value, use: Settings → Edit a Setting\n";
-  msg +=
-    "— To set row layout, use: Settings → Set Header Row / Set Data Start Row\n";
-  msg += "— To reset all to defaults, use: Settings → Reset to Defaults";
+  msg += "\nEMAIL\n";
+  msg += `  EMAIL_RECIPIENT_MODE: ${cfg.EMAIL_RECIPIENT_MODE}\n`;
+  msg += `  NOTIFICATION_EMAILS: ${getNotificationEmails().length > 0 ? getNotificationEmails().join(", ") : "(none)"}\n`;
+  msg += "\nAUTOMATION SCHEDULE\n";
+  msg += `  Daily Run Time: ${automationTime}\n`;
+  msg += "\n— Use Quick Setup for guided configuration\n";
+  msg += "— Use Settings / Automation / Email menus for individual updates\n";
+  msg += "— Use Reset to Defaults to clear custom settings";
 
   ui.alert("Settings", msg, ui.ButtonSet.OK);
 }
 
-function editSetting() {
+function configureNotificationEmails() {
   const ui = SpreadsheetApp.getUi();
-
-  const keyResponse = ui.prompt(
-    "Edit Setting",
-    "Enter the Script Property key to change\n(e.g. SHEET_CAR  or  HEADER_CLIENT_NAME  or  STATUS_ONGOING):",
+  const current = getNotificationEmails();
+  const response = ui.prompt(
+    "Notification CC Emails",
+    `Current CC emails: ${current.length ? current.join(", ") : "(none)"}\n\nEnter one or more email addresses separated by commas.\nLeave blank to clear the CC list:`,
     ui.ButtonSet.OK_CANCEL,
   );
-  if (keyResponse.getSelectedButton() !== ui.Button.OK) return;
-  const key = keyResponse.getResponseText().trim();
-  if (!key) return;
+  if (response.getSelectedButton() !== ui.Button.OK) return;
 
-  const cfg = getConfig();
-  const props = PropertiesService.getScriptProperties().getProperties();
-  const currentValue = props[key] || "(using default)";
+  const input = response.getResponseText().trim();
+  const emails = input
+    ? Array.from(
+        new Set(
+          input
+            .split(",")
+            .map((email) => email.trim().toLowerCase())
+            .filter((email) => email && email.includes("@")),
+        ),
+      )
+    : [];
 
-  const valResponse = ui.prompt(
-    "Edit Setting",
-    `Current value for "${key}": ${currentValue}\n\nEnter new value (leave blank to restore default):`,
-    ui.ButtonSet.OK_CANCEL,
-  );
-  if (valResponse.getSelectedButton() !== ui.Button.OK) return;
-  const newValue = valResponse.getResponseText().trim();
-
-  const scriptProps = PropertiesService.getScriptProperties();
-  if (newValue === "") {
-    scriptProps.deleteProperty(key);
-    invalidateConfigCache();
-    ui.alert(`"${key}" has been reset to its default value.`);
-  } else {
-    scriptProps.setProperty(key, newValue);
-    invalidateConfigCache();
-    ui.alert(`"${key}" updated to: "${newValue}"`);
-  }
-
+  setNotificationEmails(emails);
   logActivity(
     "SYSTEM",
-    "Settings Changed",
-    `${key} → "${newValue || "(reset to default)"}"`,
+    "Notification Emails Updated",
+    emails.length ? emails.join(", ") : "Cleared",
+  );
+  ui.alert(
+    "Notification CC Emails",
+    emails.length
+      ? `Saved ${emails.length} CC email(s).`
+      : "The CC email list has been cleared.",
+    ui.ButtonSet.OK,
+  );
+}
+
+function configureDailyAutomationTime() {
+  const ui = SpreadsheetApp.getUi();
+  const current = getConfiguredAutomationTime();
+  const response = ui.prompt(
+    "Automation Schedule",
+    `Current daily run time: ${formatTimeLabel(current.hour, current.minute)}\n\nEnter the daily run time in 24-hour format HH:MM (example: 08:00 or 14:30):`,
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const input = response.getResponseText().trim();
+  const match = input.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    ui.alert("Invalid time. Please use HH:MM in 24-hour format.");
+    return;
+  }
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    ui.alert("Invalid time. Hour must be 0-23 and minute must be 0-59.");
+    return;
+  }
+
+  setConfiguredAutomationTime(hour, minute);
+  syncDailyTrigger(false);
+  logActivity(
+    "SYSTEM",
+    "Automation Schedule Updated",
+    formatTimeLabel(hour, minute),
+  );
+  ui.alert(
+    "Automation Schedule",
+    `Daily automation time saved as ${formatTimeLabel(hour, minute)}.`,
+    ui.ButtonSet.OK,
+  );
+}
+
+function configureEmailRecipientMode() {
+  const ui = SpreadsheetApp.getUi();
+  const current = getEmailRecipientMode();
+  const response = ui.prompt(
+    "Reminder Recipient Mode",
+    `Current mode: ${current}\n\nEnter:\n  1 = Staff Email only\n  2 = Staff Email and Client Email`,
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const input = response.getResponseText().trim();
+  let mode = null;
+  if (input === "1") mode = EMAIL_RECIPIENT_MODES.STAFF_ONLY;
+  if (input === "2") mode = EMAIL_RECIPIENT_MODES.STAFF_AND_CLIENT;
+  if (!mode) {
+    ui.alert("Invalid selection. Enter 1 or 2.");
+    return;
+  }
+
+  setEmailRecipientMode(mode);
+  logActivity("SYSTEM", "Email Recipient Mode Updated", mode);
+  ui.alert(
+    "Reminder Recipient Mode",
+    `Recipient mode saved as "${mode}".`,
+    ui.ButtonSet.OK,
   );
 }
 
@@ -716,13 +897,18 @@ function resetSettingsToDefaults() {
   scriptProps.deleteProperty("HEADER_ROW");
   scriptProps.deleteProperty("DATA_START_ROW");
   scriptProps.deleteProperty("WORKING_SHEET");
+  scriptProps.deleteProperty("WORKING_SHEETS");
+  scriptProps.deleteProperty("AUTOMATION_HOUR");
+  scriptProps.deleteProperty("AUTOMATION_MINUTE");
+  scriptProps.deleteProperty("EMAIL_RECIPIENT_MODE");
+  scriptProps.deleteProperty("NOTIFICATION_EMAILS");
   invalidateConfigCache();
 
   ui.alert("All settings have been reset to defaults.");
   logActivity(
     "SYSTEM",
     "Settings Reset",
-    "All sheet/header names restored to defaults",
+    "All guided settings restored to defaults",
   );
 }
 
@@ -761,7 +947,7 @@ Enter the row number (e.g. 3), or leave blank to use auto-detection:`,
   invalidateConfigCache();
   logActivity("SYSTEM", "Header Row", `Set to row ${num}`);
   ui.alert(
-    `Header row set to row ${num}.\n\nRun Setup CAR Sheet again to apply the new layout.`,
+    `Header row set to row ${num}.`,
   );
 }
 
@@ -800,7 +986,7 @@ Enter the row number (e.g. 4), or leave blank to use header row + 1:`,
   invalidateConfigCache();
   logActivity("SYSTEM", "Data Start Row", `Set to row ${num}`);
   ui.alert(
-    `Data start row set to row ${num}.\n\nRun Setup CAR Sheet again to apply the new layout.`,
+    `Data start row set to row ${num}.`,
   );
 }
 
@@ -820,30 +1006,19 @@ function runRowSetup() {
 }
 
 function manageNotificationEmails() {
-  const ui = SpreadsheetApp.getUi();
-  const emails = getNotificationEmails();
-  const list = emails.length
-    ? emails.map((e, i) => `  ${i + 1}. ${e}`).join("\n")
-    : "  (none configured)";
-
-  const response = ui.alert(
-    "Step 3 — Notification Emails",
-    `Reminder emails will be CC'd to these addresses:\n\n${list}\n\nUse Settings → Notification Emails to add or remove addresses.\n\nOpen Settings now?`,
-    ui.ButtonSet.YES_NO,
-  );
-
-  if (response === ui.Button.YES) {
-    addNotificationEmail();
-  }
+  configureNotificationEmails();
 }
 
 function setupSheetWithSummary() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const working = getWorkingSheet();
-  const sheetName = working || ss.getActiveSheet().getName();
+  const selectedSheets = getProjectSheets();
+  const sheetName = selectedSheets[0] || ss.getActiveSheet().getName();
   const sheet = ss.getSheetByName(sheetName) || ss.getActiveSheet();
 
-  setupSheet(sheetName);
+  selectedSheets.forEach((name) => setupSheet(name));
+  ensureActivityLogSheet();
+  ensureCompletedSheet();
+  ensureDashboardSheet();
 
   const cfg = getConfig();
   const hRow = getHeaderRow(sheet);
@@ -851,10 +1026,27 @@ function setupSheetWithSummary() {
   const emails = getNotificationEmails();
 
   SpreadsheetApp.getUi().alert(
-    "Step 4 Complete — Sheet Setup Applied",
-    `Sheet: "${sheet.getName()}"\nHeader row: ${hRow}\nData start row: ${dRow}\nNotification emails: ${emails.length > 0 ? emails.join(", ") : "(none)"}\n\nAutomation is ready. Use Automation → Create Daily Trigger to enable automatic daily checks.`,
+    "Setup Applied",
+    `Automation tabs: ${selectedSheets.length > 0 ? selectedSheets.join(", ") : sheet.getName()}\nHeader row: ${hRow}\nData start row: ${dRow}\nNotification emails: ${emails.length > 0 ? emails.join(", ") : "(none)"}\nDaily automation: ${formatTimeLabel(cfg.AUTOMATION_HOUR, cfg.AUTOMATION_MINUTE)}`,
     SpreadsheetApp.getUi().ButtonSet.OK,
   );
+}
+
+function quickSetup() {
+  const ui = SpreadsheetApp.getUi();
+  ui.alert(
+    "Quick Setup",
+    "This guided setup will ask you which tabs should be automated, where your header/data rows are, which CC emails to use, what time daily automation should run, and who should receive reminders.",
+    ui.ButtonSet.OK,
+  );
+
+  selectWorkingSheets();
+  runRowSetup();
+  configureNotificationEmails();
+  configureDailyAutomationTime();
+  configureEmailRecipientMode();
+  setupSheetWithSummary();
+  showValidationReport();
 }
 
 // ============================================================================
@@ -864,17 +1056,8 @@ function setupSheetWithSummary() {
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu("CAR Monitoring")
-    .addSubMenu(
-      ui
-        .createMenu("⚙️ Setup (Start Here)")
-        .addItem("Step 1 — Select Working Sheet Tab", "selectWorkingSheet")
-        .addItem("Step 2 — Set Header & Data Rows", "runRowSetup")
-        .addItem(
-          "Step 3 — Manage Notification Emails",
-          "manageNotificationEmails",
-        )
-        .addItem("Step 4 — Apply Sheet Setup", "setupSheetWithSummary"),
-    )
+    .addItem("Quick Setup", "quickSetup")
+    .addItem("Run Validation", "showValidationReport")
     .addSeparator()
     .addItem("Update All Deadlines", "updateAllDeadlines")
     .addItem("Generate Reminders", "generateAllReminders")
@@ -882,41 +1065,39 @@ function onOpen() {
     .addSeparator()
     .addSubMenu(
       ui
-        .createMenu("Automation")
+        .createMenu("Automation Settings")
         .addItem("Run Daily Check", "runDailyCheck")
-        .addItem("Create Daily Trigger", "createDailyTrigger")
+        .addItem("Set Automated Tabs", "selectWorkingSheets")
+        .addItem("Set Header & Data Rows", "runRowSetup")
+        .addItem("Set Daily Run Time", "configureDailyAutomationTime")
+        .addItem("Create / Refresh Trigger", "createDailyTrigger")
         .addItem("Remove Triggers", "removeTriggers"),
     )
     .addSubMenu(
       ui
-        .createMenu("Activity Log")
-        .addItem("View Activity Log", "viewActivityLog")
-        .addItem("Clear Old Logs", "clearOldLogs"),
+        .createMenu("Email Settings")
+        .addItem("Set Recipient Mode", "configureEmailRecipientMode")
+        .addItem("Set CC Emails", "configureNotificationEmails")
+        .addItem("View CC Emails", "viewNotificationEmails")
+        .addItem("Add CC Email", "addNotificationEmail")
+        .addItem("Remove CC Email", "removeNotificationEmail")
+        .addItem("Clear CC Emails", "clearNotificationEmails"),
     )
     .addSubMenu(
       ui
         .createMenu("Settings")
         .addItem("View Current Settings", "showSettings")
-        .addItem("Edit a Setting", "editSetting")
         .addItem("Reset to Defaults", "resetSettingsToDefaults")
-        .addSeparator()
-        .addItem("Set Working Sheet", "selectWorkingSheet")
-        .addItem("Set Header Row", "setHeaderRow")
-        .addItem("Set Data Start Row", "setDataStartRow")
-        .addSeparator()
-        .addItem("View Notification Emails", "viewNotificationEmails")
-        .addItem("Add Notification Email", "addNotificationEmail")
-        .addItem("Remove Notification Email", "removeNotificationEmail")
-        .addItem("Clear All Notification Emails", "clearNotificationEmails"),
     )
     .addSubMenu(
       ui
-        .createMenu("Advanced")
+        .createMenu("Advanced Settings")
         .addItem("Setup All Service Sheets", "setupAllSheets")
-        .addItem("Validate Headers", "validateAllHeaders"),
+        .addItem("Validate Headers", "validateAllHeaders")
+        .addItem("View Activity Log", "viewActivityLog")
+        .addItem("Clear Old Logs", "clearOldLogs")
+        .addItem("Diagnostics", "showDiagnostics"),
     )
-    .addSeparator()
-    .addItem("Diagnostics", "showDiagnostics")
     .addToUi();
 }
 
@@ -985,6 +1166,9 @@ function setupSheet(sheetName) {
       cfg.HEADERS.REMARKS,
       cfg.HEADERS.STAFF_EMAIL,
       cfg.HEADERS.CLIENT_EMAIL,
+      cfg.HEADERS.REVISIT_DATE,
+      cfg.HEADERS.REVISIT_STATUS,
+      cfg.HEADERS.REVISIT_NOTES,
     ];
     sheet.getRange(1, 1, 1, defaultHeaders.length).setValues([defaultHeaders]);
     sheet
@@ -1097,6 +1281,17 @@ function applyDataValidations(sheet, headerRow) {
       .getRange(dataStart, statusCol, lastRow - hRow)
       .setDataValidation(rule);
   }
+
+  const revisitStatusCol = getColumnIndex(sheet, cfg.HEADERS.REVISIT_STATUS);
+  if (revisitStatusCol) {
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(["Open", "Pending", "Completed"], true)
+      .setAllowInvalid(true)
+      .build();
+    sheet
+      .getRange(dataStart, revisitStatusCol, lastRow - hRow)
+      .setDataValidation(rule);
+  }
 }
 
 function applyConditionalFormatting(sheet, headerRow) {
@@ -1153,31 +1348,8 @@ function getColumnIndex(sheet, headerName) {
 }
 
 function validateAllHeaders() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const cfg = getConfig();
-  const issues = [];
-
-  getProjectSheets().forEach((sheetName) => {
-    const sheet = ss.getSheetByName(sheetName);
-    if (!sheet) {
-      issues.push(`Missing sheet: ${sheetName}`);
-      return;
-    }
-
-    const headers = getHeaders(sheet);
-    const required = [
-      cfg.HEADERS.CLIENT_NAME,
-      cfg.HEADERS.NOTARY_DATE,
-      cfg.HEADERS.STATUS,
-    ];
-
-    required.forEach((req) => {
-      if (!findHeaderIndexByName(headers, req)) {
-        issues.push(`${sheetName}: Missing required header "${req}"`);
-      }
-    });
-  });
-
+  const results = validateSystem();
+  const issues = results.issues.concat(results.warnings);
   if (issues.length > 0) {
     SpreadsheetApp.getUi().alert(
       "Header Validation Issues:\n\n" + issues.join("\n"),
@@ -1188,8 +1360,117 @@ function validateAllHeaders() {
       "Success",
     );
   }
-
   return issues;
+}
+
+function getOpenRevisitInfo(sheet, row) {
+  const cfg = getConfig();
+  const revisitDateCol = getColumnIndex(sheet, cfg.HEADERS.REVISIT_DATE);
+  const revisitStatusCol = getColumnIndex(sheet, cfg.HEADERS.REVISIT_STATUS);
+  const revisitNotesCol = getColumnIndex(sheet, cfg.HEADERS.REVISIT_NOTES);
+
+  if (!revisitDateCol) return null;
+
+  const revisitDate = sheet.getRange(row, revisitDateCol).getValue();
+  if (!(revisitDate instanceof Date)) return null;
+
+  const status = revisitStatusCol
+    ? sheet.getRange(row, revisitStatusCol).getValue()
+    : "";
+  const normalizedStatus = normalizeHeaderName(status);
+  if (normalizedStatus && !REVISIT_OPEN_STATUSES.includes(normalizedStatus)) {
+    return null;
+  }
+
+  return {
+    date: revisitDate,
+    status: status,
+    notes: revisitNotesCol ? sheet.getRange(row, revisitNotesCol).getValue() : "",
+    remainingDays: calculateRemainingDays(revisitDate),
+  };
+}
+
+function buildRevisitReminder(info) {
+  if (!info) return "";
+  return buildReminderText("Revisit", info.remainingDays);
+}
+
+function validateSystem() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const cfg = getConfig();
+  const issues = [];
+  const warnings = [];
+  const notes = [];
+  const selectedSheets = getProjectSheets();
+
+  notes.push(`Spreadsheet: ${ss.getName()}`);
+  notes.push(
+    `Daily automation time: ${formatTimeLabel(
+      cfg.AUTOMATION_HOUR,
+      cfg.AUTOMATION_MINUTE,
+    )}`,
+  );
+  notes.push(`Email recipient mode: ${cfg.EMAIL_RECIPIENT_MODE}`);
+
+  if (selectedSheets.length === 0) {
+    issues.push("No automation tabs are configured or detectable.");
+  }
+
+  selectedSheets.forEach((sheetName) => {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      issues.push(`Selected automation tab is missing: ${sheetName}`);
+      return;
+    }
+
+    const headers = getHeaders(sheet);
+    const headerRow = getHeaderRow(sheet);
+    const dataStartRow = getDataStartRow(sheet);
+    if (headerRow >= dataStartRow) {
+      issues.push(
+        `${sheetName}: Data start row (${dataStartRow}) must be below header row (${headerRow}).`,
+      );
+    }
+    const required = [
+      cfg.HEADERS.CLIENT_NAME,
+      cfg.HEADERS.NOTARY_DATE,
+      cfg.HEADERS.STATUS,
+      cfg.HEADERS.REMARKS,
+      cfg.HEADERS.STAFF_EMAIL,
+    ];
+
+    required.forEach((req) => {
+      if (!findHeaderIndexByName(headers, req)) {
+        issues.push(`${sheetName}: Missing required header "${req}"`);
+      }
+    });
+
+    if (!findHeaderIndexByName(headers, cfg.HEADERS.REVISIT_DATE)) {
+      warnings.push(
+        `${sheetName}: Revisit Date column not found. Revisit automation will be skipped on this tab.`,
+      );
+    }
+  });
+
+  const quota = MailApp.getRemainingDailyQuota();
+  if (quota <= 0) issues.push("Mail quota is exhausted.");
+  else if (quota < 10) warnings.push(`Mail quota is low (${quota} remaining).`);
+
+  const triggers = ScriptApp.getProjectTriggers().filter(
+    (t) => t.getHandlerFunction() === "runDailyCheck",
+  );
+  if (triggers.length === 0) {
+    warnings.push("Daily automation trigger is not installed.");
+  } else {
+    notes.push(`Daily trigger installed: ${triggers.length}`);
+  }
+
+  return {
+    passed: issues.length === 0,
+    issues: issues,
+    warnings: warnings,
+    notes: notes,
+  };
 }
 
 // ============================================================================
@@ -1295,9 +1576,10 @@ function updateAllDeadlines() {
     if (!sheet) return;
 
     const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return;
+    const dataStart = getDataStartRow(sheet);
+    if (lastRow < dataStart) return;
 
-    for (let row = 2; row <= lastRow; row++) {
+    for (let row = dataStart; row <= lastRow; row++) {
       if (updateRowDeadlines(sheet, row)) {
         updatedCount++;
       }
@@ -1349,6 +1631,8 @@ function updateRowReminder(sheet, row) {
   const cfg = getConfig();
   const statusCol = getColumnIndex(sheet, cfg.HEADERS.STATUS);
   const groups = getDeadlineGroups(sheet);
+  const revisitInfo = getOpenRevisitInfo(sheet, row);
+  const revisitReminder = buildRevisitReminder(revisitInfo);
 
   const currentStatus = statusCol
     ? sheet.getRange(row, statusCol).getValue()
@@ -1368,7 +1652,14 @@ function updateRowReminder(sheet, row) {
       const remainingValue = group.remainingCol
         ? sheet.getRange(row, group.remainingCol).getValue()
         : null;
-      const reminder = buildReminderText(group.label, Number(remainingValue));
+      const reminders = [];
+      const primaryReminder = buildReminderText(
+        group.label,
+        Number(remainingValue),
+      );
+      if (primaryReminder) reminders.push(primaryReminder);
+      if (revisitReminder) reminders.push(revisitReminder);
+      const reminder = reminders.join(" | ");
       sheet.getRange(row, group.reminderCol).setValue(reminder);
 
       if (reminder) hasReminder = true;
@@ -1402,9 +1693,10 @@ function updateRowReminder(sheet, row) {
     cgtRemaining,
     clientName,
   );
-  sheet.getRange(row, reminderCol).setValue(reminder);
+  const finalReminder = [reminder, revisitReminder].filter(Boolean).join(" | ");
+  sheet.getRange(row, reminderCol).setValue(finalReminder);
 
-  return reminder !== "";
+  return finalReminder !== "";
 }
 
 function generateAllReminders() {
@@ -1418,9 +1710,10 @@ function generateAllReminders() {
     if (!sheet) return;
 
     const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return;
+    const dataStart = getDataStartRow(sheet);
+    if (lastRow < dataStart) return;
 
-    for (let row = 2; row <= lastRow; row++) {
+    for (let row = dataStart; row <= lastRow; row++) {
       if (updateRowReminder(sheet, row)) {
         reminderCount++;
       }
@@ -1559,7 +1852,8 @@ function updateDashboard(ss, dashSheet) {
 
   getProjectSheets().forEach((sheetName) => {
     const src = sourceSheets.getSheetByName(sheetName);
-    if (!src || src.getLastRow() < 2) {
+    const dataStart = src ? getDataStartRow(src) : 2;
+    if (!src || src.getLastRow() < dataStart) {
       sheet
         .getRange(summaryRow, 1, 1, 6)
         .setValues([[sheetName, 0, 0, 0, 0, 0]]);
@@ -1567,9 +1861,9 @@ function updateDashboard(ss, dashSheet) {
       return;
     }
 
-    const headers = src.getRange(1, 1, 1, src.getLastColumn()).getValues()[0];
+    const headers = getHeaders(src);
     const data = src
-      .getRange(2, 1, src.getLastRow() - 1, headers.length)
+      .getRange(dataStart, 1, src.getLastRow() - dataStart + 1, headers.length)
       .getValues();
     const colMap = {};
     headers.forEach((h, i) => (colMap[h] = i));
@@ -1726,10 +2020,13 @@ function sendReminderEmails() {
     if (!sheet) return;
 
     const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return;
+    const dataStart = getDataStartRow(sheet);
+    if (lastRow < dataStart) return;
 
     const headers = getHeaders(sheet);
-    const data = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+    const data = sheet
+      .getRange(dataStart, 1, lastRow - dataStart + 1, headers.length)
+      .getValues();
     const deadlineGroups = getDeadlineGroups(sheet);
 
     const genericReminderIndex = findHeaderIndexByName(
@@ -1752,9 +2049,22 @@ function sendReminderEmails() {
       headers,
       cfg.HEADERS.CLIENT_EMAIL,
     );
+    const remarksIndex = findHeaderIndexByName(headers, cfg.HEADERS.REMARKS);
+    const revisitDateIndex = findHeaderIndexByName(
+      headers,
+      cfg.HEADERS.REVISIT_DATE,
+    );
+    const revisitStatusIndex = findHeaderIndexByName(
+      headers,
+      cfg.HEADERS.REVISIT_STATUS,
+    );
+    const revisitNotesIndex = findHeaderIndexByName(
+      headers,
+      cfg.HEADERS.REVISIT_NOTES,
+    );
 
     data.forEach((row, idx) => {
-      const actualRow = idx + 2;
+      const actualRow = idx + dataStart;
       const reminders = [];
       const deadlineSummaries = [];
 
@@ -1794,11 +2104,24 @@ function sendReminderEmails() {
       const clientEmail = clientEmailIndex ? row[clientEmailIndex - 1] : "";
       const staffEmail = staffEmailIndex ? row[staffEmailIndex - 1] : "";
       const serviceType = serviceTypeIndex ? row[serviceTypeIndex - 1] : "";
+      const remarks = remarksIndex ? row[remarksIndex - 1] : "";
+      const revisitInfo =
+        revisitDateIndex && row[revisitDateIndex - 1] instanceof Date
+          ? {
+              date: row[revisitDateIndex - 1],
+              status: revisitStatusIndex ? row[revisitStatusIndex - 1] : "",
+              notes: revisitNotesIndex ? row[revisitNotesIndex - 1] : "",
+              remainingDays: calculateRemainingDays(row[revisitDateIndex - 1]),
+            }
+          : null;
 
       const recipients = [];
-      if (staffEmail && staffEmail.toString().includes("@"))
+      const mode = getEmailRecipientMode();
+      if (staffEmail && staffEmail.toString().includes("@")) {
         recipients.push(staffEmail);
+      }
       if (
+        mode === EMAIL_RECIPIENT_MODES.STAFF_AND_CLIENT &&
         clientEmail &&
         clientEmail.toString().includes("@") &&
         clientEmail.toString() !== staffEmail.toString()
@@ -1817,6 +2140,8 @@ function sendReminderEmails() {
           deadlines: deadlineSummaries,
           sheetName: sheetName,
           rowNumber: actualRow,
+          remarks: remarks,
+          revisit: revisitInfo,
         });
 
         emailCount++;
@@ -1861,6 +2186,21 @@ function sendReminderEmail(data) {
     });
   }
 
+  if (data.revisit && data.revisit.remainingDays !== null) {
+    const revisitMessage =
+      data.revisit.remainingDays < 0
+        ? `OVERDUE by ${Math.abs(data.revisit.remainingDays)} days`
+        : `${data.revisit.remainingDays} days remaining`;
+    body += `\nRevisit:\n- Date: ${formatDate(data.revisit.date)}\n- Status: ${data.revisit.status || "Open"}\n- Timing: ${revisitMessage}\n`;
+    if (data.revisit.notes) {
+      body += `- Notes: ${data.revisit.notes}\n`;
+    }
+  }
+
+  if (data.remarks) {
+    body += `\nRemarks:\n${data.remarks}\n`;
+  }
+
   body += `\nPlease take appropriate action to ensure compliance.\n\n`;
   body += `---\n`;
   body += `CAR Special Projects Monitoring System\n`;
@@ -1895,11 +2235,13 @@ function onEdit(e) {
   if (!getProjectSheets().includes(sheetName)) return;
 
   const row = e.range.getRow();
-  if (row < 2) return;
+  if (row < getDataStartRow(sheet)) return;
 
   const notaryCol = getColumnIndex(sheet, cfg.HEADERS.NOTARY_DATE);
   const remarksCol = getColumnIndex(sheet, cfg.HEADERS.REMARKS);
   const statusCol = getColumnIndex(sheet, cfg.HEADERS.STATUS);
+  const revisitDateCol = getColumnIndex(sheet, cfg.HEADERS.REVISIT_DATE);
+  const revisitStatusCol = getColumnIndex(sheet, cfg.HEADERS.REVISIT_STATUS);
 
   if (notaryCol && e.range.getColumn() === notaryCol) {
     updateRowDeadlines(sheet, row);
@@ -1923,6 +2265,13 @@ function onEdit(e) {
   if (statusCol && e.range.getColumn() === statusCol) {
     updateRowReminder(sheet, row);
   }
+
+  if (
+    (revisitDateCol && e.range.getColumn() === revisitDateCol) ||
+    (revisitStatusCol && e.range.getColumn() === revisitStatusCol)
+  ) {
+    updateRowReminder(sheet, row);
+  }
 }
 
 function runDailyCheck() {
@@ -1941,28 +2290,53 @@ function runDailyCheck() {
   Logger.log("Daily check completed in " + duration + " seconds");
 }
 
-function createDailyTrigger() {
+function syncDailyTrigger(showToast) {
+  const triggers = ScriptApp.getProjectTriggers().filter(
+    (t) => t.getHandlerFunction() === "runDailyCheck",
+  );
+  triggers.forEach((trigger) => ScriptApp.deleteTrigger(trigger));
+
+  const time = getConfiguredAutomationTime();
+  let builder = ScriptApp.newTrigger("runDailyCheck")
+    .timeBased()
+    .everyDays(1)
+    .atHour(time.hour);
+
+  if (typeof builder.nearMinute === "function") {
+    builder = builder.nearMinute(time.minute);
+  }
+  builder.create();
+
+  if (showToast) {
+    SpreadsheetApp.getActive().toast(
+      `Daily trigger created (${formatTimeLabel(time.hour, time.minute)})`,
+      "Trigger Created",
+    );
+  }
+}
+
+function createDailyTrigger(silent) {
   const triggers = ScriptApp.getProjectTriggers();
   const existing = triggers.find(
     (t) => t.getHandlerFunction() === "runDailyCheck",
   );
 
-  if (existing) {
-    SpreadsheetApp.getUi().alert("Daily trigger already exists");
-    return;
+  if (existing && !silent) {
+    const response = SpreadsheetApp.getUi().alert(
+      "Create / Refresh Trigger",
+      "A daily trigger already exists. Replace it with the currently saved schedule?",
+      SpreadsheetApp.getUi().ButtonSet.YES_NO,
+    );
+    if (response !== SpreadsheetApp.getUi().Button.YES) return;
   }
 
-  ScriptApp.newTrigger("runDailyCheck")
-    .timeBased()
-    .everyDays(1)
-    .atHour(8)
-    .create();
-
-  SpreadsheetApp.getActive().toast(
-    "Daily trigger created (runs at 8 AM)",
-    "Trigger Created",
+  syncDailyTrigger(!silent);
+  const time = getConfiguredAutomationTime();
+  logActivity(
+    "SYSTEM",
+    existing ? "Trigger Updated" : "Trigger Created",
+    `Daily check at ${formatTimeLabel(time.hour, time.minute)}`,
   );
-  logActivity("SYSTEM", "Trigger Created", "Daily check at 8:00 AM");
 }
 
 function removeTriggers() {
@@ -1990,56 +2364,32 @@ function removeTriggers() {
 // ============================================================================
 
 function showDiagnostics() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-  const cfg = getConfig();
+  showValidationReport();
+  logActivity("SYSTEM", "Diagnostics Run", "Full system check performed");
+}
 
-  let report = "CAR Monitoring System Diagnostics\n";
+function showValidationReport() {
+  const ui = SpreadsheetApp.getUi();
+  const results = validateSystem();
+  let report = "CAR Monitoring System Validation\n";
   report += "=".repeat(40) + "\n\n";
 
-  const working = getWorkingSheet();
-  report += "Setup Configuration:\n";
-  report += `  Working Sheet: ${working || "(all detected project sheets)"}\n`;
-  report += `  Header Row: ${cfg.HEADER_ROW || "(auto-detect)"}\n`;
-  report += `  Data Start Row: ${cfg.DATA_START_ROW || "(header row + 1)"}\n`;
-  const notifEmails = getNotificationEmails();
-  report += `  Notification Emails: ${notifEmails.length > 0 ? notifEmails.join(", ") : "(none)"}\n`;
+  report += `Overall Status: ${results.passed ? "READY" : "ACTION REQUIRED"}\n\n`;
 
-  report += "\nSheets Status:\n";
-  Object.values(cfg.SHEETS).forEach((sheetName) => {
-    const sheet = ss.getSheetByName(sheetName);
-    report += `  ${sheetName}: ${sheet ? "✓ EXISTS" : "✗ MISSING"}\n`;
-  });
+  report += "Checks:\n";
+  if (results.notes.length === 0) report += "  (none)\n";
+  else results.notes.forEach((note) => (report += `  - ${note}\n`));
 
-  report += "\nProject Sheets (automation targets):\n";
-  const projectSheets = getProjectSheets();
-  if (projectSheets.length === 0) {
-    report += "  (none detected)\n";
-  } else {
-    projectSheets.forEach((name) => {
-      report += `  ✓ ${name}\n`;
-    });
-  }
+  report += "\nIssues:\n";
+  if (results.issues.length === 0) report += "  None\n";
+  else results.issues.forEach((issue) => (report += `  - ${issue}\n`));
 
-  report += "\nTriggers:\n";
-  const triggers = ScriptApp.getProjectTriggers();
-  if (triggers.length === 0) {
-    report += "  No triggers configured\n";
-  } else {
-    triggers.forEach((t) => {
-      report += `  - ${t.getHandlerFunction()} (${t.getTriggerSource()})\n`;
-    });
-  }
-
-  report += "\nEmail Quota:\n";
-  report += `  Remaining: ${MailApp.getRemainingDailyQuota()}\n`;
-
-  report += "\nUser:\n";
-  report += `  ${Session.getEffectiveUser().getEmail()}\n`;
+  report += "\nWarnings:\n";
+  if (results.warnings.length === 0) report += "  None\n";
+  else results.warnings.forEach((warning) => (report += `  - ${warning}\n`));
 
   ui.alert(report);
-
-  logActivity("SYSTEM", "Diagnostics Run", "Full system check performed");
+  return results;
 }
 
 // ============================================================================

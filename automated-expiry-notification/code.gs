@@ -4658,22 +4658,11 @@ function buildEmailContent(
   var htmlBody = String(bodyText || "").replace(/\n/g, "<br>");
   htmlBody = injectOpenTrackingPixel(htmlBody, openToken);
 
-  // Build reply acknowledgement phrase block
-  var replyKeywords = getReplyKeywords();
-  var replyPhrase = replyKeywords.length > 0 ? replyKeywords[0] : "RECEIVED";
-  var replyPhraseHtml =
-    '<p style="margin-top:20px;font-size:11px;color:#999;">' +
-    "Kindly reply <strong><u>&#8220;" +
-    sanitizeHtmlContent(replyPhrase) +
-    "&#8221;</u></strong> to confirm that you have received and read this reminder." +
-    "</p>";
-
   htmlBody = [
     '<div style="font-family:Arial,sans-serif;font-size:14px;color:#333;max-width:600px;line-height:1.6;">',
     htmlBody,
-    replyPhraseHtml,
     '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">',
-    '<p style="font-size:11px;color:#999;">This is an automated reminder. Reply with the phrase above to acknowledge receipt.</p>',
+    '<p style="font-size:11px;color:#999;">This is an automated reminder. Email opens may be tracked for delivery visibility.</p>',
     "</div>",
   ].join("\n");
 
@@ -5245,13 +5234,6 @@ function runReplyScan() {
       var sentAt = sentAtRaw instanceof Date ? sentAtRaw : new Date(sentAtRaw);
 
       if (
-        !status ||
-        String(status).toLowerCase() !== STATUS.SENT.toLowerCase()
-      ) {
-        skipped++;
-        continue;
-      }
-      if (
         replyStatus &&
         String(replyStatus).toLowerCase() === REPLY_STATUS.REPLIED.toLowerCase()
       ) {
@@ -5259,6 +5241,10 @@ function runReplyScan() {
         continue;
       }
       if (!threadId || !clientEmail) {
+        skipped++;
+        continue;
+      }
+      if (!(sentAt instanceof Date) || isNaN(sentAt.getTime())) {
         skipped++;
         continue;
       }
@@ -5381,15 +5367,13 @@ function findReplyMatchForRow(threadId, clientEmail, keywords, sentAt) {
  * Returns the first matched keyword found in text.
  */
 function findMatchingKeyword(text, keywords) {
-  var upper = String(text || "").toUpperCase();
+  var haystack = String(text || "");
   for (var i = 0; i < keywords.length; i++) {
-    var keyword = String(keywords[i] || "")
-      .trim()
-      .toUpperCase();
+    var keyword = String(keywords[i] || "").trim();
     if (!keyword) continue;
     var escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     var regex = new RegExp("(^|\\b)" + escaped + "(\\b|$)", "i");
-    if (regex.test(upper)) return keyword;
+    if (regex.test(haystack)) return keyword.toUpperCase();
   }
   return "";
 }
@@ -5936,6 +5920,19 @@ function recordOpenTrackingEvent(token, mode) {
         countCell.setValue(isNaN(current) ? 1 : current + 1);
       }
 
+      colMap = ensureReplyMetadataColumns(sheet, tabName, colMap);
+      setCellValueIfColumn(sheet, rowNum, colMap.REPLY_STATUS, REPLY_STATUS.REPLIED);
+      if (colMap.REPLIED_AT) {
+        var repliedAtCell = sheet.getRange(rowNum, colMap.REPLIED_AT);
+        if (!repliedAtCell.getValue()) repliedAtCell.setValue(now);
+      }
+      setCellValueIfColumn(
+        sheet,
+        rowNum,
+        colMap.REPLY_KEYWORD,
+        mode === "click" ? "CLICK_TRACKED" : "OPEN_TRACKED",
+      );
+
       var logsSheet = ensureLogsSheet(ss);
       var clientName = colMap.CLIENT_NAME
         ? getCellStr(
@@ -5948,7 +5945,11 @@ function recordOpenTrackingEvent(token, mode) {
         tabName,
         clientName,
         "INFO",
-        "Tracking event recorded: " + (mode || "open") + " | token=" + token,
+        "Tracking event recorded: " +
+          (mode || "open") +
+          " | token=" +
+          token +
+          " | Reply Status set to Replied",
       );
       break; // Found and recorded, no need to check other tabs
     }

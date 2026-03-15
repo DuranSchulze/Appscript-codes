@@ -1,23 +1,7 @@
-import { 
-    Document, 
-    Packer, 
-    Paragraph, 
-    TextRun, 
-    Table, 
-    TableRow, 
-    TableCell, 
-    WidthType, 
-    AlignmentType, 
-    BorderStyle, 
-    ImageRun,
-    VerticalAlign,
-    convertInchesToTwip
-} from "docx";
-import { AppData } from "../types";
+import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle, ImageRun, VerticalAlign, convertInchesToTwip } from "docx";
 import { formatExportText } from "./exportText";
-
 // Helper to convert base64 to Uint8Array safely
-const base64ToUint8Array = (base64: string) => {
+const base64ToUint8Array = (base64) => {
     try {
         const data = base64.includes(',') ? base64.split(',')[1] : base64;
         const binaryString = window.atob(data);
@@ -27,34 +11,32 @@ const base64ToUint8Array = (base64: string) => {
             bytes[i] = binaryString.charCodeAt(i);
         }
         return bytes;
-    } catch (e) {
+    }
+    catch (e) {
         console.error("Failed to convert base64 to bytes", e);
         return new Uint8Array(0);
     }
 };
-
 const FONT_FAMILY = "Arial";
 const COLOR_BORDER = "CBD5E1";
 const COLOR_BG_HEADER = "F8FAFC";
 const COLOR_TEXT_PRIMARY = "1E293B";
 const COLOR_TEXT_SECONDARY = "475569";
 const COLOR_TEXT_MUTED = "94A3B8";
-
 const SIZE_TITLE = 28;
 const SIZE_TEXT = 20;
 const SIZE_LABEL = 16;
 const SIZE_HEADER_SMALL = 14;
-
 /**
  * Creates a floating "Box" for signatories that can be dragged in Word.
  * Uses string literals for anchoring to avoid ESM import errors.
  */
-const createFloatingSignatoryBox = (label: string, name: string, role: string | null, horizontalOffset: number) => {
+const createFloatingSignatoryBox = (label, name, role, horizontalOffset) => {
     return new Table({
         width: { size: 1800, type: WidthType.DXA }, // Twips
         float: {
             horizontalAnchor: "margin", // Equivalent to TableAnchorHorizontal.MARGIN
-            verticalAnchor: "text",     // Equivalent to TableAnchorVertical.TEXT
+            verticalAnchor: "text", // Equivalent to TableAnchorVertical.TEXT
             absoluteHorizontalPosition: horizontalOffset,
             absoluteVerticalPosition: 0,
         },
@@ -69,14 +51,14 @@ const createFloatingSignatoryBox = (label: string, name: string, role: string | 
                 children: [
                     new TableCell({
                         children: [
-                            new Paragraph({ 
+                            new Paragraph({
                                 children: [new TextRun({ text: label, size: SIZE_LABEL, color: COLOR_TEXT_SECONDARY, font: FONT_FAMILY })],
                                 spacing: { after: 100 }
                             }),
-                            new Paragraph({ 
+                            new Paragraph({
                                 children: [new TextRun({ text: name.toUpperCase(), bold: true, size: SIZE_TEXT, font: FONT_FAMILY, color: COLOR_TEXT_PRIMARY })]
                             }),
-                            role ? new Paragraph({ 
+                            role ? new Paragraph({
                                 children: [new TextRun({ text: role.toUpperCase(), size: SIZE_HEADER_SMALL, color: COLOR_TEXT_MUTED, font: FONT_FAMILY })]
                             }) : new Paragraph({ children: [] })
                         ],
@@ -88,9 +70,8 @@ const createFloatingSignatoryBox = (label: string, name: string, role: string | 
         ]
     });
 };
-
-export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
-    let logoRun: ImageRun | TextRun = new TextRun({ text: "[LOGO]", bold: true, size: 24, color: COLOR_TEXT_MUTED });
+export const generateTransmittalDocx = async (data) => {
+    let logoRun = new TextRun({ text: "[LOGO]", bold: true, size: 24, color: COLOR_TEXT_MUTED });
     if (data.sender.logoBase64) {
         try {
             const imageBytes = base64ToUint8Array(data.sender.logoBase64);
@@ -100,9 +81,11 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
                     transformation: { width: 150, height: 60 }
                 });
             }
-        } catch(e) { console.warn("Logo add failed", e); }
+        }
+        catch (e) {
+            console.warn("Logo add failed", e);
+        }
     }
-
     const headerTable = new Table({
         width: { size: 5000, type: WidthType.PERCENTAGE },
         borders: { top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.NONE } },
@@ -130,13 +113,11 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             })
         ]
     });
-
     const title = new Paragraph({
         children: [new TextRun({ text: "TRANSMITTAL FORM", font: FONT_FAMILY, bold: true, size: SIZE_TITLE, color: "0F172A" })],
         alignment: AlignmentType.CENTER,
         spacing: { before: 300, after: 300 }
     });
-
     const leftData = [
         { label: 'To:', value: data.recipient.to },
         { label: 'Company:', value: data.recipient.company },
@@ -145,7 +126,6 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
         { label: 'Contact No:', value: data.recipient.contactNumber },
         { label: 'Email:', value: data.recipient.email }
     ];
-
     const rightData = [
         { label: 'Project Name:', value: data.project.projectName },
         { label: 'Project No:', value: data.project.projectNumber },
@@ -156,12 +136,10 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
         { label: 'Date:', value: data.project.date },
         { label: 'Time Generated:', value: data.project.timeGenerated }
     ];
-
     const maxMetaRows = Math.max(leftData.length, rightData.length);
     const metaTableRows = [];
     const cellMargin = { top: 120, bottom: 120, left: 100, right: 100 };
-
-    for(let i = 0; i < maxMetaRows; i++) {
+    for (let i = 0; i < maxMetaRows; i++) {
         const left = leftData[i];
         const right = rightData[i];
         const cells = [];
@@ -205,12 +183,12 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
                 margins: cellMargin,
                 borders: { right: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER } }
             }));
-        } else {
-             cells.push(new TableCell({ children: [], width: { size: 2500, type: WidthType.PERCENTAGE }, columnSpan: 2, borders: { bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER } } }));
         }
-
+        else {
+            cells.push(new TableCell({ children: [], width: { size: 2500, type: WidthType.PERCENTAGE }, columnSpan: 2, borders: { bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER } } }));
+        }
         if (right) {
-             cells.push(new TableCell({
+            cells.push(new TableCell({
                 children: [
                     new Paragraph({
                         children: [
@@ -230,7 +208,7 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
                 margins: cellMargin,
                 borders: { right: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER } }
             }));
-             cells.push(new TableCell({
+            cells.push(new TableCell({
                 children: [
                     new Paragraph({
                         children: [
@@ -247,12 +225,12 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
                 verticalAlign: VerticalAlign.CENTER,
                 margins: cellMargin
             }));
-        } else {
-             cells.push(new TableCell({ children: [], width: { size: 2500, type: WidthType.PERCENTAGE }, columnSpan: 2, borders: { bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE } } }));
+        }
+        else {
+            cells.push(new TableCell({ children: [], width: { size: 2500, type: WidthType.PERCENTAGE }, columnSpan: 2, borders: { bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE } } }));
         }
         metaTableRows.push(new TableRow({ children: cells }));
     }
-
     const metaTable = new Table({
         width: { size: 5000, type: WidthType.PERCENTAGE },
         borders: {
@@ -265,7 +243,6 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
         },
         rows: metaTableRows
     });
-
     const tableHeader = new TableRow({
         children: [
             createHeaderCell("No. of Items", 10),
@@ -276,7 +253,6 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
         ],
         tableHeader: true
     });
-
     const itemRows = data.items.map(item => new TableRow({
         children: [
             createItemCell(item.noOfItems, 10, AlignmentType.CENTER),
@@ -286,7 +262,6 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             createItemCell(item.remarks, 25),
         ]
     }));
-
     if (itemRows.length === 0) {
         itemRows.push(new TableRow({
             children: [
@@ -311,26 +286,23 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             ]
         }));
     }
-
     const itemsTable = new Table({
         width: { size: 5000, type: WidthType.PERCENTAGE },
         rows: [tableHeader, ...itemRows],
         borders: {
-             top: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
-             bottom: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
-             left: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
-             right: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
-             insideVertical: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
-             insideHorizontal: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER }
+            top: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
+            bottom: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
+            left: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
+            right: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
+            insideVertical: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER },
+            insideHorizontal: { style: BorderStyle.SINGLE, size: 2, color: COLOR_BORDER }
         }
     });
-
     // --- MOVABLE SIGNATORIES ---
     const preparedByBox = createFloatingSignatoryBox("Prepared by:", data.signatories.preparedBy, data.signatories.preparedByRole, 0);
     const notedByBox = createFloatingSignatoryBox("Noted by:", data.signatories.notedBy, data.signatories.notedByRole, 2600);
     const timeReleasedBox = createFloatingSignatoryBox("Time Released:", data.signatories.timeReleased, null, 5200);
-
-    const checkChar = (checked: boolean) => checked ? "☒" : "☐";
+    const checkChar = (checked) => checked ? "☒" : "☐";
     const transParagraph = new Paragraph({
         children: [
             new TextRun({ text: "Transmitted via:  ", bold: true, size: SIZE_LABEL, font: FONT_FAMILY, color: "000000" }),
@@ -343,7 +315,6 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
         border: { top: { style: BorderStyle.SINGLE, space: 5, color: "EEEEEE" }, bottom: { style: BorderStyle.SINGLE, space: 5, color: "EEEEEE" }, left: { style: BorderStyle.SINGLE, space: 5, color: "EEEEEE" }, right: { style: BorderStyle.SINGLE, space: 5, color: "EEEEEE" } },
         shading: { fill: COLOR_BG_HEADER }
     });
-
     const notesParagraph = data.notes ? [
         new Paragraph({
             children: [
@@ -382,8 +353,7 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             ]
         })
     ] : [];
-
-    const createRecvCell = (label: string, value: string) => {
+    const createRecvCell = (label, value) => {
         return new TableCell({
             children: [
                 new Paragraph({
@@ -397,8 +367,7 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             ],
             margins: { top: 120, bottom: 120, left: 100, right: 100 }
         });
-    }
-
+    };
     const receivedByTable = new Table({
         width: { size: 5000, type: WidthType.PERCENTAGE },
         borders: {
@@ -414,7 +383,6 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             new TableRow({ children: [createRecvCell("Time Received:", data.receivedBy.time), createRecvCell("Remarks:", data.receivedBy.remarks)] })
         ]
     });
-
     const disclaimer = new Paragraph({
         children: [
             new TextRun({
@@ -428,7 +396,6 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
         alignment: AlignmentType.CENTER,
         spacing: { before: 200 }
     });
-
     const doc = new Document({
         styles: {
             paragraphStyles: [
@@ -440,58 +407,56 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             ]
         },
         sections: [{
-            properties: {
-                page: {
-                    margin: {
-                        top: convertInchesToTwip(1.0),
-                        bottom: convertInchesToTwip(1.0),
-                        left: convertInchesToTwip(1.0),
-                        right: convertInchesToTwip(1.0),
+                properties: {
+                    page: {
+                        margin: {
+                            top: convertInchesToTwip(1.0),
+                            bottom: convertInchesToTwip(1.0),
+                            left: convertInchesToTwip(1.0),
+                            right: convertInchesToTwip(1.0),
+                        }
                     }
-                }
-            },
-            children: [
-                headerTable,
-                title,
-                metaTable,
-                new Paragraph({ text: "", spacing: { after: 200 } }),
-                itemsTable,
-                new Paragraph({ text: "", spacing: { after: 400 } }),
-                // Signature Row Paragraph
-                new Paragraph({ 
-                    children: [
-                        new TextRun({ text: "SIGNATORIES:", bold: true, size: SIZE_LABEL, color: COLOR_TEXT_MUTED })
-                    ],
-                    spacing: { after: 1200 } 
-                }),
-                preparedByBox,
-                notedByBox,
-                timeReleasedBox,
-                new Paragraph({ text: "", spacing: { before: 200 } }),
-                transParagraph,
-                ...notesParagraph,
-                new Paragraph({
-                    children: [
-                        new TextRun({
-                            text: data.footerNotes.acknowledgement,
-                            italics: true,
-                            size: 16,
-                            color: COLOR_TEXT_SECONDARY,
-                            font: FONT_FAMILY,
-                        }),
-                    ],
-                    spacing: { after: 100, before: 100 },
-                }),
-                receivedByTable,
-                disclaimer
-            ]
-        }]
+                },
+                children: [
+                    headerTable,
+                    title,
+                    metaTable,
+                    new Paragraph({ text: "", spacing: { after: 200 } }),
+                    itemsTable,
+                    new Paragraph({ text: "", spacing: { after: 400 } }),
+                    // Signature Row Paragraph
+                    new Paragraph({
+                        children: [
+                            new TextRun({ text: "SIGNATORIES:", bold: true, size: SIZE_LABEL, color: COLOR_TEXT_MUTED })
+                        ],
+                        spacing: { after: 1200 }
+                    }),
+                    preparedByBox,
+                    notedByBox,
+                    timeReleasedBox,
+                    new Paragraph({ text: "", spacing: { before: 200 } }),
+                    transParagraph,
+                    ...notesParagraph,
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: data.footerNotes.acknowledgement,
+                                italics: true,
+                                size: 16,
+                                color: COLOR_TEXT_SECONDARY,
+                                font: FONT_FAMILY,
+                            }),
+                        ],
+                        spacing: { after: 100, before: 100 },
+                    }),
+                    receivedByTable,
+                    disclaimer
+                ]
+            }]
     });
-
     return await Packer.toBlob(doc);
 };
-
-function createHeaderCell(text: string, widthPercent: number) {
+function createHeaderCell(text, widthPercent) {
     return new TableCell({
         children: [
             new Paragraph({
@@ -519,14 +484,7 @@ function createHeaderCell(text: string, widthPercent: number) {
         }
     });
 }
-
-type AlignmentValue = (typeof AlignmentType)[keyof typeof AlignmentType];
-
-function createItemCell(
-    text: string,
-    widthPercent: number,
-    align: AlignmentValue = AlignmentType.LEFT,
-) {
+function createItemCell(text, widthPercent, align = AlignmentType.LEFT) {
     return new TableCell({
         children: [
             new Paragraph({

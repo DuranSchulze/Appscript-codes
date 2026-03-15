@@ -7,6 +7,7 @@ import {
   FooterNotes,
 } from "../types";
 import { REMARKS_OPTIONS } from "../services/dropdown";
+import { formatExportText } from "../services/exportText";
 
 interface Props {
   data: AppData;
@@ -82,6 +83,9 @@ const AutoResizeTextArea = ({
     </div>
   );
 };
+
+const getExportValue = (value: string, isExporting: boolean) =>
+  isExporting ? formatExportText(value) : value;
 
 const ComboBox = ({
   value,
@@ -501,7 +505,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                             style={exactWidthStyle(columnWidths.noOfItems)}
                           >
                             <AutoResizeTextArea
-                              value={item.noOfItems}
+                              value={getExportValue(
+                                item.noOfItems,
+                                isGeneratingPdf,
+                              )}
                               className="text-center text-slate-800"
                               align="center"
                             />
@@ -512,7 +519,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                           >
                             {isGeneratingPdf ? (
                               <AutoResizeTextArea
-                                value={item.qty}
+                                value={getExportValue(
+                                  item.qty,
+                                  isGeneratingPdf,
+                                )}
                                 className="text-center text-slate-800"
                                 align="center"
                               />
@@ -550,7 +560,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                             style={exactWidthStyle(columnWidths.documentNumber)}
                           >
                             <AutoResizeTextArea
-                              value={item.documentNumber}
+                              value={getExportValue(
+                                item.documentNumber,
+                                isGeneratingPdf,
+                              )}
                               onChange={
                                 isGeneratingPdf
                                   ? undefined
@@ -565,7 +578,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                             style={exactWidthStyle(columnWidths.description)}
                           >
                             <AutoResizeTextArea
-                              value={item.description}
+                              value={getExportValue(
+                                item.description,
+                                isGeneratingPdf,
+                              )}
                               onChange={
                                 isGeneratingPdf
                                   ? undefined
@@ -579,7 +595,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                             style={exactWidthStyle(columnWidths.remarks)}
                           >
                             <ComboBox
-                              value={item.remarks}
+                              value={getExportValue(
+                                item.remarks,
+                                isGeneratingPdf,
+                              )}
                               onChange={
                                 isGeneratingPdf
                                   ? undefined
