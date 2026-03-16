@@ -45,6 +45,36 @@ const SIZE_TEXT = 20;
 const SIZE_LABEL = 16;
 const SIZE_HEADER_SMALL = 14;
 
+const createWrappedParagraph = (
+    text: string,
+    options: {
+        alignment?: AlignmentValue;
+        bold?: boolean;
+        size?: number;
+        color?: string;
+        font?: string;
+        style?: string;
+        spacing?: { before?: number; after?: number };
+        border?: any;
+    } = {},
+) =>
+    new Paragraph({
+        children: [
+            new TextRun({
+                text: formatExportText(text),
+                bold: options.bold,
+                size: options.size,
+                color: options.color,
+                font: options.font ?? FONT_FAMILY,
+            }),
+        ],
+        alignment: options.alignment,
+        style: options.style,
+        spacing: options.spacing,
+        border: options.border,
+        wordWrap: true,
+    });
+
 /**
  * Creates a floating "Box" for signatories that can be dragged in Word.
  * Uses string literals for anchoring to avoid ESM import errors.
@@ -116,12 +146,12 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
                     }),
                     new TableCell({
                         children: [
-                            new Paragraph({ text: `Telephone: ${data.sender.telephone}`, alignment: AlignmentType.RIGHT, style: "HeaderSmall" }),
-                            new Paragraph({ text: `Mobile: ${data.sender.mobile}`, alignment: AlignmentType.RIGHT, style: "HeaderSmall" }),
-                            new Paragraph({ text: `Email: ${data.sender.email}`, alignment: AlignmentType.RIGHT, style: "HeaderSmall" }),
-                            new Paragraph({ text: data.sender.addressLine1, alignment: AlignmentType.RIGHT, style: "HeaderSmall" }),
-                            new Paragraph({ text: data.sender.addressLine2, alignment: AlignmentType.RIGHT, style: "HeaderSmall" }),
-                            new Paragraph({ children: [new TextRun({ text: data.sender.website, color: "E94E1B", bold: true, font: FONT_FAMILY, size: SIZE_HEADER_SMALL })], alignment: AlignmentType.RIGHT }),
+                            createWrappedParagraph(`Telephone: ${data.sender.telephone}`, { alignment: AlignmentType.RIGHT, style: "HeaderSmall", size: SIZE_HEADER_SMALL, color: COLOR_TEXT_SECONDARY }),
+                            createWrappedParagraph(`Mobile: ${data.sender.mobile}`, { alignment: AlignmentType.RIGHT, style: "HeaderSmall", size: SIZE_HEADER_SMALL, color: COLOR_TEXT_SECONDARY }),
+                            createWrappedParagraph(`Email: ${data.sender.email}`, { alignment: AlignmentType.RIGHT, style: "HeaderSmall", size: SIZE_HEADER_SMALL, color: COLOR_TEXT_SECONDARY }),
+                            createWrappedParagraph(data.sender.addressLine1, { alignment: AlignmentType.RIGHT, style: "HeaderSmall", size: SIZE_HEADER_SMALL, color: COLOR_TEXT_SECONDARY }),
+                            createWrappedParagraph(data.sender.addressLine2, { alignment: AlignmentType.RIGHT, style: "HeaderSmall", size: SIZE_HEADER_SMALL, color: COLOR_TEXT_SECONDARY }),
+                            createWrappedParagraph(data.sender.website, { alignment: AlignmentType.RIGHT, bold: true, size: SIZE_HEADER_SMALL, color: "E94E1B" }),
                         ],
                         width: { size: 3000, type: WidthType.PERCENTAGE },
                         verticalAlign: VerticalAlign.TOP
@@ -188,16 +218,10 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             }));
             cells.push(new TableCell({
                 children: [
-                    new Paragraph({
-                        children: [
-                            new TextRun({
-                                text: left.value,
-                                size: SIZE_TEXT,
-                                color: COLOR_TEXT_PRIMARY,
-                                font: FONT_FAMILY,
-                                bold: true,
-                            }),
-                        ],
+                    createWrappedParagraph(left.value, {
+                        size: SIZE_TEXT,
+                        color: COLOR_TEXT_PRIMARY,
+                        bold: true,
                     }),
                 ],
                 width: { size: 1750, type: WidthType.PERCENTAGE },
@@ -232,15 +256,9 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             }));
              cells.push(new TableCell({
                 children: [
-                    new Paragraph({
-                        children: [
-                            new TextRun({
-                                text: right.value,
-                                size: SIZE_TEXT,
-                                color: COLOR_TEXT_PRIMARY,
-                                font: FONT_FAMILY,
-                            }),
-                        ],
+                    createWrappedParagraph(right.value, {
+                        size: SIZE_TEXT,
+                        color: COLOR_TEXT_PRIMARY,
                     }),
                 ],
                 width: { size: 1625, type: WidthType.PERCENTAGE },
@@ -367,12 +385,13 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
                                 new Paragraph({
                                     children: [
                                         new TextRun({
-                                            text: data.notes,
+                                            text: formatExportText(data.notes),
                                             size: SIZE_TEXT,
                                             font: FONT_FAMILY,
                                             color: COLOR_TEXT_PRIMARY,
                                         }),
                                     ],
+                                    wordWrap: true,
                                 }),
                             ],
                             margins: { top: 100, bottom: 100, left: 100, right: 100 }
@@ -390,9 +409,10 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
                     children: [new TextRun({ text: label, bold: true, size: SIZE_LABEL, color: COLOR_TEXT_SECONDARY, font: FONT_FAMILY })]
                 }),
                 new Paragraph({
-                    children: [new TextRun({ text: value || " ", size: SIZE_TEXT, font: FONT_FAMILY, color: COLOR_TEXT_PRIMARY, bold: true })],
+                    children: [new TextRun({ text: formatExportText(value || " "), size: SIZE_TEXT, font: FONT_FAMILY, color: COLOR_TEXT_PRIMARY, bold: true })],
                     border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: COLOR_BORDER } },
-                    spacing: { before: 50 }
+                    spacing: { before: 50 },
+                    wordWrap: true,
                 })
             ],
             margins: { top: 120, bottom: 120, left: 100, right: 100 }
@@ -418,7 +438,7 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
     const disclaimer = new Paragraph({
         children: [
             new TextRun({
-                text: data.footerNotes.disclaimer,
+                text: formatExportText(data.footerNotes.disclaimer),
                 italics: true,
                 size: 14,
                 color: COLOR_TEXT_MUTED,
@@ -426,7 +446,8 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
             }),
         ],
         alignment: AlignmentType.CENTER,
-        spacing: { before: 200 }
+        spacing: { before: 200 },
+        wordWrap: true,
     });
 
     const doc = new Document({
@@ -473,7 +494,7 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
                 new Paragraph({
                     children: [
                         new TextRun({
-                            text: data.footerNotes.acknowledgement,
+                            text: formatExportText(data.footerNotes.acknowledgement),
                             italics: true,
                             size: 16,
                             color: COLOR_TEXT_SECONDARY,
@@ -481,6 +502,7 @@ export const generateTransmittalDocx = async (data: AppData): Promise<Blob> => {
                         }),
                     ],
                     spacing: { after: 100, before: 100 },
+                    wordWrap: true,
                 }),
                 receivedByTable,
                 disclaimer

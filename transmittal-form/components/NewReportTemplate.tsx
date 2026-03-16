@@ -364,14 +364,14 @@ export const TransmittalTemplate: React.FC<Props> = ({
                     </div>
                   )}
                 </div>
-                <div className="w-2/3 text-right text-[9px] leading-tight text-slate-600 break-words pl-4 mt-1 font-medium">
-                  <p>Telephone: {data.sender.telephone}</p>
-                  <p>Mobile: {data.sender.mobile}</p>
-                  <p>Email: {data.sender.email}</p>
-                  <p>{data.sender.addressLine1}</p>
-                  <p>{data.sender.addressLine2}</p>
+                <div className="w-2/3 min-w-0 text-right text-[9px] leading-tight text-slate-600 break-words pl-4 mt-1 font-medium">
+                  <p>{`Telephone: ${getExportValue(data.sender.telephone, isGeneratingPdf)}`}</p>
+                  <p>{`Mobile: ${getExportValue(data.sender.mobile, isGeneratingPdf)}`}</p>
+                  <p>{`Email: ${getExportValue(data.sender.email, isGeneratingPdf)}`}</p>
+                  <p>{getExportValue(data.sender.addressLine1, isGeneratingPdf)}</p>
+                  <p>{getExportValue(data.sender.addressLine2, isGeneratingPdf)}</p>
                   <p className="font-bold text-brand-600">
-                    {data.sender.website}
+                    {getExportValue(data.sender.website, isGeneratingPdf)}
                   </p>
                 </div>
               </div>
@@ -407,16 +407,16 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       <div className="w-[30%] bg-slate-50 p-1.5 font-bold border-r border-slate-300 text-[10px] uppercase text-slate-600 flex items-start pt-2">
                         {row.left.label}
                       </div>
-                      <div className="w-[70%] p-1.5 font-semibold text-slate-800 uppercase break-words whitespace-pre-wrap flex items-start pt-2 leading-tight">
-                        {row.left.value}
+                      <div className="w-[70%] min-w-0 p-1.5 font-semibold text-slate-800 uppercase break-words whitespace-pre-wrap [overflow-wrap:anywhere] flex items-start pt-2 leading-tight">
+                        {getExportValue(row.left.value, isGeneratingPdf)}
                       </div>
                     </div>
                     <div className="w-1/2 flex">
                       <div className="w-[35%] bg-slate-50 p-1.5 font-bold border-r border-slate-300 text-[10px] uppercase text-slate-600 flex items-start pt-2">
                         {row.right.label}
                       </div>
-                      <div className="w-[65%] p-1.5 text-slate-700 break-words whitespace-pre-wrap flex items-start pt-2 leading-tight">
-                        {row.right.value}
+                      <div className="w-[65%] min-w-0 p-1.5 text-slate-700 break-words whitespace-pre-wrap [overflow-wrap:anywhere] flex items-start pt-2 leading-tight">
+                        {getExportValue(row.right.value, isGeneratingPdf)}
                       </div>
                     </div>
                   </div>
@@ -675,7 +675,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       </p>
                       <div className="border-b border-slate-800 pb-1 mb-1">
                         <AutoResizeTextArea
-                          value={data.signatories.preparedBy}
+                          value={getExportValue(
+                            data.signatories.preparedBy,
+                            isGeneratingPdf,
+                          )}
                           onChange={
                             isGeneratingPdf
                               ? undefined
@@ -685,7 +688,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                         />
                       </div>
                       <AutoResizeTextArea
-                        value={data.signatories.preparedByRole}
+                        value={getExportValue(
+                          data.signatories.preparedByRole,
+                          isGeneratingPdf,
+                        )}
                         onChange={
                           isGeneratingPdf
                             ? undefined
@@ -700,7 +706,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       </p>
                       <div className="border-b border-slate-800 pb-1 mb-1">
                         <AutoResizeTextArea
-                          value={data.signatories.notedBy}
+                          value={getExportValue(
+                            data.signatories.notedBy,
+                            isGeneratingPdf,
+                          )}
                           onChange={
                             isGeneratingPdf
                               ? undefined
@@ -710,7 +719,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                         />
                       </div>
                       <AutoResizeTextArea
-                        value={data.signatories.notedByRole}
+                        value={getExportValue(
+                          data.signatories.notedByRole,
+                          isGeneratingPdf,
+                        )}
                         onChange={
                           isGeneratingPdf
                             ? undefined
@@ -725,7 +737,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       </p>
                       <div className="border-b border-slate-800 h-[29px] w-full flex items-end pb-1">
                         <AutoResizeTextArea
-                          value={data.signatories.timeReleased}
+                          value={getExportValue(
+                            data.signatories.timeReleased,
+                            isGeneratingPdf,
+                          )}
                           onChange={
                             isGeneratingPdf
                               ? undefined
@@ -784,7 +799,7 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       </p>
                       <div className="border border-slate-300 p-3 rounded-lg bg-white min-h-[40px]">
                         <AutoResizeTextArea
-                          value={data.notes}
+                          value={getExportValue(data.notes, isGeneratingPdf)}
                           onChange={
                             isGeneratingPdf
                               ? undefined
@@ -798,7 +813,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
 
                   <div className="mb-3">
                     <AutoResizeTextArea
-                      value={data.footerNotes.acknowledgement}
+                      value={getExportValue(
+                        data.footerNotes.acknowledgement,
+                        isGeneratingPdf,
+                      )}
                       onChange={
                         isGeneratingPdf
                           ? undefined
@@ -815,7 +833,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       </span>
                       <div className="border-b border-slate-300 w-full flex items-end">
                         <AutoResizeTextArea
-                          value={data.receivedBy.name}
+                          value={getExportValue(
+                            data.receivedBy.name,
+                            isGeneratingPdf,
+                          )}
                           onChange={
                             isGeneratingPdf
                               ? undefined
@@ -831,7 +852,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       </span>
                       <div className="border-b border-slate-300 w-full flex items-end">
                         <AutoResizeTextArea
-                          value={data.receivedBy.date}
+                          value={getExportValue(
+                            data.receivedBy.date,
+                            isGeneratingPdf,
+                          )}
                           onChange={
                             isGeneratingPdf
                               ? undefined
@@ -847,7 +871,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       </span>
                       <div className="border-b border-slate-300 w-full flex items-end">
                         <AutoResizeTextArea
-                          value={data.receivedBy.time}
+                          value={getExportValue(
+                            data.receivedBy.time,
+                            isGeneratingPdf,
+                          )}
                           onChange={
                             isGeneratingPdf
                               ? undefined
@@ -863,7 +890,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                       </span>
                       <div className="border-b border-slate-300 w-full flex items-end">
                         <AutoResizeTextArea
-                          value={data.receivedBy.remarks}
+                          value={getExportValue(
+                            data.receivedBy.remarks,
+                            isGeneratingPdf,
+                          )}
                           onChange={
                             isGeneratingPdf
                               ? undefined
@@ -878,7 +908,10 @@ export const TransmittalTemplate: React.FC<Props> = ({
                   <div className="flex items-center justify-center text-[8px] text-slate-400 italic w-full avoid-break">
                     <div className="flex-1 text-center">
                       <AutoResizeTextArea
-                        value={data.footerNotes.disclaimer}
+                        value={getExportValue(
+                          data.footerNotes.disclaimer,
+                          isGeneratingPdf,
+                        )}
                         onChange={
                           isGeneratingPdf
                             ? undefined

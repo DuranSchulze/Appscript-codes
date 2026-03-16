@@ -35,7 +35,7 @@ Reduce shared-key quota exhaustion and give users a more reliable AI parsing pat
 
 Today, AI parsing depends on environment-level Gemini keys only. When usage is high, the shared key can hit quota limits or become a bottleneck for all users. Users currently have no way to provide their own key to keep working.
 
-### Current State
+### Current Stateq
 
 - `services/geminiService.ts` resolves Gemini keys from environment variables only.
 - There is no per-user key storage.
