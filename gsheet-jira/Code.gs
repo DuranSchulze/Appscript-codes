@@ -111,7 +111,13 @@ function moveTask(taskId, fromSheet, toSheet, toIndex) {
 
     return {
       success: true,
-      movedTask: mapRowToTask_(rowValues, metadata, toSheet, destinationSheet.getLastRow())
+      movedTask: mapRowToTask_(
+        rowValues,
+        buildPlainRichTextRow_(rowValues),
+        metadata,
+        toSheet,
+        destinationSheet.getLastRow()
+      )
     };
   } finally {
     lock.releaseLock();
@@ -164,7 +170,13 @@ function updateTask(taskId, sheetName, updates) {
 
       return {
         success: true,
-        task: mapRowToTask_(taskRow.rowValues, metadata, moveTarget, destinationSheet.getLastRow()),
+        task: mapRowToTask_(
+          taskRow.rowValues,
+          buildPlainRichTextRow_(taskRow.rowValues),
+          metadata,
+          moveTarget,
+          destinationSheet.getLastRow()
+        ),
         movedToSheet: moveTarget
       };
     }
@@ -173,7 +185,13 @@ function updateTask(taskId, sheetName, updates) {
 
     return {
       success: true,
-      task: mapRowToTask_(taskRow.rowValues, metadata, sheetName, taskRow.rowNumber)
+      task: mapRowToTask_(
+        taskRow.rowValues,
+        buildPlainRichTextRow_(taskRow.rowValues),
+        metadata,
+        sheetName,
+        taskRow.rowNumber
+      )
     };
   } finally {
     lock.releaseLock();
@@ -338,6 +356,7 @@ function getTasksForSheet_(sheet, metadata) {
   }
 
   var values = sheet.getRange(2, 1, lastRow - 1, metadata.totalColumns).getValues();
+  var richTextValues = sheet.getRange(2, 1, lastRow - 1, metadata.totalColumns).getRichTextValues();
   var tasks = [];
 
   values.forEach(function(rowValues, index) {
@@ -346,24 +365,33 @@ function getTasksForSheet_(sheet, metadata) {
     });
 
     if (!isBlank) {
-      tasks.push(mapRowToTask_(rowValues, metadata, sheet.getName(), index + 2));
+      tasks.push(mapRowToTask_(rowValues, richTextValues[index], metadata, sheet.getName(), index + 2));
     }
   });
 
   return tasks;
 }
 
-function mapRowToTask_(rowValues, metadata, sheetName, rowNumber) {
+function mapRowToTask_(rowValues, richTextRowValues, metadata, sheetName, rowNumber) {
+  var descriptionIndex = metadata.indexByHeader.DESCRIPTION;
+  var remarksIndex = metadata.indexByHeader.REMARKS;
+  var notesIndex = metadata.indexByHeader.NOTES;
+  var linksIndex = metadata.indexByHeader.Links;
+
   return {
     taskId: String(rowValues[metadata.indexByHeader[INTERNAL_ID_HEADER]] || ''),
     sheetName: sheetName,
     rowIndex: rowNumber,
     company: String(rowValues[metadata.indexByHeader.COMPANY] || ''),
     description: String(rowValues[metadata.indexByHeader.DESCRIPTION] || ''),
+    descriptionHtml: richTextValueToHtml_(richTextRowValues[descriptionIndex]),
     status: String(rowValues[metadata.indexByHeader.STATUS] || ''),
     remarks: String(rowValues[metadata.indexByHeader.REMARKS] || ''),
+    remarksHtml: richTextValueToHtml_(richTextRowValues[remarksIndex]),
     notes: String(rowValues[metadata.indexByHeader.NOTES] || ''),
+    notesHtml: richTextValueToHtml_(richTextRowValues[notesIndex]),
     links: String(rowValues[metadata.indexByHeader.Links] || ''),
+    linksHtml: richTextValueToHtml_(richTextRowValues[linksIndex]),
     progress: String(rowValues[metadata.indexByHeader.Progress] || '')
   };
 }
@@ -547,4 +575,65 @@ function sanitizeForHtmlAttribute_(value) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function escapeHtml_(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function richTextValueToHtml_(richTextValue) {
+  if (!richTextValue) {
+    return '';
+  }
+
+  var text = richTextValue.getText();
+  if (!text) {
+    return '';
+  }
+
+  var runs = richTextValue.getRuns();
+  if (!runs || !runs.length) {
+    return escapeHtml_(text).replace(/\n/g, '<br>');
+  }
+
+  return runs.map(function(run) {
+    var rendered = escapeHtml_(run.getText()).replace(/\n/g, '<br>');
+    var style = run.getTextStyle();
+    var linkUrl = run.getLinkUrl();
+
+    if (style) {
+      if (style.isBold()) {
+        rendered = '<strong>' + rendered + '</strong>';
+      }
+      if (style.isItalic()) {
+        rendered = '<em>' + rendered + '</em>';
+      }
+      if (style.isUnderline()) {
+        rendered = '<u>' + rendered + '</u>';
+      }
+      if (style.isStrikethrough()) {
+        rendered = '<s>' + rendered + '</s>';
+      }
+    }
+
+    if (linkUrl) {
+      rendered = '<a class="task-link" href="' + sanitizeForHtmlAttribute_(linkUrl) +
+        '" target="_blank" rel="noopener noreferrer">' + rendered + '</a>';
+    }
+
+    return rendered;
+  }).join('');
+}
+
+function buildPlainRichTextRow_(rowValues) {
+  return rowValues.map(function(value) {
+    return SpreadsheetApp.newRichTextValue()
+      .setText(String(value || ''))
+      .build();
+  });
 }

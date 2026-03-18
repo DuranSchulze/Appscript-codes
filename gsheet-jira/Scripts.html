@@ -110,12 +110,12 @@
         </div>
         <span class="task-chip">${escapeHtml(task.status || 'PENDING')}</span>
       </div>
-      ${renderField('Description', task.description)}
-      ${renderField('Remarks', task.remarks)}
-      ${renderField('Notes', task.notes)}
+      ${renderField('Description', task.description, task.descriptionHtml)}
+      ${renderField('Remarks', task.remarks, task.remarksHtml)}
+      ${renderField('Notes', task.notes, task.notesHtml)}
       <div class="task-field">
         <span class="task-label">Links</span>
-        <div class="task-value">${linkMarkup}</div>
+        <div class="task-value rich-text-value">${task.linksHtml || linkMarkup}</div>
       </div>
       ${renderField('Progress', task.progress)}
       <div class="task-actions">
@@ -139,11 +139,12 @@
     return cardEl;
   }
 
-  function renderField(label, value) {
+  function renderField(label, value, htmlValue) {
+    const renderedValue = htmlValue || escapeHtml(value || '') || '<span style="color:#8f7e6a;">None</span>';
     return `
       <div class="task-field">
         <span class="task-label">${escapeHtml(label)}</span>
-        <p class="task-value">${escapeHtml(value || '') || '<span style="color:#8f7e6a;">None</span>'}</p>
+        <div class="task-value rich-text-value">${renderedValue}</div>
       </div>
     `;
   }
