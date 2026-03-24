@@ -602,6 +602,19 @@ function getHeaderAliases() {
       "Client",
       "Client Name",
     ],
+    [cfg.HEADERS.SELLER_DONOR]: [
+      "Seller / Donor",
+      "Seller/Donor",
+      "Seller / Doner",
+      "Seller/Doner",
+      "Seller Donor",
+      "Seller Doner",
+    ],
+    [cfg.HEADERS.BUYER_DONEE]: [
+      "Buyer / Donee",
+      "Buyer/Donee",
+      "Buyer Donee",
+    ],
     [cfg.HEADERS.SERVICE_TYPE]: ["Services", "Service", "Service Type"],
     [cfg.HEADERS.NOTARY_DATE]: [
       "NOTARY DATE OF DOCUMENT",
@@ -2556,7 +2569,7 @@ function getTodayKey() {
   return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
 }
 
-function wasReminderSentToday(sheetName, rowNumber, deadlineGroup, recipient) {
+function wasReminderSentToday(sheetName, rowNumber, deadlineGroup, recipientLogKey) {
   const sheet = ensureReminderSendLogSheet();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return false;
@@ -2572,19 +2585,19 @@ function wasReminderSentToday(sheetName, rowNumber, deadlineGroup, recipient) {
       entry[1] === sheetName &&
       Number(entry[2]) === Number(rowNumber) &&
       entry[3] === deadlineGroup &&
-      entry[4] === recipient &&
+      entry[4] === recipientLogKey &&
       entry[6] === "SENT"
     );
   });
 }
 
-function logReminderSend(sheetName, rowNumber, deadlineGroup, recipient, triggerType, status) {
+function logReminderSend(sheetName, rowNumber, deadlineGroup, recipientLogKey, triggerType, status) {
   ensureReminderSendLogSheet().appendRow([
     new Date(),
     sheetName,
     rowNumber,
     deadlineGroup,
-    recipient,
+    recipientLogKey,
     triggerType,
     status,
   ]);
@@ -2673,9 +2686,51 @@ function getProjectHistory(clientName) {
 // EMAIL NOTIFICATIONS
 // ============================================================================
 
+function parseEmailAddresses(value) {
+  if (value === null || value === undefined || value === "") return [];
+
+  const seen = {};
+  return value
+    .toString()
+    .split(/[,\n;]+/)
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => {
+      if (!isValidEmailAddress(email) || seen[email]) return false;
+      seen[email] = true;
+      return true;
+    });
+}
+
 function buildReminderRecipients(staffEmail, clientEmail) {
-  const staff = staffEmail ? staffEmail.toString().trim().toLowerCase() : "";
-  return isValidEmailAddress(staff) ? [staff] : [];
+  return parseEmailAddresses(staffEmail);
+}
+
+function buildReminderCcRecipients(includeNotificationEmails, recipients) {
+  if (includeNotificationEmails === false) return [];
+
+  const recipientLookup = {};
+  (recipients || []).forEach((email) => {
+    recipientLookup[email] = true;
+  });
+
+  return getNotificationEmails().filter((email) => !recipientLookup[email]);
+}
+
+function buildRecipientLogKey(toRecipients, ccRecipients) {
+  const toList = (toRecipients || []).join(", ");
+  const ccList = (ccRecipients || []).join(", ");
+  return ccList ? `TO: ${toList} | CC: ${ccList}` : `TO: ${toList}`;
+}
+
+function getPartyDetailsForReminder(headers, row) {
+  const cfg = getConfig();
+  const sellerDonorIndex = findHeaderIndexByName(headers, cfg.HEADERS.SELLER_DONOR);
+  const buyerDoneeIndex = findHeaderIndexByName(headers, cfg.HEADERS.BUYER_DONEE);
+
+  return {
+    sellerDonor: sellerDonorIndex ? row[sellerDonorIndex - 1] : "",
+    buyerDonee: buyerDoneeIndex ? row[buyerDoneeIndex - 1] : "",
+  };
 }
 
 function getReminderEmailPayloadForRow(sheet, rowNumber) {
@@ -2751,6 +2806,7 @@ function getReminderEmailPayloadForRow(sheet, rowNumber) {
   const clientName = clientNameIndex ? row[clientNameIndex - 1] : "";
   const staffEmail = staffEmailIndex ? row[staffEmailIndex - 1] : "";
   const clientEmail = clientEmailIndex ? row[clientEmailIndex - 1] : "";
+  const partyDetails = getPartyDetailsForReminder(headers, row);
   const recipients = buildReminderRecipients(staffEmail, clientEmail);
   if (recipients.length === 0) {
     return {
@@ -2773,6 +2829,8 @@ function getReminderEmailPayloadForRow(sheet, rowNumber) {
     data: {
       recipients: recipients,
       clientName: clientName || "Unknown Client",
+      sellerDonor: partyDetails.sellerDonor || "",
+      buyerDonee: partyDetails.buyerDonee || "",
       serviceType: serviceTypeIndex ? row[serviceTypeIndex - 1] : "",
       reminders: reminders,
       deadlines: deadlineSummaries,
@@ -2859,9 +2917,11 @@ function sendReminderEmailsByTriggerType(triggerType) {
       const actualRow = idx + dataStart;
       const clientName = clientNameIndex ? row[clientNameIndex - 1] : "";
       const staffEmail = staffEmailIndex ? row[staffEmailIndex - 1] : "";
+      const partyDetails = getPartyDetailsForReminder(headers, row);
       const serviceType = serviceTypeIndex ? row[serviceTypeIndex - 1] : "";
       const remarks = remarksIndex ? row[remarksIndex - 1] : "";
       const recipients = buildReminderRecipients(staffEmail);
+      const ccRecipients = buildReminderCcRecipients(true, recipients);
 
       if (!recipients.length) {
         skipped.push(`${sheetName} row ${actualRow}: missing valid Staff Email`);
@@ -2881,8 +2941,8 @@ function sendReminderEmailsByTriggerType(triggerType) {
 
         if (!shouldSend) return;
 
-        const recipient = recipients[0];
-        if (wasReminderSentToday(sheetName, actualRow, group.type, recipient)) {
+        const recipientLogKey = buildRecipientLogKey(recipients, ccRecipients);
+        if (wasReminderSentToday(sheetName, actualRow, group.type, recipientLogKey)) {
           skipped.push(`${sheetName} row ${actualRow}: ${group.type} already sent today`);
           return;
         }
@@ -2896,8 +2956,11 @@ function sendReminderEmailsByTriggerType(triggerType) {
 
         try {
           sendReminderEmail({
-            recipients: [recipient],
+            recipients: recipients,
+            ccRecipients: ccRecipients,
             clientName: clientName || "Unknown Client",
+            sellerDonor: partyDetails.sellerDonor || "",
+            buyerDonee: partyDetails.buyerDonee || "",
             serviceType: serviceType,
             reminders: [reminderValue.toString()],
             deadlines: deadlineSummary,
@@ -2911,14 +2974,14 @@ function sendReminderEmailsByTriggerType(triggerType) {
             sheetName,
             actualRow,
             group.type,
-            recipient,
+            recipientLogKey,
             triggerType,
             "SENT",
           );
           logActivity(
             clientName || "Unknown Client",
             "Reminder Email Sent",
-            `${group.type} to ${recipient} (${triggerType})`,
+            `${group.type} to ${recipientLogKey} (${triggerType})`,
           );
           markReminderCellAsSent(sheet, actualRow, group.reminderCol);
         } catch (e) {
@@ -2926,7 +2989,7 @@ function sendReminderEmailsByTriggerType(triggerType) {
             sheetName,
             actualRow,
             group.type,
-            recipient,
+            recipientLogKey,
             triggerType,
             "FAILED",
           );
@@ -2956,6 +3019,10 @@ function sendReminderEmailsByTriggerType(triggerType) {
 function sendReminderEmail(data) {
   const subjectPrefix = data.subjectPrefix ? data.subjectPrefix + " " : "";
   const subject = `${subjectPrefix}Reminder: ${data.clientName} - ${data.serviceType || "Project"}`;
+  const toRecipients = data.recipients || [];
+  const ccRecipients =
+    data.ccRecipients || buildReminderCcRecipients(data.includeNotificationEmails, toRecipients);
+  const recipientLogKey = buildRecipientLogKey(toRecipients, ccRecipients);
   const escapeHtml = (value) =>
     String(value === null || value === undefined ? "" : value)
       .replace(/&/g, "&amp;")
@@ -2971,11 +3038,23 @@ function sendReminderEmail(data) {
   let body = `Dear Team,\n\n`;
   body += `This is an automated reminder regarding the following project:\n\n`;
   body += `Client: ${data.clientName}\n`;
+  if (data.sellerDonor) {
+    body += `Seller/Donor: ${data.sellerDonor}\n`;
+  }
+  if (data.buyerDonee) {
+    body += `Buyer/Donee: ${data.buyerDonee}\n`;
+  }
   body += `Service: ${data.serviceType || "N/A"}\n`;
   body += `Sheet: ${data.sheetName}\n\n`;
   if (data.rowNumber) {
     body += `Row: ${data.rowNumber}\n\n`;
   }
+  body += `Sent To:\n`;
+  body += `- To: ${toRecipients.join(", ") || "N/A"}\n`;
+  if (ccRecipients.length) {
+    body += `- CC: ${ccRecipients.join(", ")}\n`;
+  }
+  body += `\n`;
   body += `ALERT:\n- ${data.reminders.join("\n- ")}\n\n`;
 
   if (data.deadlines && data.deadlines.length) {
@@ -3018,8 +3097,15 @@ function sendReminderEmail(data) {
       : "";
   const metaRows = [
     { label: "Client", value: data.clientName },
+    ...(data.sellerDonor
+      ? [{ label: "Seller/Donor", value: data.sellerDonor }]
+      : []),
+    ...(data.buyerDonee
+      ? [{ label: "Buyer/Donee", value: data.buyerDonee }]
+      : []),
     { label: "Service", value: data.serviceType || "N/A" },
     { label: "Sheet", value: data.sheetName },
+    { label: "Sent To", value: recipientLogKey },
   ];
   if (data.rowNumber) {
     metaRows.push({ label: "Row", value: data.rowNumber });
@@ -3032,6 +3118,23 @@ function sendReminderEmail(data) {
       </tr>`,
     )
     .join("");
+  const recipientsHtml = `<div style="margin-top:20px;padding:18px;border:1px solid #dbeafe;border-radius:12px;background:#f8fbff;">
+          <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#2563eb;margin-bottom:10px;">Sent To</div>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
+            <tr>
+              <td style="padding:5px 0;color:#475569;font-size:13px;width:88px;">To</td>
+              <td style="padding:5px 0;color:#0f172a;font-size:13px;font-weight:600;">${escapeHtml(toRecipients.join(", ") || "N/A")}</td>
+            </tr>
+            ${
+              ccRecipients.length
+                ? `<tr>
+                    <td style="padding:5px 0;color:#475569;font-size:13px;">CC</td>
+                    <td style="padding:5px 0;color:#0f172a;font-size:13px;font-weight:600;">${escapeHtml(ccRecipients.join(", "))}</td>
+                  </tr>`
+                : ""
+            }
+          </table>
+        </div>`;
   const revisitHtml =
     data.revisit && data.revisit.remainingDays !== null
       ? `<div style="margin-top:20px;padding:18px;border:1px solid #dbeafe;border-radius:12px;background:#f8fbff;">
@@ -3076,6 +3179,7 @@ function sendReminderEmail(data) {
               <div style="padding:18px;border:1px solid #dbeafe;border-radius:12px;background:#f8fbff;">
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">${metaHtml}</table>
               </div>
+              ${recipientsHtml}
               <div style="margin-top:20px;">
                 <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#2563eb;margin-bottom:10px;">Reminder</div>
                 <ul style="margin:0;padding-left:20px;color:#0f172a;font-size:14px;line-height:1.6;">${reminderItemsHtml}</ul>
@@ -3099,12 +3203,15 @@ function sendReminderEmail(data) {
 </html>`;
 
   const mailOptions = {
-    to: data.recipients.join(","),
+    to: toRecipients.join(","),
     subject: subject,
     body: body,
     htmlBody: htmlBody,
     name: "Projects Monitoring System",
   };
+  if (ccRecipients.length) {
+    mailOptions.cc = ccRecipients.join(",");
+  }
 
   MailApp.sendEmail(mailOptions);
 }
@@ -3149,6 +3256,8 @@ function testReminderForOneRow() {
     sendReminderEmail({
       recipients: payload.data.recipients,
       clientName: payload.data.clientName,
+      sellerDonor: payload.data.sellerDonor,
+      buyerDonee: payload.data.buyerDonee,
       serviceType: payload.data.serviceType,
       reminders: payload.data.reminders,
       deadlines: payload.data.deadlines,
@@ -3193,6 +3302,8 @@ function sendSampleReminderEmail() {
     sendReminderEmail({
       recipients: [email],
       clientName: "Sample Client",
+      sellerDonor: "Sample Seller / Donor",
+      buyerDonee: "Sample Buyer / Donee",
       serviceType: "Sample Reminder",
       reminders: [
         "This is a sample reminder email used to confirm that reminder sending is working.",
