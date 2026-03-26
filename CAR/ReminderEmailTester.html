@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f8fafc;
+        --panel: #ffffff;
+        --border: #dbeafe;
+        --text: #0f172a;
+        --muted: #475569;
+        --accent: #2563eb;
+        --accent-soft: #eff6ff;
+        --success: #166534;
+        --success-soft: #dcfce7;
+        --error: #b91c1c;
+        --error-soft: #fee2e2;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 20px;
+        background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+        color: var(--text);
+        font: 14px/1.5 Arial, sans-serif;
+      }
+
+      .shell {
+        max-width: 920px;
+        margin: 0 auto;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        box-shadow: 0 16px 40px rgba(37, 99, 235, 0.08);
+      }
+
+      .header {
+        padding: 20px 22px 16px;
+      }
+
+      .header h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      .header p {
+        margin: 8px 0 0;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+        padding: 0 20px 20px;
+      }
+
+      .panel {
+        padding: 18px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #fff;
+      }
+
+      .panel h2 {
+        margin: 0 0 14px;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+      }
+
+      .stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      .label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .field,
+      .textarea {
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        padding: 11px 12px;
+        font: inherit;
+        color: var(--text);
+        background: #fff;
+      }
+
+      .textarea {
+        min-height: 180px;
+        resize: vertical;
+      }
+
+      .field:focus,
+      .textarea:focus {
+        outline: 2px solid rgba(37, 99, 235, 0.15);
+        border-color: var(--accent);
+      }
+
+      .meta {
+        display: grid;
+        gap: 10px;
+      }
+
+      .meta-row {
+        padding: 12px;
+        border-radius: 12px;
+        background: var(--accent-soft);
+      }
+
+      .meta-row strong {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 4px;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 0;
+        border-radius: 12px;
+        padding: 11px 14px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .secondary {
+        background: #e2e8f0;
+        color: var(--text);
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+
+      .status {
+        display: none;
+        margin-top: 12px;
+        padding: 12px;
+        border-radius: 12px;
+      }
+
+      .status.show {
+        display: block;
+      }
+
+      .status.error {
+        background: var(--error-soft);
+        color: var(--error);
+      }
+
+      .status.success {
+        background: var(--success-soft);
+        color: var(--success);
+      }
+
+      .status.info {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .subject {
+        margin-bottom: 14px;
+        padding: 12px;
+        border-radius: 12px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+      }
+
+      iframe {
+        width: 100%;
+        min-height: 520px;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        background: #fff;
+      }
+
+      @media (max-width: 860px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <div class="header">
+          <h1>Reminder Email Tester</h1>
+          <p>Select a row in a supported automation tab, enter a destination email, preview the rendered reminder, then send a safe test copy.</p>
+        </div>
+        <div class="grid">
+          <div class="panel">
+            <h2>Test Setup</h2>
+            <div class="stack">
+              <div class="meta">
+                <div class="meta-row">
+                  <strong>Active Tab</strong>
+                  <span id="sheetName">Loading...</span>
+                </div>
+                <div class="meta-row">
+                  <strong>Selected Row</strong>
+                  <span id="rowNumber">Loading...</span>
+                </div>
+                <div class="meta-row">
+                  <strong>Normal Automation Recipients</strong>
+                  <span id="actualRecipients">Loading...</span>
+                </div>
+                <div class="meta-row">
+                  <strong>Normal Automation CC</strong>
+                  <span id="ccRecipients">Loading...</span>
+                </div>
+              </div>
+
+              <div>
+                <label class="label" for="rowInput">Row Number To Test</label>
+                <input class="field" id="rowInput" type="number" min="1" placeholder="Enter row number" />
+              </div>
+
+              <div>
+                <label class="label" for="testEmail">Send Test Email To</label>
+                <input class="field" id="testEmail" type="email" placeholder="name@example.com" />
+              </div>
+
+              <div class="actions">
+                <button class="secondary" id="refreshButton" type="button">Refresh Preview</button>
+                <button class="primary" id="sendButton" type="button">Send Test Email</button>
+              </div>
+
+              <div id="status" class="status"></div>
+
+              <div>
+                <label class="label" for="plainBody">Plain Text Version</label>
+                <textarea class="textarea" id="plainBody" readonly></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Email Preview</h2>
+            <div class="subject">
+              <strong class="label" style="margin-bottom:4px;">Subject</strong>
+              <div id="subject">Loading...</div>
+            </div>
+            <iframe id="previewFrame" title="Reminder Email Preview"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const elements = {
+        sheetName: document.getElementById("sheetName"),
+        rowNumber: document.getElementById("rowNumber"),
+        actualRecipients: document.getElementById("actualRecipients"),
+        ccRecipients: document.getElementById("ccRecipients"),
+        rowInput: document.getElementById("rowInput"),
+        testEmail: document.getElementById("testEmail"),
+        subject: document.getElementById("subject"),
+        plainBody: document.getElementById("plainBody"),
+        previewFrame: document.getElementById("previewFrame"),
+        refreshButton: document.getElementById("refreshButton"),
+        sendButton: document.getElementById("sendButton"),
+        status: document.getElementById("status"),
+      };
+
+      function setBusy(isBusy) {
+        elements.refreshButton.disabled = isBusy;
+        elements.sendButton.disabled = isBusy;
+      }
+
+      function showStatus(message, kind) {
+        elements.status.textContent = message || "";
+        elements.status.className = "status show " + (kind || "info");
+      }
+
+      function clearStatus() {
+        elements.status.className = "status";
+        elements.status.textContent = "";
+      }
+
+      function formatRecipients(list) {
+        return list && list.length ? list.join(", ") : "(none)";
+      }
+
+      function renderState(state) {
+        setBusy(false);
+
+        if (!state || state.error) {
+          showStatus((state && state.error) || "Unable to load the reminder preview.", "error");
+          elements.sheetName.textContent = state && state.sheetName ? state.sheetName : "-";
+          elements.rowNumber.textContent = state && state.dataStartRow
+            ? "Enter a row number at or below " + state.dataStartRow
+            : "-";
+          elements.actualRecipients.textContent = "(none)";
+          elements.ccRecipients.textContent = "(none)";
+          elements.subject.textContent = "-";
+          elements.plainBody.value = "";
+          elements.previewFrame.srcdoc = "<html><body style='font-family:Arial,sans-serif;padding:24px;color:#b91c1c;'>No preview available.</body></html>";
+          return;
+        }
+
+        clearStatus();
+        elements.sheetName.textContent = state.sheetName;
+        elements.rowNumber.textContent = state.rowNumber + " (data starts at row " + state.dataStartRow + ")";
+        elements.actualRecipients.textContent = formatRecipients(state.actualRecipients);
+        elements.ccRecipients.textContent = formatRecipients(state.automationCcRecipients);
+        elements.subject.textContent = state.subject || "(no subject)";
+        elements.plainBody.value = state.plainBody || "";
+        elements.previewFrame.srcdoc = state.htmlBody || "<html><body></body></html>";
+      }
+
+      function refreshPreview() {
+        setBusy(true);
+        google.script.run
+          .withSuccessHandler(renderState)
+          .withFailureHandler((error) => {
+            setBusy(false);
+            showStatus(error && error.message ? error.message : "Unable to refresh preview.", "error");
+          })
+          .getReminderEmailTesterState(elements.testEmail.value, elements.rowInput.value);
+      }
+
+      function sendTestEmail() {
+        const email = elements.testEmail.value.trim();
+        if (!email) {
+          showStatus("Enter a destination email address first.", "error");
+          elements.testEmail.focus();
+          return;
+        }
+
+        setBusy(true);
+        showStatus("Sending test email...", "info");
+        google.script.run
+          .withSuccessHandler((result) => {
+            setBusy(false);
+            showStatus(result.message, "success");
+            refreshPreview();
+          })
+          .withFailureHandler((error) => {
+            setBusy(false);
+            showStatus(error && error.message ? error.message : "Unable to send the test email.", "error");
+          })
+          .sendReminderEmailTesterMessage(email, elements.rowInput.value);
+      }
+
+      function loadInitialState() {
+        setBusy(true);
+        google.script.run
+          .withSuccessHandler((state) => {
+            setBusy(false);
+            if (state && state.error) {
+              renderState(state);
+              return;
+            }
+            if (state && state.suggestedRowNumber) {
+              elements.rowInput.value = state.suggestedRowNumber;
+            }
+            if (state && state.sheetName) {
+              elements.sheetName.textContent = state.sheetName;
+            }
+            refreshPreview();
+          })
+          .withFailureHandler((error) => {
+            setBusy(false);
+            showStatus(error && error.message ? error.message : "Unable to load tester setup.", "error");
+          })
+          .getReminderEmailTesterInitState();
+      }
+
+      elements.refreshButton.addEventListener("click", refreshPreview);
+      elements.sendButton.addEventListener("click", sendTestEmail);
+      elements.testEmail.addEventListener("change", refreshPreview);
+      elements.rowInput.addEventListener("change", refreshPreview);
+
+      loadInitialState();
+    </script>
+  </body>
+</html>

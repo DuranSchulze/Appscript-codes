@@ -1523,6 +1523,7 @@ function onOpen() {
     .addSubMenu(
       ui
         .createMenu("Advanced Tools")
+        .addItem("Reminder Email Tester", "openReminderEmailTester")
         .addItem("Run Daily Check Now", "runDailyCheck")
         .addItem("Clear Old Logs", "clearOldLogs")
         .addItem("Diagnostics", "showDiagnostics"),
@@ -2733,8 +2734,9 @@ function getPartyDetailsForReminder(headers, row) {
   };
 }
 
-function getReminderEmailPayloadForRow(sheet, rowNumber) {
+function getReminderEmailPayloadForRow(sheet, rowNumber, options) {
   const cfg = getConfig();
+  const settings = options || {};
   const dataStart = getDataStartRow(sheet);
   if (rowNumber < dataStart) {
     return {
@@ -2808,7 +2810,7 @@ function getReminderEmailPayloadForRow(sheet, rowNumber) {
   const clientEmail = clientEmailIndex ? row[clientEmailIndex - 1] : "";
   const partyDetails = getPartyDetailsForReminder(headers, row);
   const recipients = buildReminderRecipients(staffEmail, clientEmail);
-  if (recipients.length === 0) {
+  if (settings.requireRecipients !== false && recipients.length === 0) {
     return {
       error:
         'No valid Staff Email was found for this row. Add a valid email address in the "Staff Email" column first.',
@@ -3016,7 +3018,7 @@ function sendReminderEmailsByTriggerType(triggerType) {
   }
 }
 
-function sendReminderEmail(data) {
+function composeReminderEmail(data) {
   const subjectPrefix = data.subjectPrefix ? data.subjectPrefix + " " : "";
   const subject = `${subjectPrefix}Reminder: ${data.clientName} - ${data.serviceType || "Project"}`;
   const toRecipients = data.recipients || [];
@@ -3202,85 +3204,252 @@ function sendReminderEmail(data) {
   </body>
 </html>`;
 
-  const mailOptions = {
-    to: toRecipients.join(","),
+  return {
     subject: subject,
     body: body,
     htmlBody: htmlBody,
+    toRecipients: toRecipients,
+    ccRecipients: ccRecipients,
+    recipientLogKey: recipientLogKey,
+  };
+}
+
+function sendReminderEmail(data) {
+  const composed = composeReminderEmail(data);
+
+  const mailOptions = {
+    to: composed.toRecipients.join(","),
+    subject: composed.subject,
+    body: composed.body,
+    htmlBody: composed.htmlBody,
     name: "Projects Monitoring System",
   };
-  if (ccRecipients.length) {
-    mailOptions.cc = ccRecipients.join(",");
+  if (composed.ccRecipients.length) {
+    mailOptions.cc = composed.ccRecipients.join(",");
   }
 
   MailApp.sendEmail(mailOptions);
 }
 
-function testReminderForOneRow() {
-  const ui = SpreadsheetApp.getUi();
-  const sheet = SpreadsheetApp.getActiveSheet();
-  const sheetName = sheet.getName();
+function getReminderTesterSupportedSheets() {
+  const configuredSheets = Array.from(
+    new Set(getConfiguredDstCgtTabs().concat(getConfiguredTransferTaxTabs())),
+  );
+  return configuredSheets.length ? configuredSheets : getProjectSheets();
+}
 
-  if (!getProjectSheets().includes(sheetName)) {
-    ui.alert(
-      "Test Reminder for One Row",
-      "Open one of the configured automation tabs first, then run this action again.",
-      ui.ButtonSet.OK,
+function getReminderEmailTesterContext() {
+  const sheet = SpreadsheetApp.getActiveSheet();
+  const sheetName = sheet ? sheet.getName() : "";
+  const supportedSheets = getReminderTesterSupportedSheets();
+
+  if (!sheet || supportedSheets.indexOf(sheetName) === -1) {
+    return {
+      error:
+        "Open a configured automation tab first, then select the row you want to preview.",
+    };
+  }
+
+  const activeRange = sheet.getActiveRange();
+  const activeRow = activeRange ? activeRange.getRow() : null;
+  const dataStartRow = getDataStartRow(sheet);
+
+  return {
+    sheet: sheet,
+    sheetName: sheetName,
+    activeRow: activeRow,
+    dataStartRow: dataStartRow,
+  };
+}
+
+function getReminderEmailTesterSelection(rowNumberInput) {
+  const context = getReminderEmailTesterContext();
+  if (context.error) return context;
+
+  const parsedRow = parseInt(
+    rowNumberInput === null || rowNumberInput === undefined || rowNumberInput === ""
+      ? context.activeRow
+      : rowNumberInput,
+    10,
+  );
+
+  if (isNaN(parsedRow) || parsedRow < 1) {
+    return {
+      error: "Enter a valid row number to preview.",
+      sheetName: context.sheetName,
+      activeRow: context.activeRow,
+      dataStartRow: context.dataStartRow,
+    };
+  }
+
+  if (parsedRow < context.dataStartRow) {
+    return {
+      error: `Row ${parsedRow} is above the data start row (${context.dataStartRow}). Enter a data row instead.`,
+      sheetName: context.sheetName,
+      activeRow: context.activeRow,
+      dataStartRow: context.dataStartRow,
+    };
+  }
+
+  return {
+    sheet: context.sheet,
+    sheetName: context.sheetName,
+    rowNumber: parsedRow,
+    activeRow: context.activeRow,
+    dataStartRow: context.dataStartRow,
+  };
+}
+
+function getReminderEmailTesterInitState() {
+  const context = getReminderEmailTesterContext();
+  if (context.error) return context;
+
+  return {
+    sheetName: context.sheetName,
+    activeRow: context.activeRow,
+    dataStartRow: context.dataStartRow,
+    suggestedRowNumber:
+      context.activeRow && context.activeRow >= context.dataStartRow
+        ? context.activeRow
+        : context.dataStartRow,
+  };
+}
+
+function buildReminderEmailTesterState(testEmail, rowNumberInput) {
+  const selection = getReminderEmailTesterSelection(rowNumberInput);
+  if (selection.error) {
+    return {
+      error: selection.error,
+      sheetName: selection.sheetName || "",
+      activeRow: selection.activeRow || null,
+      dataStartRow: selection.dataStartRow || null,
+      rowNumber: rowNumberInput || "",
+    };
+  }
+
+  const normalizedEmail = (testEmail || "").toString().trim().toLowerCase();
+  const payload = getReminderEmailPayloadForRow(selection.sheet, selection.rowNumber, {
+    requireRecipients: false,
+  });
+  if (!payload.data) {
+    return {
+      error: payload.error,
+      sheetName: selection.sheetName,
+      activeRow: selection.activeRow,
+      dataStartRow: selection.dataStartRow,
+      rowNumber: selection.rowNumber,
+    };
+  }
+
+  const actualRecipients = payload.data.recipients || [];
+  const automationCcRecipients = buildReminderCcRecipients(true, actualRecipients);
+  const previewRecipients = isValidEmailAddress(normalizedEmail)
+    ? [normalizedEmail]
+    : actualRecipients;
+  const composed = composeReminderEmail({
+    recipients: previewRecipients,
+    ccRecipients: [],
+    clientName: payload.data.clientName,
+    sellerDonor: payload.data.sellerDonor,
+    buyerDonee: payload.data.buyerDonee,
+    serviceType: payload.data.serviceType,
+    reminders: payload.data.reminders,
+    deadlines: payload.data.deadlines,
+    sheetName: payload.data.sheetName,
+    rowNumber: payload.data.rowNumber,
+    remarks: payload.data.remarks,
+    revisit: payload.data.revisit,
+    subjectPrefix: "[TEST PREVIEW]",
+    includeNotificationEmails: false,
+  });
+
+  return {
+    sheetName: selection.sheetName,
+    rowNumber: selection.rowNumber,
+    activeRow: selection.activeRow,
+    dataStartRow: selection.dataStartRow,
+    selectedEmail: normalizedEmail,
+    actualRecipients: actualRecipients,
+    automationCcRecipients: automationCcRecipients,
+    previewRecipients: composed.toRecipients,
+    subject: composed.subject,
+    htmlBody: composed.htmlBody,
+    plainBody: composed.body,
+  };
+}
+
+function getReminderEmailTesterState(testEmail, rowNumberInput) {
+  return buildReminderEmailTesterState(testEmail, rowNumberInput);
+}
+
+function openReminderEmailTester() {
+  const context = getReminderEmailTesterContext();
+  if (context.error) {
+    SpreadsheetApp.getUi().alert(
+      "Reminder Email Tester",
+      context.error,
+      SpreadsheetApp.getUi().ButtonSet.OK,
     );
     return;
   }
 
-  const currentRow = sheet.getActiveRange()
-    ? sheet.getActiveRange().getRow()
-    : getDataStartRow(sheet);
-  const response = ui.prompt(
-    "Test Reminder for One Row",
-    `Active tab: ${sheetName}\nCurrent selected row: ${currentRow}\nData starts at row: ${getDataStartRow(sheet)}\n\nEnter the row number to test:`,
-    ui.ButtonSet.OK_CANCEL,
-  );
-  if (response.getSelectedButton() !== ui.Button.OK) return;
+  const html = HtmlService.createHtmlOutputFromFile("ReminderEmailTester")
+    .setWidth(960)
+    .setHeight(760);
+  SpreadsheetApp.getUi().showModelessDialog(html, "Reminder Email Tester");
+}
 
-  const rowNumber = parseInt(response.getResponseText().trim(), 10);
-  if (isNaN(rowNumber) || rowNumber < 1) {
-    ui.alert("Invalid row number. Please enter a positive row number.");
-    return;
+function sendReminderEmailTesterMessage(testEmail, rowNumberInput) {
+  const normalizedEmail = (testEmail || "").toString().trim().toLowerCase();
+  if (!isValidEmailAddress(normalizedEmail)) {
+    throw new Error("Enter a valid email address before sending the test email.");
   }
 
-  const payload = getReminderEmailPayloadForRow(sheet, rowNumber);
+  const selection = getReminderEmailTesterSelection(rowNumberInput);
+  if (selection.error) {
+    throw new Error(selection.error);
+  }
+
+  const payload = getReminderEmailPayloadForRow(selection.sheet, selection.rowNumber, {
+    requireRecipients: false,
+  });
   if (!payload.data) {
-    ui.alert("Test Reminder for One Row", payload.error, ui.ButtonSet.OK);
-    return;
+    throw new Error(payload.error);
   }
 
-  try {
-    sendReminderEmail({
-      recipients: payload.data.recipients,
-      clientName: payload.data.clientName,
-      sellerDonor: payload.data.sellerDonor,
-      buyerDonee: payload.data.buyerDonee,
-      serviceType: payload.data.serviceType,
-      reminders: payload.data.reminders,
-      deadlines: payload.data.deadlines,
-      sheetName: payload.data.sheetName,
-      rowNumber: payload.data.rowNumber,
-      revisit: payload.data.revisit,
-      subjectPrefix: "[TEST ROW]",
-    });
-  } catch (e) {
-    ui.alert("Test Reminder for One Row", `Email failed: ${e.message}`, ui.ButtonSet.OK);
-    return;
-  }
+  sendReminderEmail({
+    recipients: [normalizedEmail],
+    ccRecipients: [],
+    clientName: payload.data.clientName,
+    sellerDonor: payload.data.sellerDonor,
+    buyerDonee: payload.data.buyerDonee,
+    serviceType: payload.data.serviceType,
+    reminders: payload.data.reminders,
+    deadlines: payload.data.deadlines,
+    sheetName: payload.data.sheetName,
+    rowNumber: payload.data.rowNumber,
+    remarks: payload.data.remarks,
+    revisit: payload.data.revisit,
+    subjectPrefix: "[TEST PREVIEW]",
+    includeNotificationEmails: false,
+  });
 
   logActivity(
     payload.data.clientName,
-    "Test Reminder Email Sent",
-    `Row ${rowNumber} in ${sheetName} to ${payload.data.recipients.join(", ")}`,
+    "Reminder Test Email Sent",
+    `Row ${selection.rowNumber} in ${selection.sheetName} to ${normalizedEmail}`,
   );
-  ui.alert(
-    "Test Reminder for One Row",
-    `Test reminder sent for row ${rowNumber}.\n\nRecipients: ${payload.data.recipients.join(", ")}`,
-    ui.ButtonSet.OK,
-  );
+
+  return {
+    message: `Preview email sent to ${normalizedEmail} for row ${selection.rowNumber}.`,
+    sheetName: selection.sheetName,
+    rowNumber: selection.rowNumber,
+    email: normalizedEmail,
+  };
+}
+
+function testReminderForOneRow() {
+  openReminderEmailTester();
 }
 
 function sendSampleReminderEmail() {
