@@ -1103,6 +1103,115 @@ function buildReminderText(label, remainingDays) {
   return "";
 }
 
+function normalizeReminderStatus(statusValue) {
+  return (statusValue || "").toString().trim().toUpperCase();
+}
+
+function isCompletedReminderStatus(statusValue) {
+  const normalized = normalizeReminderStatus(statusValue);
+  if (!normalized) return false;
+  return (
+    normalized.indexOf("PAID") >= 0 ||
+    normalized.indexOf("COMPLETE") >= 0 ||
+    normalized.indexOf("COMPLETED") >= 0 ||
+    normalized.indexOf("SETTLED") >= 0
+  );
+}
+
+function isDateValueToday(dateValue) {
+  if (!(dateValue instanceof Date)) return false;
+  const dateKey = Utilities.formatDate(
+    dateValue,
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd",
+  );
+  return dateKey === getTodayKey();
+}
+
+function shouldSendReminderForDueDate(group, row) {
+  if (!group || !group.dueDateCol || !row) return false;
+
+  const dueDateValue = row[group.dueDateCol - 1];
+  if (!isDateValueToday(dueDateValue)) return false;
+
+  const statusValue = group.statusCol ? row[group.statusCol - 1] : "";
+  return !isCompletedReminderStatus(statusValue);
+}
+
+function getDeadlineGroupDisplayName(group) {
+  if (!group) return "Deadline";
+  if (group.type === DEADLINE_GROUP_TYPES.DST) return "DST";
+  if (group.type === DEADLINE_GROUP_TYPES.CGT_DOD) return "CGT / DOD";
+  if (group.type === DEADLINE_GROUP_TYPES.TRANSFER_TAX) return "Transfer Tax";
+  if (group.type === DEADLINE_GROUP_TYPES.ESTATE_TAX) return "Estate Tax";
+
+  const label = (group.label || "Deadline").toString().split("\n")[0].trim();
+  return label || "Deadline";
+}
+
+function formatDayCountLabel(dayCount) {
+  const count = Math.abs(Number(dayCount) || 0);
+  return `${count} day${count === 1 ? "" : "s"}`;
+}
+
+function buildFallbackReminderMessage(group, clientName, remainingValue, statusValue, dueDateValue) {
+  const normalizedStatus = normalizeReminderStatus(statusValue);
+  const deadlineName = getDeadlineGroupDisplayName(group);
+  const subjectLabel = `${deadlineName} for ${clientName || "this record"}`;
+  const remainingDays =
+    remainingValue === "" || remainingValue === null || isNaN(Number(remainingValue))
+      ? null
+      : Number(remainingValue);
+
+  if (normalizedStatus && isCompletedReminderStatus(normalizedStatus)) {
+    return `COMPLETED: ${subjectLabel} settled.`;
+  }
+
+  if (
+    (normalizedStatus && normalizedStatus.indexOf("OVERDUE") >= 0) ||
+    (remainingDays !== null && remainingDays < 0)
+  ) {
+    const overdueDays = remainingDays !== null ? Math.abs(remainingDays) : null;
+    return overdueDays === null
+      ? `💀 OVERDUE: ${subjectLabel} is overdue. 25% surcharge applies!`
+      : `💀 OVERDUE: ${subjectLabel} is ${formatDayCountLabel(overdueDays)} late. 25% surcharge applies!`;
+  }
+
+  if (
+    (normalizedStatus && normalizedStatus.indexOf("DUE TODAY") >= 0) ||
+    remainingDays === 0 ||
+    isDateValueToday(dueDateValue)
+  ) {
+    return `🚨 DUE TODAY: ${subjectLabel} is due today.`;
+  }
+
+  if (remainingDays !== null) {
+    return `⚠️ REMINDER: ${subjectLabel} due in ${formatDayCountLabel(remainingDays)}.`;
+  }
+
+  return `⚠️ REMINDER: ${subjectLabel} requires attention.`;
+}
+
+function resolveReminderMessageForGroup(group, row, clientName) {
+  if (!group) return "";
+
+  const reminderValue = group.reminderCol ? row[group.reminderCol - 1] : "";
+  if (reminderValue && reminderValue.toString().trim()) {
+    return reminderValue.toString().trim();
+  }
+
+  const statusValue = group.statusCol ? row[group.statusCol - 1] : "";
+  const remainingValue = group.remainingCol ? row[group.remainingCol - 1] : "";
+  const dueDateValue = group.dueDateCol ? row[group.dueDateCol - 1] : "";
+  return buildFallbackReminderMessage(
+    group,
+    clientName,
+    remainingValue,
+    statusValue,
+    dueDateValue,
+  );
+}
+
 // ============================================================================
 // SETTINGS — view and edit sheet/header names via menu dialog
 // ============================================================================
@@ -1121,7 +1230,7 @@ function showSettings() {
   msg += `  Transfer Tax Tabs: ${transferTabs.length ? transferTabs.join(", ") : "(none selected)"}\n`;
   msg += "\nEMAIL RULE\n";
   msg += "  Recipient Column: Staff Email\n";
-  msg += "  Send Condition: Status = SEND and Reminder is not blank\n";
+  msg += "  Send Condition: The due-date cell for a deadline group is today's date, and the item is not marked as paid/completed\n";
   msg += "  Duplicate Rule: One email per row/group/day\n";
   msg += "\nROW SAFEGUARDS\n";
   msg += `  Header Row: ${cfg.HEADER_ROW || "(auto-detect)"}\n`;
@@ -1462,30 +1571,22 @@ function showAbout() {
   const transferTabs = getConfiguredTransferTaxTabs();
   let msg = "CAR Monitoring — About\n";
   msg += "=".repeat(30) + "\n\n";
-  msg += "What this Apps Script does:\n";
-  msg += "- It does not compute deadlines itself.\n";
-  msg += "- It reads the formulas already present in your sheet.\n";
-  msg += '- It scans each due-date group and sends an email only when that group\'s Status is "SEND" and Reminder is not blank.\n';
-  msg += "- It sends reminders to the Staff Email column only.\n";
-  msg += "- It sends separate emails per deadline group.\n";
-  msg += "- It prevents duplicate same-day sends for the same row, tab, deadline group, and recipient.\n";
+  msg += "How it works:\n";
+  msg += "- The sheet formulas calculate the due dates, remaining days, status, and reminder text for each row.\n";
+  msg += "- When a user enters or updates the source dates, the row formulas update automatically.\n";
+  msg += "- The Apps Script does not calculate those deadlines itself; it only reads the row values already produced by the sheet.\n";
+  msg += "- Every day, Automatic Sending scans the configured tabs and checks the Due Date columns.\n";
+  msg += "- If a row's DST, CGT / DOD, Transfer Tax, or Estate Tax due date is today, the script can send the reminder email for that row.\n";
+  msg += "- It sends to the Staff Email, skips rows already marked paid/completed, and avoids duplicate same-day sends.\n";
   msg += "\nPer tab group:\n";
   msg += `- DST / CGT Tabs: ${dstCgtTabs.length ? dstCgtTabs.join(", ") : "(none selected)"}\n`;
   msg += "  Expected groups: DST Due Date and CGT / DOD Due Date\n";
-  msg += "  The script validates that these due-date groups, formula cells, Reminder, Status, and Staff Email exist.\n";
   msg += `- Transfer Tax Tabs: ${transferTabs.length ? transferTabs.join(", ") : "(none selected)"}\n`;
   msg += "  Expected group: Transfer Tax Due Date\n";
   msg += "  Estate Tax is also included automatically on these tabs when detected.\n";
   msg += "\nAutomatic Sending:\n";
-  msg += "- If enabled, the daily trigger runs the same reminder scan automatically.\n";
+  msg += "- If enabled, the daily trigger runs this scan automatically.\n";
   msg += "- If disabled, you can still use Send Reminder Emails manually.\n";
-  msg += "\nQuick Setup:\n";
-  msg += "- Lets you choose which tabs belong to DST/CGT and Transfer Tax groups.\n";
-  msg += "- Shows already-assigned tabs during selection.\n";
-  msg += "- Saves your selections and validates whether the selected tabs match the expected deadline groups.\n";
-  msg += "\nApply Formulas:\n";
-  msg += "- Writes the ARRAYFORMULA formulas into the configured Due Date, Remaining Days, Status, and Reminder columns.\n";
-  msg += "- Uses the detected column positions for each tab instead of fixed letters.\n";
 
   ui.alert("About", msg, ui.ButtonSet.OK);
 }
@@ -2767,12 +2868,15 @@ function getReminderEmailPayloadForRow(sheet, rowNumber, options) {
 
   const reminders = [];
   const deadlineSummaries = [];
+  const clientName = clientNameIndex ? row[clientNameIndex - 1] : "";
 
   deadlineGroups.forEach((group) => {
-    if (group.reminderCol) {
-      const reminderValue = row[group.reminderCol - 1];
-      if (reminderValue) reminders.push(reminderValue.toString());
-    }
+    const resolvedReminder = resolveReminderMessageForGroup(
+      group,
+      row,
+      clientName || "Unknown Client",
+    );
+    if (resolvedReminder) reminders.push(resolvedReminder);
 
     if (group.remainingCol) {
       const remainingValue = row[group.remainingCol - 1];
@@ -2805,7 +2909,6 @@ function getReminderEmailPayloadForRow(sheet, rowNumber, options) {
     };
   }
 
-  const clientName = clientNameIndex ? row[clientNameIndex - 1] : "";
   const staffEmail = staffEmailIndex ? row[staffEmailIndex - 1] : "";
   const clientEmail = clientEmailIndex ? row[clientEmailIndex - 1] : "";
   const partyDetails = getPartyDetailsForReminder(headers, row);
@@ -2931,15 +3034,15 @@ function sendReminderEmailsByTriggerType(triggerType) {
       }
 
       deadlineGroups.forEach((group) => {
-        const statusValue = group.statusCol ? row[group.statusCol - 1] : "";
-        const reminderValue = group.reminderCol ? row[group.reminderCol - 1] : "";
         const remainingValue = group.remainingCol ? row[group.remainingCol - 1] : "";
-        const dueDateValue = row[group.dueDateCol - 1];
+        const resolvedReminder = resolveReminderMessageForGroup(
+          group,
+          row,
+          clientName || "Unknown Client",
+        );
         const shouldSend =
-          statusValue &&
-          statusValue.toString().trim().toUpperCase() === "SEND" &&
-          reminderValue &&
-          reminderValue.toString().trim();
+          shouldSendReminderForDueDate(group, row) &&
+          resolvedReminder;
 
         if (!shouldSend) return;
 
@@ -2964,7 +3067,7 @@ function sendReminderEmailsByTriggerType(triggerType) {
             sellerDonor: partyDetails.sellerDonor || "",
             buyerDonee: partyDetails.buyerDonee || "",
             serviceType: serviceType,
-            reminders: [reminderValue.toString()],
+            reminders: [resolvedReminder],
             deadlines: deadlineSummary,
             sheetName: sheetName,
             rowNumber: actualRow,

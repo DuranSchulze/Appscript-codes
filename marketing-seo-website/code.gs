@@ -4,6 +4,18 @@ const SHEET_NAMES = {
   LOGS: 'Logs',
 };
 
+const GOOGLE_INSPECTION_COLUMNS = [
+  'google_inspection_status',
+  'google_index_verdict',
+  'google_coverage_state',
+  'google_last_crawl_time',
+  'google_referring_url',
+  'google_user_canonical',
+  'google_google_canonical',
+  'google_robots_allowed',
+  'google_inspected_at',
+];
+
 const HEADERS = {
   CONFIG: [
     'website_url',
@@ -39,7 +51,7 @@ const HEADERS = {
     'range_start',
     'range_end',
     'last_refreshed_at',
-  ],
+  ].concat(GOOGLE_INSPECTION_COLUMNS),
   LOGS: [
     'timestamp',
     'website_url',
@@ -61,6 +73,11 @@ const AUDIT_BATCH_SIZE = 20;
 const SEARCH_CONSOLE_ROW_LIMIT = 25000;
 const GA4_ROW_LIMIT = 100000;
 const INDEXNOW_ENDPOINT = 'https://api.indexnow.org/IndexNow';
+const URL_INSPECTION_ENDPOINT = 'https://searchconsole.googleapis.com/v1/urlInspection/index:inspect';
+const SOURCE_METHOD_PRIORITY = {
+  sitemap: 2,
+  crawl: 1,
+};
 
 function onOpen() {
   ensureRequiredSheets_();
@@ -70,6 +87,7 @@ function onOpen() {
     .addItem('Refresh Website', 'refreshWebsite')
     .addItem('Refresh Website With Date Range', 'refreshWebsiteWithDateRange')
     .addItem('Check Google Connections', 'checkGoogleConnections')
+    .addItem('Check Google Index Status', 'checkGoogleIndexStatus')
     .addItem('Submit to IndexNow', 'submitToIndexNow')
     .addSeparator()
     .addItem('View Logs', 'viewLogs')
@@ -190,6 +208,71 @@ function checkGoogleConnections() {
       ga4.statusMessage,
     ui.ButtonSet.OK
   );
+}
+
+function checkGoogleIndexStatus() {
+  ensureRequiredSheets_();
+
+  const ui = SpreadsheetApp.getUi();
+  const configs = getConfigRecords_();
+  if (!configs.length) {
+    ui.alert('No websites are configured yet. Run "Setup Website" first.');
+    return;
+  }
+
+  const selectedConfig = selectWebsiteConfig_(configs);
+  if (!selectedConfig) {
+    return;
+  }
+
+  const refreshAt = formatDateTime_(new Date());
+
+  try {
+    const pageRows = getPageRowsForWebsite_(selectedConfig.website_url);
+    if (!pageRows.length) {
+      throw new Error('No pages were found in the Pages tab for ' + selectedConfig.website_url + '. Run "Refresh Website" first.');
+    }
+
+    const inspectionRun = inspectWebsiteGoogleIndexStatus_(
+      selectedConfig,
+      pageRows,
+      refreshAt
+    );
+
+    writeGoogleInspectionResults_(selectedConfig.website_url, inspectionRun.resultsByUrl);
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: selectedConfig.website_url,
+      action: 'check_google_index_status',
+      status: inspectionRun.status,
+      pages_discovered: pageRows.length,
+      pages_written: inspectionRun.updatedCount,
+      message: inspectionRun.logMessage,
+    });
+
+    ui.alert(
+      'Google Index Status Check',
+      inspectionRun.popupMessage,
+      ui.ButtonSet.OK
+    );
+  } catch (error) {
+    const failureMessage = truncateText_(error && error.message ? error.message : String(error), 500);
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: selectedConfig.website_url,
+      action: 'check_google_index_status',
+      status: 'FAILED',
+      pages_discovered: 0,
+      pages_written: 0,
+      message: failureMessage,
+    });
+
+    ui.alert(
+      'Google Index Status Check Failed',
+      failureMessage,
+      ui.ButtonSet.OK
+    );
+  }
 }
 
 function submitToIndexNow() {
@@ -360,6 +443,12 @@ function buildWebsiteSnapshot_(config, dateRangeDays) {
   }
 
   const audits = auditPages_(discovery.pages);
+  const canonicalizedPages = buildCanonicalizedPageEntries_(
+    discovery.pages,
+    audits,
+    config.host
+  );
+  const preservedGoogleStatusMap = getExistingGoogleStatusMap_(config.website_url);
   const enrichment = buildGoogleEnrichment_(
     config,
     dateRange.startDate,
@@ -367,11 +456,14 @@ function buildWebsiteSnapshot_(config, dateRangeDays) {
   );
   const refreshedAt = formatDateTime_(new Date());
 
-  const rows = discovery.pages
+  const rows = canonicalizedPages
     .map(function(pageEntry) {
       const pageUrl = normalizePageUrl_(pageEntry.page_url);
       const pagePath = extractPathFromUrl_(pageUrl);
-      const audit = audits[pageUrl] || {};
+      const audit =
+        audits[pageEntry.audit_key] ||
+        audits[pageUrl] ||
+        {};
       const comparisonUrl = audit.canonical_url
         ? normalizeComparableUrl_(audit.canonical_url)
         : normalizeComparableUrl_(pageUrl);
@@ -381,6 +473,10 @@ function buildWebsiteSnapshot_(config, dateRangeDays) {
         createEmptySearchConsoleMetrics_();
       const gaMetric =
         enrichment.ga4.metrics[normalizePathKey_(pagePath)] || createEmptyGa4Metrics_();
+      const preservedGoogleStatus =
+        preservedGoogleStatusMap[normalizeComparableUrl_(pageUrl)] ||
+        preservedGoogleStatusMap[normalizeComparableUrl_(pageEntry.audit_key)] ||
+        createEmptyGoogleInspectionFields_();
 
       return [
         config.website_url,
@@ -405,7 +501,7 @@ function buildWebsiteSnapshot_(config, dateRangeDays) {
         dateRange.startDate,
         dateRange.endDate,
         refreshedAt,
-      ];
+      ].concat(googleInspectionFieldsToRow_(preservedGoogleStatus));
     })
     .sort(function(left, right) {
       return left[2].localeCompare(right[2]);
@@ -413,7 +509,7 @@ function buildWebsiteSnapshot_(config, dateRangeDays) {
 
   return {
     rows: rows,
-    discoveredCount: discovery.pages.length,
+    discoveredCount: canonicalizedPages.length,
     runMessage: buildRunMessage_(discovery.message, enrichment.statusMessages),
     completionMessage: buildCompletionMessage_(enrichment.statusMessages),
   };
@@ -564,6 +660,252 @@ function buildCompletionMessage_(enrichmentMessages) {
   return 'Audit completed with Google metrics included.';
 }
 
+function buildCanonicalizedPageEntries_(pageEntries, audits, allowedHost) {
+  const entriesByComparableUrl = {};
+
+  pageEntries.forEach(function(pageEntry) {
+    const originalUrl = normalizePageUrl_(pageEntry.page_url);
+    const audit = audits[originalUrl] || {};
+    let preferredUrl = originalUrl;
+
+    if (audit.canonical_url) {
+      const canonicalUrl = tryNormalizePageUrl_(audit.canonical_url);
+      if (canonicalUrl && getHost_(canonicalUrl) === allowedHost) {
+        preferredUrl = canonicalUrl;
+      }
+    }
+
+    if (isLikelyBinaryAsset_(preferredUrl)) {
+      return;
+    }
+
+    const comparableUrl = normalizeComparableUrl_(preferredUrl);
+    const existingEntry = entriesByComparableUrl[comparableUrl];
+
+    if (
+      !existingEntry ||
+      getSourceMethodPriority_(pageEntry.source_method) > getSourceMethodPriority_(existingEntry.source_method)
+    ) {
+      entriesByComparableUrl[comparableUrl] = {
+        page_url: preferredUrl,
+        source_method: pageEntry.source_method,
+        audit_key: originalUrl,
+      };
+    }
+  });
+
+  return Object.keys(entriesByComparableUrl)
+    .sort()
+    .map(function(key) {
+      return entriesByComparableUrl[key];
+    });
+}
+
+function inspectWebsiteGoogleIndexStatus_(config, pageRows, inspectedAt) {
+  const propertyResolution = resolveWorkingInspectionProperty_(config);
+  if (!propertyResolution.propertyIdentifier) {
+    const blockedStatus = propertyResolution.status || 'BLOCKED';
+    const blockedResults = createUniformInspectionResultMap_(
+      pageRows,
+      blockedStatus,
+      inspectedAt
+    );
+
+    return {
+      resultsByUrl: blockedResults,
+      updatedCount: pageRows.length,
+      status: 'WARNING',
+      logMessage: propertyResolution.message,
+      popupMessage:
+        'Website: ' +
+        config.website_url +
+        '\n\nGoogle inspection could not run.\n' +
+        propertyResolution.message,
+    };
+  }
+
+  const resultsByUrl = {};
+  const summary = {
+    inspected: 0,
+    noResult: 0,
+    errors: 0,
+  };
+
+  pageRows.forEach(function(pageRow) {
+    const pageUrl = normalizePageUrl_(pageRow.page_url);
+
+    try {
+      const apiResponse = fetchUrlInspectionResult_(
+        pageUrl,
+        propertyResolution.propertyIdentifier
+      );
+      const inspectionFields = mapUrlInspectionResultToFields_(apiResponse, inspectedAt);
+      resultsByUrl[normalizeComparableUrl_(pageUrl)] = inspectionFields;
+
+      if (inspectionFields.google_inspection_status === 'INSPECTED') {
+        summary.inspected += 1;
+      } else {
+        summary.noResult += 1;
+      }
+    } catch (error) {
+      resultsByUrl[normalizeComparableUrl_(pageUrl)] = buildInspectionFailureFields_(
+        'ERROR',
+        inspectedAt
+      );
+      summary.errors += 1;
+    }
+  });
+
+  const status = summary.errors ? 'WARNING' : 'SUCCESS';
+  const logMessage =
+    'Used property ' +
+    propertyResolution.propertyIdentifier +
+    '. Inspected: ' +
+    summary.inspected +
+    ', no result: ' +
+    summary.noResult +
+    ', errors: ' +
+    summary.errors +
+    '.';
+
+  const popupMessage =
+    'Website: ' +
+    config.website_url +
+    '\n\nGoogle property used: ' +
+    propertyResolution.propertyIdentifier +
+    '\nInspected rows: ' +
+    summary.inspected +
+    '\nNo result rows: ' +
+    summary.noResult +
+    '\nError rows: ' +
+    summary.errors +
+    '\n\nThis checks Google index status only and does not force reindexing.';
+
+  return {
+    resultsByUrl: resultsByUrl,
+    updatedCount: pageRows.length,
+    status: status,
+    logMessage: logMessage,
+    popupMessage: popupMessage,
+  };
+}
+
+function resolveWorkingInspectionProperty_(config) {
+  const propertyCandidates = getSearchConsolePropertyCandidates_(config);
+  if (!propertyCandidates.length) {
+    return {
+      propertyIdentifier: '',
+      status: 'NOT_CONFIGURED',
+      message: 'No Search Console property candidates are available for this website.',
+    };
+  }
+
+  const errors = [];
+  for (let i = 0; i < propertyCandidates.length; i += 1) {
+    const propertyIdentifier = propertyCandidates[i];
+
+    try {
+      fetchUrlInspectionResult_(config.website_url, propertyIdentifier);
+      return {
+        propertyIdentifier: propertyIdentifier,
+        status: 'READY',
+        message: 'Google inspection is available using ' + propertyIdentifier + '.',
+      };
+    } catch (error) {
+      errors.push(
+        propertyIdentifier +
+          ': ' +
+          truncateText_(error && error.message ? error.message : String(error), 180)
+      );
+    }
+  }
+
+  return {
+    propertyIdentifier: '',
+    status: 'BLOCKED',
+    message: 'Google inspection is blocked. ' + errors.join(' | '),
+  };
+}
+
+function fetchUrlInspectionResult_(inspectionUrl, siteUrl) {
+  return callGoogleApi_(URL_INSPECTION_ENDPOINT, 'post', {
+    inspectionUrl: inspectionUrl,
+    siteUrl: siteUrl,
+    languageCode: 'en-US',
+  });
+}
+
+function mapUrlInspectionResultToFields_(apiResponse, inspectedAt) {
+  const inspectionResult = apiResponse.inspectionResult || {};
+  const indexStatusResult = inspectionResult.indexStatusResult || {};
+
+  if (!Object.keys(indexStatusResult).length) {
+    return buildInspectionFailureFields_('NO_RESULT', inspectedAt);
+  }
+
+  const robotsTxtState = String(indexStatusResult.robotsTxtState || '').toUpperCase();
+  let robotsAllowed = '';
+  if (robotsTxtState) {
+    robotsAllowed = String(robotsTxtState === 'ALLOWED');
+  }
+
+  return {
+    google_inspection_status: 'INSPECTED',
+    google_index_verdict: valueOrEmpty_(indexStatusResult.verdict),
+    google_coverage_state: valueOrEmpty_(indexStatusResult.coverageState || indexStatusResult.indexingState),
+    google_last_crawl_time: valueOrEmpty_(indexStatusResult.lastCrawlTime),
+    google_referring_url:
+      indexStatusResult.referringUrls && indexStatusResult.referringUrls.length
+        ? indexStatusResult.referringUrls[0]
+        : '',
+    google_user_canonical: valueOrEmpty_(indexStatusResult.userCanonical),
+    google_google_canonical: valueOrEmpty_(indexStatusResult.googleCanonical),
+    google_robots_allowed: robotsAllowed,
+    google_inspected_at: inspectedAt,
+  };
+}
+
+function buildInspectionFailureFields_(status, inspectedAt) {
+  return {
+    google_inspection_status: status,
+    google_index_verdict: '',
+    google_coverage_state: '',
+    google_last_crawl_time: '',
+    google_referring_url: '',
+    google_user_canonical: '',
+    google_google_canonical: '',
+    google_robots_allowed: '',
+    google_inspected_at: inspectedAt,
+  };
+}
+
+function createUniformInspectionResultMap_(pageRows, status, inspectedAt) {
+  const results = {};
+
+  pageRows.forEach(function(pageRow) {
+    results[normalizeComparableUrl_(pageRow.page_url)] = buildInspectionFailureFields_(
+      status,
+      inspectedAt
+    );
+  });
+
+  return results;
+}
+
+function googleInspectionFieldsToRow_(fields) {
+  return GOOGLE_INSPECTION_COLUMNS.map(function(columnName) {
+    return valueOrEmpty_(fields[columnName]);
+  });
+}
+
+function createEmptyGoogleInspectionFields_() {
+  return buildInspectionFailureFields_('', '');
+}
+
+function getSourceMethodPriority_(sourceMethod) {
+  return SOURCE_METHOD_PRIORITY[sourceMethod] || 0;
+}
+
 function discoverPages_(websiteUrl) {
   const host = getHost_(websiteUrl);
   const sitemapCandidates = getSitemapCandidates_(websiteUrl);
@@ -633,8 +975,9 @@ function collectSitemapPages_(sitemapUrl, allowedHost, visitedSitemaps, discover
     return;
   }
 
+  const locValues = extractXmlTagValues_(xml, 'loc');
   if (isSitemapIndexXml_(xml)) {
-    extractXmlTagValues_(xml, 'loc').forEach(function(childSitemapUrl) {
+    locValues.forEach(function(childSitemapUrl) {
       const trimmedUrl = String(childSitemapUrl || '').trim();
       if (trimmedUrl) {
         collectSitemapPages_(trimmedUrl, allowedHost, visitedSitemaps, discoveredPages);
@@ -644,25 +987,39 @@ function collectSitemapPages_(sitemapUrl, allowedHost, visitedSitemaps, discover
   }
 
   if (!isUrlSetXml_(xml)) {
+    locValues.forEach(function(locValue) {
+      const trimmedUrl = String(locValue || '').trim();
+      if (/\.xml(?:$|[?#])/i.test(trimmedUrl)) {
+        collectSitemapPages_(trimmedUrl, allowedHost, visitedSitemaps, discoveredPages);
+      }
+    });
     return;
   }
 
-  extractXmlTagValues_(xml, 'loc').forEach(function(pageUrl) {
+  locValues.forEach(function(pageUrl) {
     const normalizedPageUrl = tryNormalizePageUrl_(pageUrl);
-    if (normalizedPageUrl && getHost_(normalizedPageUrl) === allowedHost) {
+    if (
+      normalizedPageUrl &&
+      getHost_(normalizedPageUrl) === allowedHost &&
+      !isLikelyBinaryAsset_(normalizedPageUrl)
+    ) {
       discoveredPages[normalizedPageUrl] = true;
     }
   });
 }
 
 function crawlWebsitePages_(websiteUrl, allowedHost) {
-  const queue = [{ url: websiteUrl, depth: 0 }];
+  const queue = [];
+  const queued = {};
   const visited = {};
   const discovered = {};
+
+  enqueueUrl_(websiteUrl, 0, allowedHost, queue, queued, visited);
 
   while (queue.length && Object.keys(discovered).length < CRAWL_MAX_PAGES) {
     const current = queue.shift();
     const comparableUrl = normalizeComparableUrl_(current.url);
+    delete queued[comparableUrl];
     if (visited[comparableUrl]) {
       continue;
     }
@@ -698,17 +1055,29 @@ function crawlWebsitePages_(websiteUrl, allowedHost) {
     }
 
     extractInternalLinks_(response.getContentText(), pageUrl, allowedHost).forEach(function(linkUrl) {
-      const comparableLink = normalizeComparableUrl_(linkUrl);
-      if (!visited[comparableLink] && !discovered[linkUrl]) {
-        queue.push({
-          url: linkUrl,
-          depth: current.depth + 1,
-        });
-      }
+      enqueueUrl_(linkUrl, current.depth + 1, allowedHost, queue, queued, visited);
     });
   }
 
   return Object.keys(discovered).sort();
+}
+
+function enqueueUrl_(url, depth, allowedHost, queue, queued, visited) {
+  const normalizedUrl = tryNormalizePageUrl_(url);
+  if (!normalizedUrl || getHost_(normalizedUrl) !== allowedHost || isLikelyBinaryAsset_(normalizedUrl)) {
+    return;
+  }
+
+  const comparableUrl = normalizeComparableUrl_(normalizedUrl);
+  if (visited[comparableUrl] || queued[comparableUrl]) {
+    return;
+  }
+
+  queued[comparableUrl] = true;
+  queue.push({
+    url: normalizedUrl,
+    depth: depth,
+  });
 }
 
 function fetchSearchConsoleMetrics_(propertyIdentifier, startDate, endDate) {
@@ -863,6 +1232,8 @@ function writePagesSnapshot_(websiteUrl, rows) {
   const existingData = getSheetValues_(sheet);
   const retainedRows = existingData.rows.filter(function(row) {
     return row[0] !== websiteUrl;
+  }).map(function(row) {
+    return normalizeRowLength_(row, HEADERS.PAGES.length);
   });
   const allRows = retainedRows.concat(rows);
 
@@ -891,7 +1262,7 @@ function appendLogRow_(logRecord) {
   applySheetFormatting_(sheet, HEADERS.LOGS.length);
 }
 
-function getPageUrlsForWebsite_(websiteUrl) {
+function getPageRowsForWebsite_(websiteUrl) {
   const sheet = getOrCreateSheet_(SHEET_NAMES.PAGES, HEADERS.PAGES);
   const data = getSheetValues_(sheet);
   const pageUrlIndex = HEADERS.PAGES.indexOf('page_url');
@@ -901,8 +1272,70 @@ function getPageUrlsForWebsite_(websiteUrl) {
       return row[0] === websiteUrl && String(row[pageUrlIndex] || '').trim();
     })
     .map(function(row) {
-      return normalizePageUrl_(row[pageUrlIndex]);
+      return {
+        website_url: row[0],
+        page_url: normalizePageUrl_(row[pageUrlIndex]),
+      };
     });
+}
+
+function getPageUrlsForWebsite_(websiteUrl) {
+  return getPageRowsForWebsite_(websiteUrl).map(function(pageRow) {
+    return pageRow.page_url;
+  });
+}
+
+function getExistingGoogleStatusMap_(websiteUrl) {
+  const sheet = getOrCreateSheet_(SHEET_NAMES.PAGES, HEADERS.PAGES);
+  const data = getSheetValues_(sheet);
+  const pageUrlIndex = HEADERS.PAGES.indexOf('page_url');
+
+  return data.rows.reduce(function(map, row) {
+    if (row[0] !== websiteUrl || !String(row[pageUrlIndex] || '').trim()) {
+      return map;
+    }
+
+    const rowObject = rowToObject_(HEADERS.PAGES, normalizeRowLength_(row, HEADERS.PAGES.length));
+    const fields = {};
+    GOOGLE_INSPECTION_COLUMNS.forEach(function(columnName) {
+      fields[columnName] = valueOrEmpty_(rowObject[columnName]);
+    });
+    map[normalizeComparableUrl_(rowObject.page_url)] = fields;
+    return map;
+  }, {});
+}
+
+function writeGoogleInspectionResults_(websiteUrl, resultsByUrl) {
+  const sheet = getOrCreateSheet_(SHEET_NAMES.PAGES, HEADERS.PAGES);
+  const data = getSheetValues_(sheet);
+
+  if (!data.rows.length) {
+    return;
+  }
+
+  const pageUrlIndex = HEADERS.PAGES.indexOf('page_url');
+  const updatedRows = data.rows.map(function(row) {
+    const normalizedRow = normalizeRowLength_(row, HEADERS.PAGES.length);
+    if (normalizedRow[0] !== websiteUrl || !String(normalizedRow[pageUrlIndex] || '').trim()) {
+      return normalizedRow;
+    }
+
+    const result =
+      resultsByUrl[normalizeComparableUrl_(normalizedRow[pageUrlIndex])] ||
+      createEmptyGoogleInspectionFields_();
+    const rowObject = rowToObject_(HEADERS.PAGES, normalizedRow);
+
+    GOOGLE_INSPECTION_COLUMNS.forEach(function(columnName) {
+      rowObject[columnName] = valueOrEmpty_(result[columnName]);
+    });
+
+    return objectToRow_(HEADERS.PAGES, rowObject);
+  });
+
+  sheet
+    .getRange(2, 1, updatedRows.length, HEADERS.PAGES.length)
+    .setValues(updatedRows);
+  applySheetFormatting_(sheet, HEADERS.PAGES.length);
 }
 
 function verifyIndexNowConfiguration_(config) {
@@ -1125,11 +1558,18 @@ function getSheetValues_(sheet) {
 
 function getSitemapCandidates_(websiteUrl) {
   const origin = getOrigin_(websiteUrl);
-  const candidates = {};
+  const candidates = [];
+  const seen = {};
 
-  SITEMAP_CANDIDATE_PATHS.forEach(function(path) {
-    candidates[origin + path] = true;
-  });
+  function addCandidate(url) {
+    const normalizedUrl = String(url || '').trim();
+    if (!normalizedUrl || seen[normalizedUrl]) {
+      return;
+    }
+
+    seen[normalizedUrl] = true;
+    candidates.push(normalizedUrl);
+  }
 
   try {
     const robotsResponse = fetchWithRetry_(origin + '/robots.txt', {
@@ -1138,14 +1578,18 @@ function getSitemapCandidates_(websiteUrl) {
     });
     if (isSuccessfulResponse_(robotsResponse.getResponseCode())) {
       extractRobotsSitemapUrls_(robotsResponse.getContentText()).forEach(function(sitemapUrl) {
-        candidates[sitemapUrl] = true;
+        addCandidate(sitemapUrl);
       });
     }
   } catch (error) {
     // Ignore robots.txt issues and continue with default sitemap candidates.
   }
 
-  return Object.keys(candidates);
+  SITEMAP_CANDIDATE_PATHS.forEach(function(path) {
+    addCandidate(origin + path);
+  });
+
+  return candidates;
 }
 
 function extractRobotsSitemapUrls_(robotsText) {
@@ -1677,6 +2121,16 @@ function objectToRow_(headers, object) {
   return headers.map(function(header) {
     return valueOrEmpty_(object[header]);
   });
+}
+
+function normalizeRowLength_(row, targetLength) {
+  const normalizedRow = row.slice(0, targetLength);
+
+  while (normalizedRow.length < targetLength) {
+    normalizedRow.push('');
+  }
+
+  return normalizedRow;
 }
 
 function valueOrEmpty_(value) {
