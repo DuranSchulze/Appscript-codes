@@ -3,6 +3,8 @@ const SHEET_NAMES = {
   CONFIG: 'Config',
   LOGS: 'Logs',
   AI_META_DESCRIPTIONS: 'AI Meta Descriptions',
+  AI_SEO_AUDIT: 'AI SEO Audit',
+  PAGE_KEYWORDS: 'Page Keywords',
 };
 
 const GOOGLE_INSPECTION_COLUMNS = [
@@ -34,6 +36,7 @@ const HEADERS = {
     'host',
     'page_url',
     'page_path',
+    'keyword_view_link',
     'source_method',
     'status_code',
     'title',
@@ -76,6 +79,37 @@ const HEADERS = {
     'ai_error_message',
     'generated_at',
   ],
+  AI_SEO_AUDIT: [
+    'website_url',
+    'host',
+    'page_url',
+    'page_path',
+    'priority_score',
+    'priority_label',
+    'issue_category',
+    'issue_code',
+    'issue_summary',
+    'severity',
+    'traffic_signal',
+    'search_signal',
+    'supporting_data',
+    'ai_recommendation',
+    'recommendation_status',
+    'ai_error_message',
+    'generated_at',
+  ],
+  PAGE_KEYWORDS: [
+    'website_url',
+    'host',
+    'page_url',
+    'page_path',
+    'primary_keyword',
+    'secondary_keywords',
+    'keyword_notes',
+    'recommendation_status',
+    'ai_error_message',
+    'generated_at',
+  ],
 };
 
 const DEFAULT_DATE_RANGE_DAYS = 28;
@@ -89,15 +123,30 @@ const SEARCH_CONSOLE_ROW_LIMIT = 25000;
 const GA4_ROW_LIMIT = 100000;
 const INDEXNOW_ENDPOINT = 'https://api.indexnow.org/IndexNow';
 const URL_INSPECTION_ENDPOINT = 'https://searchconsole.googleapis.com/v1/urlInspection/index:inspect';
+const AI_PROVIDER_GEMINI = 'gemini';
+const AI_PROVIDER_OPENAI = 'openai';
 const GEMINI_API_KEY_PROPERTY = 'GEMINI_API_KEY';
 const GEMINI_MODEL_PROPERTY = 'GEMINI_MODEL';
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
+const OPENAI_API_KEY_PROPERTY = 'OPENAI_API_KEY';
+const OPENAI_MODEL_PROPERTY = 'OPENAI_MODEL';
+const ACTIVE_AI_PROVIDER_PROPERTY = 'ACTIVE_AI_PROVIDER';
+const OPENAI_API_BASE_URL = 'https://api.openai.com/v1';
 const META_DESCRIPTION_MAX_LENGTH = 150;
 const GEMINI_MODEL_CACHE_TTL_SECONDS = 21600;
 const GEMINI_RESPONSE_CACHE_TTL_SECONDS = 21600;
 const GEMINI_MAX_REQUESTS_PER_RUN = 10;
+const GEMINI_BATCH_SIZE = 5;
 const GEMINI_REQUEST_DELAY_MS = 600;
+const GEMINI_BATCH_DELAY_MS = 1200;
+const SHEET_WRITE_BATCH_SIZE = 200;
+const TITLE_MIN_LENGTH = 20;
+const TITLE_MAX_LENGTH = 60;
+const LOW_CTR_THRESHOLD = 0.02;
+const HIGH_IMPRESSIONS_THRESHOLD = 100;
+const HIGH_SESSIONS_THRESHOLD = 50;
+const HIGH_USERS_THRESHOLD = 30;
 const SOURCE_METHOD_PRIORITY = {
   sitemap: 2,
   crawl: 1,
@@ -105,29 +154,64 @@ const SOURCE_METHOD_PRIORITY = {
 
 function onOpen() {
   ensureRequiredSheets_();
-  SpreadsheetApp.getUi()
-    .createMenu('SEO Workspace')
+  const ui = SpreadsheetApp.getUi();
+  const websiteSetupMenu = ui
+    .createMenu('Website Setup')
     .addItem('Setup Website', 'setupWebsite')
     .addItem('Refresh Website', 'refreshWebsite')
-    .addItem('Refresh Website With Date Range', 'refreshWebsiteWithDateRange')
+    .addItem('Refresh Website With Date Range', 'refreshWebsiteWithDateRange');
+  const googleDataMenu = ui
+    .createMenu('Google Data')
     .addItem('Check Google Connections', 'checkGoogleConnections')
     .addItem('Check Google Index Status', 'checkGoogleIndexStatus')
-    .addItem('Submit to IndexNow', 'submitToIndexNow')
-    .addSeparator()
+    .addItem('Submit to IndexNow', 'submitToIndexNow');
+  const aiToolsMenu = ui
+    .createMenu('AI Tools')
     .addItem('Setup Gemini AI', 'setupGeminiAi')
     .addItem('Select Gemini AI Model', 'selectGeminiAiModel')
-    .addItem('Check Gemini AI Connection', 'checkGeminiAiConnection')
+    .addItem('Setup OpenAI', 'setupOpenAi')
+    .addItem('Select OpenAI AI Model', 'selectOpenAiModel')
+    .addItem('Select Active AI Provider', 'selectActiveAiProvider')
+    .addItem('Check Active AI Connection', 'checkActiveAiConnection')
     .addItem('Generate AI Meta Descriptions', 'generateAiMetaDescriptions')
+    .addItem('Run AI SEO Audit', 'runAiSeoAudit')
+    .addItem('Generate Page Keywords', 'generatePageKeywords')
     .addItem('View AI Meta Descriptions', 'viewAiMetaDescriptions')
-    .addSeparator()
-    .addItem('Clear All Sheet Data', 'clearAllSheetData')
-    .addSeparator()
+    .addItem('View AI SEO Audit', 'viewAiSeoAudit')
+    .addItem('View Page Keywords Sheet', 'viewPageKeywords');
+  const reportsMenu = ui
+    .createMenu('Reports')
     .addItem('View Logs', 'viewLogs')
+    .addItem('View AI SEO Audit', 'viewAiSeoAudit')
+    .addItem('View Page Keywords Sheet', 'viewPageKeywords');
+  const maintenanceMenu = ui
+    .createMenu('Maintenance')
+    .addItem('Clear All Sheet Data', 'clearAllSheetData');
+
+  ui.createMenu('SEO Workspace')
+    .addSubMenu(websiteSetupMenu)
+    .addSubMenu(googleDataMenu)
+    .addSubMenu(aiToolsMenu)
+    .addSubMenu(reportsMenu)
+    .addSubMenu(maintenanceMenu)
     .addToUi();
 }
 
 function onInstall() {
   onOpen();
+}
+
+function doGet(e) {
+  const params = e && e.parameter ? e.parameter : {};
+  const view = String(params.view || '').trim().toLowerCase();
+
+  if (view === 'keywords') {
+    return renderKeywordViewer_(params.pageUrl || '');
+  }
+
+  return HtmlService
+    .createHtmlOutput('<html><body><p>Keyword viewer is available through the Pages sheet links.</p></body></html>')
+    .setTitle('SEO Workspace');
 }
 
 function setupWebsite() {
@@ -394,10 +478,15 @@ function setupGeminiAi() {
   const refreshAt = formatDateTime_(new Date());
 
   try {
-    validateGeminiApiKey_(apiKey);
+    validateAiProvider_(AI_PROVIDER_GEMINI, apiKey);
     PropertiesService.getScriptProperties().setProperty(GEMINI_API_KEY_PROPERTY, apiKey);
-    const selectedModel = promptForGeminiModelSelection_(apiKey, getGeminiModel_()) || DEFAULT_GEMINI_MODEL;
-    saveGeminiModel_(selectedModel);
+    const selectedModel = promptForProviderModelSelection_(
+      AI_PROVIDER_GEMINI,
+      apiKey,
+      getProviderModel_(AI_PROVIDER_GEMINI)
+    ) || DEFAULT_GEMINI_MODEL;
+    saveProviderModel_(AI_PROVIDER_GEMINI, selectedModel);
+    ensureActiveAiProviderSet_(AI_PROVIDER_GEMINI);
 
     appendLogRow_({
       timestamp: refreshAt,
@@ -435,11 +524,79 @@ function setupGeminiAi() {
   }
 }
 
+function setupOpenAi() {
+  ensureRequiredSheets_();
+
+  const ui = SpreadsheetApp.getUi();
+  const enteredApiKey = promptForText_(
+    'OpenAI API Key',
+    'Enter your OpenAI API key.\nIt will be saved once for this Apps Script project and can be used for AI meta descriptions and SEO audit.'
+  );
+
+  if (!enteredApiKey) {
+    return;
+  }
+
+  const apiKey = String(enteredApiKey || '').trim();
+  const refreshAt = formatDateTime_(new Date());
+
+  try {
+    validateAiProvider_(AI_PROVIDER_OPENAI, apiKey);
+    const selectedModel = promptForProviderModelSelection_(
+      AI_PROVIDER_OPENAI,
+      apiKey,
+      getProviderModel_(AI_PROVIDER_OPENAI)
+    );
+
+    if (!selectedModel) {
+      return;
+    }
+
+    PropertiesService.getScriptProperties().setProperty(OPENAI_API_KEY_PROPERTY, apiKey);
+    saveProviderModel_(AI_PROVIDER_OPENAI, selectedModel);
+    ensureActiveAiProviderSet_(AI_PROVIDER_OPENAI);
+
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: '',
+      action: 'setup_openai_ai',
+      status: 'SUCCESS',
+      pages_discovered: 0,
+      pages_written: 0,
+      message: 'OpenAI API key was saved and validated successfully. Model: ' + selectedModel + '.',
+    });
+
+    ui.alert(
+      'OpenAI Connected',
+      'The OpenAI API key was saved successfully.\nSelected model: ' +
+        selectedModel +
+        '\n\nYou can now use OpenAI as the active AI provider.',
+      ui.ButtonSet.OK
+    );
+  } catch (error) {
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: '',
+      action: 'setup_openai_ai',
+      status: 'FAILED',
+      pages_discovered: 0,
+      pages_written: 0,
+      message: truncateText_(error && error.message ? error.message : String(error), 500),
+    });
+
+    ui.alert(
+      'OpenAI Setup Failed',
+      truncateText_(error && error.message ? error.message : String(error), 500),
+      ui.ButtonSet.OK
+    );
+  }
+}
+
 function selectGeminiAiModel() {
   ensureRequiredSheets_();
 
   const ui = SpreadsheetApp.getUi();
-  const apiKey = getGeminiApiKey_();
+  const apiKey = getProviderApiKey_(AI_PROVIDER_GEMINI);
   if (!apiKey) {
     ui.alert('Gemini AI is not configured yet. Run "Setup Gemini AI" first.');
     return;
@@ -448,12 +605,16 @@ function selectGeminiAiModel() {
   const refreshAt = formatDateTime_(new Date());
 
   try {
-    const selectedModel = promptForGeminiModelSelection_(apiKey, getGeminiModel_());
+    const selectedModel = promptForProviderModelSelection_(
+      AI_PROVIDER_GEMINI,
+      apiKey,
+      getProviderModel_(AI_PROVIDER_GEMINI)
+    );
     if (!selectedModel) {
       return;
     }
 
-    saveGeminiModel_(selectedModel);
+    saveProviderModel_(AI_PROVIDER_GEMINI, selectedModel);
     appendLogRow_({
       timestamp: refreshAt,
       website_url: '',
@@ -488,56 +649,49 @@ function selectGeminiAiModel() {
   }
 }
 
-function checkGeminiAiConnection() {
+function selectOpenAiModel() {
   ensureRequiredSheets_();
 
   const ui = SpreadsheetApp.getUi();
-  const refreshAt = formatDateTime_(new Date());
-  const apiKey = getGeminiApiKey_();
-
+  const apiKey = getProviderApiKey_(AI_PROVIDER_OPENAI);
   if (!apiKey) {
-    appendLogRow_({
-      timestamp: refreshAt,
-      website_url: '',
-      action: 'check_gemini_ai_connection',
-      status: 'WARNING',
-      pages_discovered: 0,
-      pages_written: 0,
-      message: 'Gemini API key is not configured.',
-    });
-
-    ui.alert(
-      'Gemini AI Not Configured',
-      'No Gemini API key is saved yet. Run "Setup Gemini AI" first.',
-      ui.ButtonSet.OK
-    );
+    ui.alert('OpenAI is not configured yet. Run "Setup OpenAI" first.');
     return;
   }
 
+  const refreshAt = formatDateTime_(new Date());
+
   try {
-    validateGeminiApiKey_(apiKey);
-    const selectedModel = getGeminiModel_();
+    const selectedModel = promptForProviderModelSelection_(
+      AI_PROVIDER_OPENAI,
+      apiKey,
+      getProviderModel_(AI_PROVIDER_OPENAI)
+    );
+    if (!selectedModel) {
+      return;
+    }
+
+    saveProviderModel_(AI_PROVIDER_OPENAI, selectedModel);
     appendLogRow_({
       timestamp: refreshAt,
       website_url: '',
-      action: 'check_gemini_ai_connection',
+      action: 'select_openai_model',
       status: 'SUCCESS',
       pages_discovered: 0,
       pages_written: 0,
-      message: 'Gemini AI connection test succeeded. Model: ' + selectedModel + '.',
+      message: 'OpenAI model updated to ' + selectedModel + '.',
     });
 
     ui.alert(
-      'Gemini AI Connection Check',
-      'Gemini AI is configured correctly and responded successfully.\nSelected model: ' +
-        selectedModel,
+      'OpenAI Model Updated',
+      'The saved OpenAI model is now: ' + selectedModel,
       ui.ButtonSet.OK
     );
   } catch (error) {
     appendLogRow_({
       timestamp: refreshAt,
       website_url: '',
-      action: 'check_gemini_ai_connection',
+      action: 'select_openai_model',
       status: 'FAILED',
       pages_discovered: 0,
       pages_written: 0,
@@ -545,11 +699,126 @@ function checkGeminiAiConnection() {
     });
 
     ui.alert(
-      'Gemini AI Connection Failed',
+      'OpenAI Model Selection Failed',
       truncateText_(error && error.message ? error.message : String(error), 500),
       ui.ButtonSet.OK
     );
   }
+}
+
+function selectActiveAiProvider() {
+  ensureRequiredSheets_();
+
+  const ui = SpreadsheetApp.getUi();
+  const configuredProviders = getConfiguredAiProviders_();
+  if (!configuredProviders.length) {
+    ui.alert('No AI providers are configured yet. Set up Gemini or OpenAI first.');
+    return;
+  }
+
+  const currentProvider = getStoredActiveAiProvider_();
+  const response = ui.prompt(
+    'Select Active AI Provider',
+    'Enter the exact provider to use for all AI actions.\nCurrent: ' +
+      valueOrEmpty_(currentProvider || 'not set') +
+      '\nAvailable: ' +
+      configuredProviders.join(', '),
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    return;
+  }
+
+  const selectedProvider = String(response.getResponseText() || '').trim().toLowerCase() || configuredProviders[0];
+  if (configuredProviders.indexOf(selectedProvider) === -1) {
+    ui.alert('The selected provider "' + selectedProvider + '" is not configured.');
+    return;
+  }
+
+  setActiveAiProvider_(selectedProvider);
+  ui.alert(
+    'Active AI Provider Updated',
+    'The active AI provider is now: ' + selectedProvider +
+      '\nModel: ' + getProviderModel_(selectedProvider),
+    ui.ButtonSet.OK
+  );
+}
+
+function checkActiveAiConnection() {
+  ensureRequiredSheets_();
+
+  const ui = SpreadsheetApp.getUi();
+  const refreshAt = formatDateTime_(new Date());
+  let connection;
+
+  try {
+    connection = ensureActiveAiProviderReady_();
+  } catch (error) {
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: '',
+      action: 'check_active_ai_connection',
+      status: 'WARNING',
+      pages_discovered: 0,
+      pages_written: 0,
+      message: truncateText_(error && error.message ? error.message : String(error), 500),
+    });
+
+    ui.alert(
+      'AI Provider Not Ready',
+      truncateText_(error && error.message ? error.message : String(error), 500),
+      ui.ButtonSet.OK
+    );
+    return;
+  }
+
+  try {
+    validateAiProvider_(connection.provider, connection.apiKey);
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: '',
+      action: 'check_active_ai_connection',
+      status: 'SUCCESS',
+      pages_discovered: 0,
+      pages_written: 0,
+      message:
+        'AI connection test succeeded. Provider: ' +
+        connection.provider +
+        ', model: ' +
+        connection.model +
+        '.',
+    });
+
+    ui.alert(
+      'Active AI Connection Check',
+      'The active AI provider is configured correctly.\nProvider: ' +
+        connection.provider +
+        '\nModel: ' +
+        connection.model,
+      ui.ButtonSet.OK
+    );
+  } catch (error) {
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: '',
+      action: 'check_active_ai_connection',
+      status: 'FAILED',
+      pages_discovered: 0,
+      pages_written: 0,
+      message: truncateText_(error && error.message ? error.message : String(error), 500),
+    });
+
+    ui.alert(
+      'Active AI Connection Failed',
+      truncateText_(error && error.message ? error.message : String(error), 500),
+      ui.ButtonSet.OK
+    );
+  }
+}
+
+function checkGeminiAiConnection() {
+  checkActiveAiConnection();
 }
 
 function generateAiMetaDescriptions() {
@@ -562,9 +831,11 @@ function generateAiMetaDescriptions() {
     return;
   }
 
-  const apiKey = getGeminiApiKey_();
-  if (!apiKey) {
-    ui.alert('Gemini AI is not configured yet. Run "Setup Gemini AI" first.');
+  let aiConnection;
+  try {
+    aiConnection = ensureActiveAiProviderReady_();
+  } catch (error) {
+    ui.alert(truncateText_(error && error.message ? error.message : String(error), 500));
     return;
   }
 
@@ -584,7 +855,7 @@ function generateAiMetaDescriptions() {
     const generationRun = buildAiMetaDescriptionRows_(
       selectedConfig,
       pageRows,
-      apiKey,
+      aiConnection,
       refreshAt
     );
 
@@ -623,10 +894,174 @@ function generateAiMetaDescriptions() {
   }
 }
 
+function runAiSeoAudit() {
+  ensureRequiredSheets_();
+
+  const ui = SpreadsheetApp.getUi();
+  const configs = getConfigRecords_();
+  if (!configs.length) {
+    ui.alert('No websites are configured yet. Run "Setup Website" first.');
+    return;
+  }
+
+  let aiConnection;
+  try {
+    aiConnection = ensureActiveAiProviderReady_();
+  } catch (error) {
+    ui.alert(truncateText_(error && error.message ? error.message : String(error), 500));
+    return;
+  }
+
+  const selectedConfig = selectWebsiteConfig_(configs);
+  if (!selectedConfig) {
+    return;
+  }
+
+  const refreshAt = formatDateTime_(new Date());
+
+  try {
+    const pageRows = getDetailedPageRowsForWebsite_(selectedConfig.website_url);
+    if (!pageRows.length) {
+      throw new Error(
+        'No pages were found in the Pages tab for ' + selectedConfig.website_url + '. Run "Refresh Website" first.'
+      );
+    }
+
+    const auditRun = buildAiSeoAuditRows_(
+      selectedConfig,
+      pageRows,
+      aiConnection,
+      refreshAt
+    );
+
+    writeAiSeoAuditRows_(selectedConfig.website_url, auditRun.rows);
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: selectedConfig.website_url,
+      action: 'run_ai_seo_audit',
+      status: auditRun.status,
+      pages_discovered: pageRows.length,
+      pages_written: auditRun.rows.length,
+      message: auditRun.logMessage,
+    });
+
+    ui.alert(
+      'AI SEO Audit Complete',
+      auditRun.popupMessage,
+      ui.ButtonSet.OK
+    );
+  } catch (error) {
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: selectedConfig.website_url,
+      action: 'run_ai_seo_audit',
+      status: 'FAILED',
+      pages_discovered: 0,
+      pages_written: 0,
+      message: truncateText_(error && error.message ? error.message : String(error), 500),
+    });
+
+    ui.alert(
+      'AI SEO Audit Failed',
+      truncateText_(error && error.message ? error.message : String(error), 500),
+      ui.ButtonSet.OK
+    );
+  }
+}
+
+function generatePageKeywords() {
+  ensureRequiredSheets_();
+
+  const ui = SpreadsheetApp.getUi();
+  const configs = getConfigRecords_();
+  if (!configs.length) {
+    ui.alert('No websites are configured yet. Run "Setup Website" first.');
+    return;
+  }
+
+  let aiConnection;
+  try {
+    aiConnection = ensureActiveAiProviderReady_();
+  } catch (error) {
+    ui.alert(truncateText_(error && error.message ? error.message : String(error), 500));
+    return;
+  }
+
+  const selectedConfig = selectWebsiteConfig_(configs);
+  if (!selectedConfig) {
+    return;
+  }
+
+  const refreshAt = formatDateTime_(new Date());
+
+  try {
+    const pageRows = getDetailedPageRowsForWebsite_(selectedConfig.website_url);
+    if (!pageRows.length) {
+      throw new Error(
+        'No pages were found in the Pages tab for ' + selectedConfig.website_url + '. Run "Refresh Website" first.'
+      );
+    }
+
+    const keywordRun = buildPageKeywordRows_(
+      selectedConfig,
+      pageRows,
+      aiConnection,
+      refreshAt
+    );
+
+    writePageKeywordRows_(selectedConfig.website_url, keywordRun.rows);
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: selectedConfig.website_url,
+      action: 'generate_page_keywords',
+      status: keywordRun.status,
+      pages_discovered: pageRows.length,
+      pages_written: keywordRun.rows.length,
+      message: keywordRun.logMessage,
+    });
+
+    ui.alert(
+      'Page Keywords Generated',
+      keywordRun.popupMessage,
+      ui.ButtonSet.OK
+    );
+  } catch (error) {
+    appendLogRow_({
+      timestamp: refreshAt,
+      website_url: selectedConfig.website_url,
+      action: 'generate_page_keywords',
+      status: 'FAILED',
+      pages_discovered: 0,
+      pages_written: 0,
+      message: truncateText_(error && error.message ? error.message : String(error), 500),
+    });
+
+    ui.alert(
+      'Page Keyword Generation Failed',
+      truncateText_(error && error.message ? error.message : String(error), 500),
+      ui.ButtonSet.OK
+    );
+  }
+}
+
 function viewAiMetaDescriptions() {
   ensureRequiredSheets_();
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = spreadsheet.getSheetByName(SHEET_NAMES.AI_META_DESCRIPTIONS);
+  spreadsheet.setActiveSheet(sheet);
+}
+
+function viewAiSeoAudit() {
+  ensureRequiredSheets_();
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(SHEET_NAMES.AI_SEO_AUDIT);
+  spreadsheet.setActiveSheet(sheet);
+}
+
+function viewPageKeywords() {
+  ensureRequiredSheets_();
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(SHEET_NAMES.PAGE_KEYWORDS);
   spreadsheet.setActiveSheet(sheet);
 }
 
@@ -808,6 +1243,7 @@ function buildWebsiteSnapshot_(config, dateRangeDays) {
         config.host,
         pageUrl,
         pagePath,
+        buildKeywordViewerFormula_(pageUrl),
         pageEntry.source_method,
         valueOrEmpty_(audit.status_code),
         valueOrEmpty_(audit.title),
@@ -1587,11 +2023,67 @@ function writeAiMetaDescriptionRows_(websiteUrl, rows) {
     .getRange(1, 1, 1, HEADERS.AI_META_DESCRIPTIONS.length)
     .setValues([HEADERS.AI_META_DESCRIPTIONS]);
   if (allRows.length) {
-    sheet
-      .getRange(2, 1, allRows.length, HEADERS.AI_META_DESCRIPTIONS.length)
-      .setValues(allRows);
+    for (let startIndex = 0; startIndex < allRows.length; startIndex += SHEET_WRITE_BATCH_SIZE) {
+      const batchRows = allRows.slice(startIndex, startIndex + SHEET_WRITE_BATCH_SIZE);
+      sheet
+        .getRange(2 + startIndex, 1, batchRows.length, HEADERS.AI_META_DESCRIPTIONS.length)
+        .setValues(batchRows);
+    }
   }
   applySheetFormatting_(sheet, HEADERS.AI_META_DESCRIPTIONS.length);
+}
+
+function writeAiSeoAuditRows_(websiteUrl, rows) {
+  const sheet = getOrCreateSheet_(SHEET_NAMES.AI_SEO_AUDIT, HEADERS.AI_SEO_AUDIT);
+  const existingData = getSheetValues_(sheet);
+  const retainedRows = existingData.rows.filter(function(row) {
+    return row[0] !== websiteUrl;
+  }).map(function(row) {
+    return normalizeRowLength_(row, HEADERS.AI_SEO_AUDIT.length);
+  });
+  const sortedRows = rows.slice().sort(function(left, right) {
+    return Number(right[4] || 0) - Number(left[4] || 0);
+  });
+  const allRows = retainedRows.concat(sortedRows);
+
+  sheet.clearContents();
+  sheet
+    .getRange(1, 1, 1, HEADERS.AI_SEO_AUDIT.length)
+    .setValues([HEADERS.AI_SEO_AUDIT]);
+  if (allRows.length) {
+    for (let startIndex = 0; startIndex < allRows.length; startIndex += SHEET_WRITE_BATCH_SIZE) {
+      const batchRows = allRows.slice(startIndex, startIndex + SHEET_WRITE_BATCH_SIZE);
+      sheet
+        .getRange(2 + startIndex, 1, batchRows.length, HEADERS.AI_SEO_AUDIT.length)
+        .setValues(batchRows);
+    }
+  }
+  applySheetFormatting_(sheet, HEADERS.AI_SEO_AUDIT.length);
+}
+
+function writePageKeywordRows_(websiteUrl, rows) {
+  const sheet = getOrCreateSheet_(SHEET_NAMES.PAGE_KEYWORDS, HEADERS.PAGE_KEYWORDS);
+  const existingData = getSheetValues_(sheet);
+  const retainedRows = existingData.rows.filter(function(row) {
+    return row[0] !== websiteUrl;
+  }).map(function(row) {
+    return normalizeRowLength_(row, HEADERS.PAGE_KEYWORDS.length);
+  });
+  const allRows = retainedRows.concat(rows);
+
+  sheet.clearContents();
+  sheet
+    .getRange(1, 1, 1, HEADERS.PAGE_KEYWORDS.length)
+    .setValues([HEADERS.PAGE_KEYWORDS]);
+  if (allRows.length) {
+    for (let startIndex = 0; startIndex < allRows.length; startIndex += SHEET_WRITE_BATCH_SIZE) {
+      const batchRows = allRows.slice(startIndex, startIndex + SHEET_WRITE_BATCH_SIZE);
+      sheet
+        .getRange(2 + startIndex, 1, batchRows.length, HEADERS.PAGE_KEYWORDS.length)
+        .setValues(batchRows);
+    }
+  }
+  applySheetFormatting_(sheet, HEADERS.PAGE_KEYWORDS.length);
 }
 
 function appendLogRow_(logRecord) {
@@ -1643,6 +2135,23 @@ function getDetailedPageRowsForWebsite_(websiteUrl) {
         String(right[HEADERS.PAGES[pageUrlIndex]] || right.page_url || '')
       );
     });
+}
+
+function getPageKeywordRecordByPageUrl_(pageUrl) {
+  const normalizedPageUrl = normalizePageUrl_(pageUrl);
+  const sheet = getOrCreateSheet_(SHEET_NAMES.PAGE_KEYWORDS, HEADERS.PAGE_KEYWORDS);
+  const data = getSheetValues_(sheet);
+  const pageUrlIndex = HEADERS.PAGE_KEYWORDS.indexOf('page_url');
+
+  const matchingRow = data.rows.find(function(row) {
+    return normalizeComparableUrl_(row[pageUrlIndex] || '') === normalizeComparableUrl_(normalizedPageUrl);
+  });
+
+  if (!matchingRow) {
+    return null;
+  }
+
+  return rowToObject_(HEADERS.PAGE_KEYWORDS, normalizeRowLength_(matchingRow, HEADERS.PAGE_KEYWORDS.length));
 }
 
 function getPageUrlsForWebsite_(websiteUrl) {
@@ -1875,25 +2384,166 @@ function ensureRequiredSheets_() {
   getOrCreateSheet_(SHEET_NAMES.CONFIG, HEADERS.CONFIG);
   getOrCreateSheet_(SHEET_NAMES.LOGS, HEADERS.LOGS);
   getOrCreateSheet_(SHEET_NAMES.AI_META_DESCRIPTIONS, HEADERS.AI_META_DESCRIPTIONS);
+  getOrCreateSheet_(SHEET_NAMES.AI_SEO_AUDIT, HEADERS.AI_SEO_AUDIT);
+  getOrCreateSheet_(SHEET_NAMES.PAGE_KEYWORDS, HEADERS.PAGE_KEYWORDS);
 }
 
 function getGeminiApiKey_() {
-  return String(
-    PropertiesService.getScriptProperties().getProperty(GEMINI_API_KEY_PROPERTY) || ''
-  ).trim();
+  return getProviderApiKey_(AI_PROVIDER_GEMINI);
 }
 
 function getGeminiModel_() {
-  return String(
-    PropertiesService.getScriptProperties().getProperty(GEMINI_MODEL_PROPERTY) || DEFAULT_GEMINI_MODEL
-  ).trim();
+  return getProviderModel_(AI_PROVIDER_GEMINI);
 }
 
-function saveGeminiModel_(modelId) {
+function getOpenAiApiKey_() {
+  return getProviderApiKey_(AI_PROVIDER_OPENAI);
+}
+
+function getOpenAiModel_() {
+  return getProviderModel_(AI_PROVIDER_OPENAI);
+}
+
+function getProviderApiKey_(provider) {
+  const propertyName = provider === AI_PROVIDER_OPENAI
+    ? OPENAI_API_KEY_PROPERTY
+    : GEMINI_API_KEY_PROPERTY;
+  return String(PropertiesService.getScriptProperties().getProperty(propertyName) || '').trim();
+}
+
+function getProviderModel_(provider) {
+  const propertyName = provider === AI_PROVIDER_OPENAI
+    ? OPENAI_MODEL_PROPERTY
+    : GEMINI_MODEL_PROPERTY;
+  const fallbackModel = provider === AI_PROVIDER_OPENAI ? '' : DEFAULT_GEMINI_MODEL;
+  return String(PropertiesService.getScriptProperties().getProperty(propertyName) || fallbackModel).trim();
+}
+
+function saveProviderModel_(provider, modelId) {
+  const propertyName = provider === AI_PROVIDER_OPENAI
+    ? OPENAI_MODEL_PROPERTY
+    : GEMINI_MODEL_PROPERTY;
+  const fallbackModel = provider === AI_PROVIDER_OPENAI ? '' : DEFAULT_GEMINI_MODEL;
   PropertiesService.getScriptProperties().setProperty(
-    GEMINI_MODEL_PROPERTY,
-    String(modelId || '').trim() || DEFAULT_GEMINI_MODEL
+    propertyName,
+    String(modelId || '').trim() || fallbackModel
   );
+}
+
+function getStoredActiveAiProvider_() {
+  return String(
+    PropertiesService.getScriptProperties().getProperty(ACTIVE_AI_PROVIDER_PROPERTY) || ''
+  ).trim().toLowerCase();
+}
+
+function getConfiguredAiProviders_() {
+  return [AI_PROVIDER_GEMINI, AI_PROVIDER_OPENAI].filter(function(provider) {
+    return Boolean(getProviderApiKey_(provider));
+  });
+}
+
+function getActiveAiProvider_() {
+  const configuredProviders = getConfiguredAiProviders_();
+  if (!configuredProviders.length) {
+    return '';
+  }
+
+  const storedProvider = getStoredActiveAiProvider_();
+  if (configuredProviders.indexOf(storedProvider) !== -1) {
+    return storedProvider;
+  }
+
+  return configuredProviders[0];
+}
+
+function setActiveAiProvider_(provider) {
+  PropertiesService.getScriptProperties().setProperty(
+    ACTIVE_AI_PROVIDER_PROPERTY,
+    String(provider || '').trim().toLowerCase()
+  );
+}
+
+function ensureActiveAiProviderSet_(fallbackProvider) {
+  const activeProvider = getActiveAiProvider_();
+  if (activeProvider) {
+    return activeProvider;
+  }
+
+  const configuredProviders = getConfiguredAiProviders_();
+  const providerToSet =
+    configuredProviders.indexOf(fallbackProvider) !== -1
+      ? fallbackProvider
+      : configuredProviders[0];
+  if (providerToSet) {
+    setActiveAiProvider_(providerToSet);
+  }
+
+  return providerToSet || '';
+}
+
+function getActiveAiModel_() {
+  const provider = getActiveAiProvider_();
+  if (!provider) {
+    return '';
+  }
+
+  return getProviderModel_(provider);
+}
+
+function ensureActiveAiProviderReady_() {
+  const provider = getActiveAiProvider_();
+  if (!provider) {
+    throw new Error('No AI provider is configured. Set up Gemini or OpenAI first.');
+  }
+
+  const apiKey = getProviderApiKey_(provider);
+  if (!apiKey) {
+    throw new Error(
+      'The active AI provider "' + provider + '" does not have an API key configured. Set it up first.'
+    );
+  }
+
+  const model = getProviderModel_(provider);
+  if (!model) {
+    throw new Error(
+      'The active AI provider "' + provider + '" does not have a saved model. Select a model first.'
+    );
+  }
+
+  const availableModels = fetchProviderModelOptions_(provider, apiKey);
+  const matchingModel = availableModels.find(function(option) {
+    return option.modelId === model;
+  });
+  if (!matchingModel) {
+    throw new Error(
+      'The saved model "' + model + '" is no longer available for the active provider "' +
+        provider +
+        '". Reselect the model first.'
+    );
+  }
+
+  return {
+    provider: provider,
+    apiKey: apiKey,
+    model: model,
+  };
+}
+
+function validateAiProvider_(provider, apiKey) {
+  if (provider === AI_PROVIDER_OPENAI) {
+    validateOpenAiApiKey_(apiKey);
+    return;
+  }
+
+  validateGeminiApiKey_(apiKey);
+}
+
+function fetchProviderModelOptions_(provider, apiKey) {
+  if (provider === AI_PROVIDER_OPENAI) {
+    return fetchOpenAiModelOptions_(apiKey);
+  }
+
+  return fetchGeminiModelOptions_(apiKey);
 }
 
 function validateGeminiApiKey_(apiKey) {
@@ -1906,46 +2556,59 @@ function validateGeminiApiKey_(apiKey) {
   fetchGeminiModelOptions_(apiKey);
 }
 
-function buildAiMetaDescriptionRows_(config, pageRows, apiKey, generatedAt) {
+function validateOpenAiApiKey_(apiKey) {
+  if (!/^sk-/i.test(String(apiKey || '').trim())) {
+    throw new Error(
+      'The value entered does not look like an OpenAI API key. OpenAI API keys usually start with "sk-".'
+    );
+  }
+
+  fetchOpenAiModelOptions_(apiKey);
+}
+
+function buildAiMetaDescriptionRows_(config, pageRows, aiConnection, generatedAt) {
   const rows = [];
   const summary = {
     ok: 0,
     generated: 0,
     failed: 0,
     skipped: 0,
+    batches: 0,
   };
-  let geminiRequestsUsed = 0;
+  let aiRequestsUsed = 0;
+  const pageBatches = chunkArray_(pageRows, GEMINI_BATCH_SIZE);
 
-  pageRows.forEach(function(pageRow) {
-    const existingMetaDescription = sanitizeSingleLineText_(pageRow.meta_description || '');
-    const existingCharCount = existingMetaDescription.length;
-    const lengthStatus = getMetaDescriptionLengthStatus_(existingMetaDescription);
-    let recommendedMetaDescription = '';
-    let aiCharCount = 0;
-    let recommendationStatus = 'NOT_NEEDED';
-    let aiErrorMessage = '';
+  pageBatches.forEach(function(pageBatch, batchIndex) {
+    summary.batches += 1;
 
-    if (lengthStatus === 'OK') {
-      summary.ok += 1;
-    } else {
-      if (geminiRequestsUsed >= GEMINI_MAX_REQUESTS_PER_RUN) {
-        recommendationStatus =
-          'SKIPPED_RATE_LIMIT';
+    pageBatch.forEach(function(pageRow) {
+      const existingMetaDescription = sanitizeSingleLineText_(pageRow.meta_description || '');
+      const existingCharCount = existingMetaDescription.length;
+      const lengthStatus = getMetaDescriptionLengthStatus_(existingMetaDescription);
+      let recommendedMetaDescription = '';
+      let aiCharCount = 0;
+      let recommendationStatus = 'NOT_NEEDED';
+      let aiErrorMessage = '';
+
+      if (lengthStatus === 'OK') {
+        summary.ok += 1;
+      } else if (aiRequestsUsed >= GEMINI_MAX_REQUESTS_PER_RUN) {
+        recommendationStatus = 'SKIPPED_RATE_LIMIT';
         aiErrorMessage =
-          'Run limit of ' + GEMINI_MAX_REQUESTS_PER_RUN + ' Gemini requests reached';
+          'Run limit of ' + GEMINI_MAX_REQUESTS_PER_RUN + ' AI requests reached';
         summary.skipped += 1;
       } else {
         try {
           const generationResult = generateRecommendedMetaDescription_(
             pageRow,
-            apiKey
+            aiConnection
           );
           recommendedMetaDescription = generationResult.text;
           aiCharCount = recommendedMetaDescription.length;
           recommendationStatus = 'GENERATED';
           summary.generated += 1;
           if (generationResult.usedApiCall) {
-            geminiRequestsUsed += 1;
+            aiRequestsUsed += 1;
             Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
           }
         } catch (error) {
@@ -1955,26 +2618,30 @@ function buildAiMetaDescriptionRows_(config, pageRows, apiKey, generatedAt) {
             200
           );
           summary.failed += 1;
-          geminiRequestsUsed += 1;
+          aiRequestsUsed += 1;
           Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
         }
       }
-    }
 
-    rows.push([
-      config.website_url,
-      config.host,
-      normalizePageUrl_(pageRow.page_url),
-      pageRow.page_path || extractPathFromUrl_(pageRow.page_url),
-      existingMetaDescription,
-      existingCharCount,
-      lengthStatus,
-      recommendedMetaDescription,
-      aiCharCount,
-      recommendationStatus,
-      aiErrorMessage,
-      generatedAt,
-    ]);
+      rows.push([
+        config.website_url,
+        config.host,
+        normalizePageUrl_(pageRow.page_url),
+        pageRow.page_path || extractPathFromUrl_(pageRow.page_url),
+        existingMetaDescription,
+        existingCharCount,
+        lengthStatus,
+        recommendedMetaDescription,
+        aiCharCount,
+        recommendationStatus,
+        aiErrorMessage,
+        generatedAt,
+      ]);
+    });
+
+    if (batchIndex < pageBatches.length - 1) {
+      Utilities.sleep(GEMINI_BATCH_DELAY_MS);
+    }
   });
 
   const status = summary.failed ? 'WARNING' : 'SUCCESS';
@@ -1990,8 +2657,10 @@ function buildAiMetaDescriptionRows_(config, pageRows, apiKey, generatedAt) {
     summary.failed +
     ', skipped: ' +
     summary.skipped +
-    ', Gemini requests used: ' +
-    geminiRequestsUsed +
+    ', batches: ' +
+    summary.batches +
+    ', AI requests used: ' +
+    aiRequestsUsed +
     '.';
   const popupMessage =
     'Website: ' +
@@ -2006,8 +2675,14 @@ function buildAiMetaDescriptionRows_(config, pageRows, apiKey, generatedAt) {
     summary.failed +
     '\nSkipped for this run: ' +
     summary.skipped +
-    '\nGemini requests used: ' +
-    geminiRequestsUsed +
+    '\nBatches processed: ' +
+    summary.batches +
+    '\nAI provider: ' +
+    aiConnection.provider +
+    '\nAI model: ' +
+    aiConnection.model +
+    '\nAI requests used: ' +
+    aiRequestsUsed +
     ' / ' +
     GEMINI_MAX_REQUESTS_PER_RUN +
     '\n\nReview the recommendation_status and ai_error_message columns in the "AI Meta Descriptions" tab for any failures or skipped rows.';
@@ -2018,6 +2693,480 @@ function buildAiMetaDescriptionRows_(config, pageRows, apiKey, generatedAt) {
     logMessage: logMessage,
     popupMessage: popupMessage,
   };
+}
+
+function buildAiSeoAuditRows_(config, pageRows, aiConnection, generatedAt) {
+  const rows = [];
+  const flaggedPages = pageRows
+    .map(function(pageRow) {
+      return buildSeoAuditRecord_(config, pageRow);
+    })
+    .filter(function(auditRecord) {
+      return auditRecord !== null;
+    })
+    .sort(function(left, right) {
+      return right.priorityScore - left.priorityScore;
+    });
+
+  const summary = {
+    flagged: flaggedPages.length,
+    generated: 0,
+    failed: 0,
+    skipped: 0,
+    batches: 0,
+  };
+  let aiRequestsUsed = 0;
+  const pageBatches = chunkArray_(flaggedPages, GEMINI_BATCH_SIZE);
+
+  pageBatches.forEach(function(pageBatch, batchIndex) {
+    if (!pageBatch.length) {
+      return;
+    }
+
+    summary.batches += 1;
+
+    pageBatch.forEach(function(auditRecord) {
+      let aiRecommendation = '';
+      let recommendationStatus = 'NOT_NEEDED';
+      let aiErrorMessage = '';
+
+      if (aiRequestsUsed >= GEMINI_MAX_REQUESTS_PER_RUN) {
+        recommendationStatus = 'SKIPPED_RATE_LIMIT';
+        aiErrorMessage =
+          'Run limit of ' + GEMINI_MAX_REQUESTS_PER_RUN + ' AI requests reached';
+        summary.skipped += 1;
+      } else {
+        try {
+          const generationResult = generateAiSeoAuditRecommendation_(
+            auditRecord,
+            aiConnection
+          );
+          aiRecommendation = generationResult.text;
+          recommendationStatus = 'GENERATED';
+          summary.generated += 1;
+          if (generationResult.usedApiCall) {
+            aiRequestsUsed += 1;
+            Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
+          }
+        } catch (error) {
+          recommendationStatus = 'FAILED';
+          aiErrorMessage = truncateText_(
+            error && error.message ? error.message : String(error),
+            200
+          );
+          summary.failed += 1;
+          aiRequestsUsed += 1;
+          Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
+        }
+      }
+
+      rows.push([
+        auditRecord.website_url,
+        auditRecord.host,
+        auditRecord.page_url,
+        auditRecord.page_path,
+        auditRecord.priorityScore,
+        auditRecord.priorityLabel,
+        auditRecord.issueCategory,
+        auditRecord.issueCode,
+        auditRecord.issueSummary,
+        auditRecord.severity,
+        auditRecord.trafficSignal,
+        auditRecord.searchSignal,
+        auditRecord.supportingData,
+        aiRecommendation,
+        recommendationStatus,
+        aiErrorMessage,
+        generatedAt,
+      ]);
+    });
+
+    if (batchIndex < pageBatches.length - 1) {
+      Utilities.sleep(GEMINI_BATCH_DELAY_MS);
+    }
+  });
+
+  const status = summary.failed || summary.skipped ? 'WARNING' : 'SUCCESS';
+  const logMessage =
+    'Pages checked: ' +
+    pageRows.length +
+    ', flagged: ' +
+    summary.flagged +
+    ', AI generated: ' +
+    summary.generated +
+    ', failed: ' +
+    summary.failed +
+    ', skipped: ' +
+    summary.skipped +
+    ', batches: ' +
+    summary.batches +
+    ', AI requests used: ' +
+    aiRequestsUsed +
+    '.';
+  const popupMessage =
+    'Website: ' +
+    config.website_url +
+    '\n\nPages checked: ' +
+    pageRows.length +
+    '\nFlagged pages: ' +
+    summary.flagged +
+    '\nAI generated: ' +
+    summary.generated +
+    '\nFailed: ' +
+    summary.failed +
+    '\nSkipped for this run: ' +
+    summary.skipped +
+    '\nBatches processed: ' +
+    summary.batches +
+    '\nAI provider: ' +
+    aiConnection.provider +
+    '\nAI model: ' +
+    aiConnection.model +
+    '\nAI requests used: ' +
+    aiRequestsUsed +
+    ' / ' +
+    GEMINI_MAX_REQUESTS_PER_RUN +
+    '\n\nReview the recommendation_status and ai_error_message columns in the "AI SEO Audit" tab.';
+
+  return {
+    rows: rows,
+    status: status,
+    logMessage: logMessage,
+    popupMessage: popupMessage,
+  };
+}
+
+function buildPageKeywordRows_(config, pageRows, aiConnection, generatedAt) {
+  const rows = [];
+  const summary = {
+    generated: 0,
+    failed: 0,
+    skipped: 0,
+    batches: 0,
+  };
+  let aiRequestsUsed = 0;
+  const pageBatches = chunkArray_(pageRows, GEMINI_BATCH_SIZE);
+
+  pageBatches.forEach(function(pageBatch, batchIndex) {
+    if (!pageBatch.length) {
+      return;
+    }
+
+    summary.batches += 1;
+
+    pageBatch.forEach(function(pageRow) {
+      let keywordRecord = {
+        primaryKeyword: '',
+        secondaryKeywords: '',
+        keywordNotes: '',
+      };
+      let recommendationStatus = 'NOT_NEEDED';
+      let aiErrorMessage = '';
+
+      if (aiRequestsUsed >= GEMINI_MAX_REQUESTS_PER_RUN) {
+        recommendationStatus = 'SKIPPED_RATE_LIMIT';
+        aiErrorMessage =
+          'Run limit of ' + GEMINI_MAX_REQUESTS_PER_RUN + ' AI requests reached';
+        summary.skipped += 1;
+      } else {
+        try {
+          const generationResult = generatePageKeywordRecommendation_(
+            pageRow,
+            aiConnection
+          );
+          keywordRecord = generationResult.keywordRecord;
+          recommendationStatus = 'GENERATED';
+          summary.generated += 1;
+          if (generationResult.usedApiCall) {
+            aiRequestsUsed += 1;
+            Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
+          }
+        } catch (error) {
+          recommendationStatus = 'FAILED';
+          aiErrorMessage = truncateText_(
+            error && error.message ? error.message : String(error),
+            200
+          );
+          summary.failed += 1;
+          aiRequestsUsed += 1;
+          Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
+        }
+      }
+
+      rows.push([
+        config.website_url,
+        config.host,
+        normalizePageUrl_(pageRow.page_url),
+        valueOrEmpty_(pageRow.page_path || extractPathFromUrl_(pageRow.page_url)),
+        keywordRecord.primaryKeyword,
+        keywordRecord.secondaryKeywords,
+        keywordRecord.keywordNotes,
+        recommendationStatus,
+        aiErrorMessage,
+        generatedAt,
+      ]);
+    });
+
+    if (batchIndex < pageBatches.length - 1) {
+      Utilities.sleep(GEMINI_BATCH_DELAY_MS);
+    }
+  });
+
+  const status = summary.failed || summary.skipped ? 'WARNING' : 'SUCCESS';
+  const logMessage =
+    'Pages checked: ' +
+    pageRows.length +
+    ', generated: ' +
+    summary.generated +
+    ', failed: ' +
+    summary.failed +
+    ', skipped: ' +
+    summary.skipped +
+    ', batches: ' +
+    summary.batches +
+    ', AI requests used: ' +
+    aiRequestsUsed +
+    '.';
+  const popupMessage =
+    'Website: ' +
+    config.website_url +
+    '\n\nPages checked: ' +
+    pageRows.length +
+    '\nGenerated: ' +
+    summary.generated +
+    '\nFailed: ' +
+    summary.failed +
+    '\nSkipped for this run: ' +
+    summary.skipped +
+    '\nBatches processed: ' +
+    summary.batches +
+    '\nAI provider: ' +
+    aiConnection.provider +
+    '\nAI model: ' +
+    aiConnection.model +
+    '\nAI requests used: ' +
+    aiRequestsUsed +
+    ' / ' +
+    GEMINI_MAX_REQUESTS_PER_RUN +
+    '\n\nReview the recommendation_status and ai_error_message columns in the "Page Keywords" tab.';
+
+  return {
+    rows: rows,
+    status: status,
+    logMessage: logMessage,
+    popupMessage: popupMessage,
+  };
+}
+
+function buildSeoAuditRecord_(config, pageRow) {
+  const issues = detectSeoAuditIssues_(pageRow);
+  if (!issues.length) {
+    return null;
+  }
+
+  const primaryIssue = issues.sort(function(left, right) {
+    return right.weight - left.weight;
+  })[0];
+  const priorityScore = calculateSeoAuditPriorityScore_(pageRow, primaryIssue);
+
+  return {
+    website_url: config.website_url,
+    host: config.host,
+    page_url: normalizePageUrl_(pageRow.page_url),
+    page_path: valueOrEmpty_(pageRow.page_path || extractPathFromUrl_(pageRow.page_url)),
+    priorityScore: priorityScore,
+    priorityLabel: getSeoAuditPriorityLabel_(priorityScore),
+    issueCategory: primaryIssue.category,
+    issueCode: primaryIssue.code,
+    issueSummary: primaryIssue.summary,
+    severity: primaryIssue.severity,
+    trafficSignal: buildTrafficSignal_(pageRow),
+    searchSignal: buildSearchSignal_(pageRow),
+    supportingData: buildSeoAuditSupportingData_(pageRow, issues),
+    pageData: pageRow,
+  };
+}
+
+function detectSeoAuditIssues_(pageRow) {
+  const issues = [];
+  const title = sanitizeSingleLineText_(pageRow.title || '');
+  const metaDescription = sanitizeSingleLineText_(pageRow.meta_description || '');
+  const h1 = sanitizeSingleLineText_(pageRow.h1 || '');
+  const canonicalUrl = sanitizeSingleLineText_(pageRow.canonical_url || '');
+  const robotsMeta = sanitizeSingleLineText_(pageRow.robots_meta || '');
+  const isIndexable = String(pageRow.is_indexable || '').toLowerCase() === 'true';
+  const googleInspectionStatus = String(pageRow.google_inspection_status || '').toUpperCase();
+  const impressions = toNumber_(pageRow.impressions);
+  const ctr = toNumber_(pageRow.ctr);
+  const sessions = toNumber_(pageRow.sessions);
+  const users = toNumber_(pageRow.users);
+
+  if (!metaDescription) {
+    issues.push(createSeoAuditIssue_('metadata', 'meta_missing', 'Missing meta description reduces snippet quality and click-through opportunity.', 'HIGH', 60));
+  } else if (metaDescription.length > META_DESCRIPTION_MAX_LENGTH) {
+    issues.push(createSeoAuditIssue_('metadata', 'meta_too_long', 'Meta description is too long and may be truncated in search results.', 'MEDIUM', 38));
+  }
+
+  if (!title) {
+    issues.push(createSeoAuditIssue_('metadata', 'title_missing', 'Missing title tag weakens relevance and search result presentation.', 'HIGH', 58));
+  } else {
+    if (title.length < TITLE_MIN_LENGTH) {
+      issues.push(createSeoAuditIssue_('metadata', 'title_too_short', 'Title tag is very short and may not communicate enough context to search users.', 'MEDIUM', 28));
+    }
+    if (title.length > TITLE_MAX_LENGTH) {
+      issues.push(createSeoAuditIssue_('metadata', 'title_too_long', 'Title tag is long and may be truncated in search results.', 'MEDIUM', 32));
+    }
+  }
+
+  if (!h1) {
+    issues.push(createSeoAuditIssue_('content', 'h1_missing', 'Missing H1 weakens page clarity and topical alignment.', 'MEDIUM', 25));
+  }
+
+  if (!isIndexable || /noindex/i.test(robotsMeta)) {
+    issues.push(createSeoAuditIssue_('indexability', 'not_indexable', 'Page is marked non-indexable or blocked from indexing signals.', 'CRITICAL', 72));
+  }
+
+  if (googleInspectionStatus && googleInspectionStatus !== 'INSPECTED') {
+    issues.push(createSeoAuditIssue_('indexability', 'google_inspection_issue', 'Google inspection reported a non-ready status for this page.', 'HIGH', 55));
+  }
+
+  if (impressions >= HIGH_IMPRESSIONS_THRESHOLD && ctr > 0 && ctr < LOW_CTR_THRESHOLD) {
+    issues.push(createSeoAuditIssue_('performance', 'low_ctr_high_impressions', 'Page has meaningful impressions but a weak CTR, suggesting snippet underperformance.', 'HIGH', 50));
+  }
+
+  if ((sessions >= HIGH_SESSIONS_THRESHOLD || users >= HIGH_USERS_THRESHOLD) && (!metaDescription || !title)) {
+    issues.push(createSeoAuditIssue_('performance', 'important_page_weak_metadata', 'A traffic-relevant page has weak or missing search metadata.', 'HIGH', 52));
+  }
+
+  if (canonicalUrl) {
+    const normalizedPageUrl = normalizeComparableUrl_(pageRow.page_url);
+    let normalizedCanonical = '';
+    try {
+      normalizedCanonical = normalizeComparableUrl_(canonicalUrl);
+    } catch (error) {
+      normalizedCanonical = '';
+    }
+    if (normalizedCanonical && normalizedCanonical !== normalizedPageUrl) {
+      issues.push(createSeoAuditIssue_('canonical', 'canonical_mismatch', 'Canonical URL points to a different page and may conflict with expected indexing.', 'HIGH', 48));
+    }
+  }
+
+  return issues;
+}
+
+function createSeoAuditIssue_(category, code, summary, severity, weight) {
+  return {
+    category: category,
+    code: code,
+    summary: summary,
+    severity: severity,
+    weight: weight,
+  };
+}
+
+function calculateSeoAuditPriorityScore_(pageRow, primaryIssue) {
+  let score = Number(primaryIssue.weight || 0);
+  const impressions = toNumber_(pageRow.impressions);
+  const clicks = toNumber_(pageRow.clicks);
+  const ctr = toNumber_(pageRow.ctr);
+  const avgPosition = toNumber_(pageRow.avg_position);
+  const sessions = toNumber_(pageRow.sessions);
+  const users = toNumber_(pageRow.users);
+  const conversions = toNumber_(pageRow.conversions);
+
+  if (impressions >= 1000) {
+    score += 18;
+  } else if (impressions >= 300) {
+    score += 12;
+  } else if (impressions >= HIGH_IMPRESSIONS_THRESHOLD) {
+    score += 6;
+  }
+
+  if (clicks >= 50) {
+    score += 8;
+  } else if (clicks >= 10) {
+    score += 4;
+  }
+
+  if (ctr > 0 && ctr < LOW_CTR_THRESHOLD) {
+    score += 12;
+  }
+
+  if (avgPosition >= 1 && avgPosition <= 20) {
+    score += 6;
+  }
+
+  if (sessions >= 300) {
+    score += 14;
+  } else if (sessions >= HIGH_SESSIONS_THRESHOLD) {
+    score += 8;
+  }
+
+  if (users >= 150) {
+    score += 10;
+  } else if (users >= HIGH_USERS_THRESHOLD) {
+    score += 5;
+  }
+
+  if (conversions >= 5) {
+    score += 10;
+  } else if (conversions > 0) {
+    score += 4;
+  }
+
+  return Math.min(100, Math.round(score));
+}
+
+function getSeoAuditPriorityLabel_(priorityScore) {
+  if (priorityScore >= 70) {
+    return 'HIGH';
+  }
+  if (priorityScore >= 40) {
+    return 'MEDIUM';
+  }
+  return 'LOW';
+}
+
+function buildTrafficSignal_(pageRow) {
+  return 'sessions=' + toNumber_(pageRow.sessions) +
+    ', users=' + toNumber_(pageRow.users) +
+    ', conversions=' + toNumber_(pageRow.conversions);
+}
+
+function buildSearchSignal_(pageRow) {
+  return 'impressions=' + toNumber_(pageRow.impressions) +
+    ', clicks=' + toNumber_(pageRow.clicks) +
+    ', ctr=' + toNumber_(pageRow.ctr) +
+    ', avg_position=' + toNumber_(pageRow.avg_position);
+}
+
+function buildSeoAuditSupportingData_(pageRow, issues) {
+  const issueCodes = issues.map(function(issue) {
+    return issue.code;
+  }).join(', ');
+  const googleStatus = String(pageRow.google_inspection_status || '').trim() || 'none';
+  const robotsMeta = sanitizeSingleLineText_(pageRow.robots_meta || '') || 'none';
+  const canonicalUrl = sanitizeSingleLineText_(pageRow.canonical_url || '') || 'none';
+
+  return truncateText_(
+    'issues=' +
+      issueCodes +
+      '; title_length=' +
+      sanitizeSingleLineText_(pageRow.title || '').length +
+      '; meta_length=' +
+      sanitizeSingleLineText_(pageRow.meta_description || '').length +
+      '; h1_present=' +
+      String(Boolean(sanitizeSingleLineText_(pageRow.h1 || ''))) +
+      '; indexable=' +
+      String(String(pageRow.is_indexable || '').toLowerCase() === 'true') +
+      '; google_status=' +
+      googleStatus +
+      '; robots=' +
+      robotsMeta +
+      '; canonical=' +
+      canonicalUrl,
+    500
+  );
 }
 
 function getMetaDescriptionLengthStatus_(metaDescription) {
@@ -2032,9 +3181,14 @@ function getMetaDescriptionLengthStatus_(metaDescription) {
   return 'OK';
 }
 
-function generateRecommendedMetaDescription_(pageRow, apiKey) {
+function generateRecommendedMetaDescription_(pageRow, aiConnection) {
   const prompt = buildGeminiMetaDescriptionPrompt_(pageRow);
-  const cacheKey = buildGeminiResponseCacheKey_(getGeminiModel_(), prompt);
+  const cacheKey = buildAiTextCacheKey_(
+    'meta',
+    aiConnection.provider,
+    aiConnection.model,
+    prompt
+  );
   const cache = CacheService.getScriptCache();
   const cachedResponse = cache.get(cacheKey);
   if (cachedResponse) {
@@ -2044,16 +3198,74 @@ function generateRecommendedMetaDescription_(pageRow, apiKey) {
     };
   }
 
-  const responseText = callGeminiGenerateText_(apiKey, prompt);
+  const responseText = callAiGenerateText_(aiConnection.provider, aiConnection.apiKey, prompt);
   const sanitizedText = sanitizeGeminiMetaDescription_(responseText);
 
   if (!sanitizedText) {
-    throw new Error('Gemini returned an empty recommendation.');
+    throw new Error('The AI provider returned an empty recommendation.');
   }
 
   cache.put(cacheKey, sanitizedText, GEMINI_RESPONSE_CACHE_TTL_SECONDS);
   return {
     text: sanitizedText,
+    usedApiCall: true,
+  };
+}
+
+function generateAiSeoAuditRecommendation_(auditRecord, aiConnection) {
+  const prompt = buildAiSeoAuditPrompt_(auditRecord);
+  const cacheKey = buildAiTextCacheKey_(
+    'audit',
+    aiConnection.provider,
+    aiConnection.model,
+    prompt
+  );
+  const cache = CacheService.getScriptCache();
+  const cachedResponse = cache.get(cacheKey);
+  if (cachedResponse) {
+    return {
+      text: sanitizeSingleLineText_(cachedResponse),
+      usedApiCall: false,
+    };
+  }
+
+  const responseText = callAiGenerateText_(aiConnection.provider, aiConnection.apiKey, prompt);
+  const sanitizedText = sanitizeSingleLineText_(responseText);
+
+  if (!sanitizedText) {
+    throw new Error('The AI provider returned an empty SEO audit recommendation.');
+  }
+
+  cache.put(cacheKey, sanitizedText, GEMINI_RESPONSE_CACHE_TTL_SECONDS);
+  return {
+    text: sanitizedText,
+    usedApiCall: true,
+  };
+}
+
+function generatePageKeywordRecommendation_(pageRow, aiConnection) {
+  const prompt = buildPageKeywordPrompt_(pageRow);
+  const cacheKey = buildAiTextCacheKey_(
+    'keywords',
+    aiConnection.provider,
+    aiConnection.model,
+    prompt
+  );
+  const cache = CacheService.getScriptCache();
+  const cachedResponse = cache.get(cacheKey);
+  if (cachedResponse) {
+    return {
+      keywordRecord: parsePageKeywordResponse_(cachedResponse),
+      usedApiCall: false,
+    };
+  }
+
+  const responseText = callAiGenerateText_(aiConnection.provider, aiConnection.apiKey, prompt);
+  const parsedKeywordRecord = parsePageKeywordResponse_(responseText);
+  cache.put(cacheKey, serializePageKeywordResponse_(parsedKeywordRecord), GEMINI_RESPONSE_CACHE_TTL_SECONDS);
+
+  return {
+    keywordRecord: parsedKeywordRecord,
     usedApiCall: true,
   };
 }
@@ -2077,8 +3289,115 @@ function buildGeminiMetaDescriptionPrompt_(pageRow) {
   ].join('\n');
 }
 
+function buildPageKeywordPrompt_(pageRow) {
+  return [
+    'You are helping with SEO keyword targeting for a single page.',
+    'Use only the page signals below.',
+    'Do not invent products, services, locations, or claims that are not supported by the provided data.',
+    'Recommend one primary keyword and 4 to 6 secondary keywords that are realistic for this page.',
+    'Keep recommendations relevant to the page intent and avoid keyword stuffing.',
+    'Return exactly this format and nothing else:',
+    'PRIMARY_KEYWORD: <one keyword phrase>',
+    'SECONDARY_KEYWORDS: <keyword 1> | <keyword 2> | <keyword 3> | <keyword 4>',
+    'KEYWORD_NOTES: <short note explaining fit in one or two concise sentences>',
+    '',
+    'Page URL: ' + valueOrEmpty_(pageRow.page_url),
+    'Page path: ' + valueOrEmpty_(pageRow.page_path),
+    'Title: ' + valueOrEmpty_(pageRow.title),
+    'Meta description: ' + valueOrEmpty_(pageRow.meta_description),
+    'H1: ' + valueOrEmpty_(pageRow.h1),
+    'Clicks: ' + valueOrEmpty_(pageRow.clicks),
+    'Impressions: ' + valueOrEmpty_(pageRow.impressions),
+    'CTR: ' + valueOrEmpty_(pageRow.ctr),
+    'Average position: ' + valueOrEmpty_(pageRow.avg_position),
+  ].join('\n');
+}
+
+function buildAiSeoAuditPrompt_(auditRecord) {
+  const pageRow = auditRecord.pageData;
+
+  return [
+    'You are an SEO consultant writing one concise audit recommendation for a single web page.',
+    'Use only the provided page data and issue summary.',
+    'Do not invent facts, services, offers, locations, pricing, or page content that is not supported by the supplied fields.',
+    'Return plain text only as 2 short sentences maximum.',
+    'Sentence 1 should explain the issue briefly.',
+    'Sentence 2 should give the most practical next action.',
+    'Keep the wording concise and spreadsheet-friendly.',
+    '',
+    'Primary issue category: ' + auditRecord.issueCategory,
+    'Primary issue code: ' + auditRecord.issueCode,
+    'Primary issue summary: ' + auditRecord.issueSummary,
+    'Priority label: ' + auditRecord.priorityLabel,
+    'Priority score: ' + auditRecord.priorityScore,
+    'Page URL: ' + valueOrEmpty_(auditRecord.page_url),
+    'Page path: ' + valueOrEmpty_(auditRecord.page_path),
+    'Title: ' + valueOrEmpty_(pageRow.title),
+    'Meta description: ' + valueOrEmpty_(pageRow.meta_description),
+    'H1: ' + valueOrEmpty_(pageRow.h1),
+    'Canonical URL: ' + valueOrEmpty_(pageRow.canonical_url),
+    'Robots meta: ' + valueOrEmpty_(pageRow.robots_meta),
+    'Is indexable: ' + valueOrEmpty_(pageRow.is_indexable),
+    'Search metrics: ' + auditRecord.searchSignal,
+    'Traffic metrics: ' + auditRecord.trafficSignal,
+    'Google inspection status: ' + valueOrEmpty_(pageRow.google_inspection_status),
+    'Supporting data: ' + valueOrEmpty_(auditRecord.supportingData),
+  ].join('\n');
+}
+
+function parsePageKeywordResponse_(responseText) {
+  const normalizedText = String(responseText || '').replace(/\r/g, '').trim();
+  const primaryKeywordMatch = /PRIMARY_KEYWORD:\s*(.+)/i.exec(normalizedText);
+  const secondaryKeywordsMatch = /SECONDARY_KEYWORDS:\s*(.+)/i.exec(normalizedText);
+  const keywordNotesMatch = /KEYWORD_NOTES:\s*([\s\S]+)/i.exec(normalizedText);
+
+  const primaryKeyword = sanitizeSingleLineText_(primaryKeywordMatch ? primaryKeywordMatch[1] : '');
+  const secondaryKeywords = sanitizeSecondaryKeywords_(
+    secondaryKeywordsMatch ? secondaryKeywordsMatch[1] : ''
+  );
+  const keywordNotes = sanitizeSingleLineText_(keywordNotesMatch ? keywordNotesMatch[1] : '');
+
+  if (!primaryKeyword) {
+    throw new Error('The AI provider did not return a valid primary keyword.');
+  }
+
+  return {
+    primaryKeyword: primaryKeyword,
+    secondaryKeywords: secondaryKeywords,
+    keywordNotes: keywordNotes,
+  };
+}
+
+function sanitizeSecondaryKeywords_(value) {
+  const keywords = String(value || '')
+    .split('|')
+    .map(function(keyword) {
+      return sanitizeSingleLineText_(keyword);
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+
+  return keywords.join(' | ');
+}
+
+function serializePageKeywordResponse_(keywordRecord) {
+  return [
+    'PRIMARY_KEYWORD: ' + valueOrEmpty_(keywordRecord.primaryKeyword),
+    'SECONDARY_KEYWORDS: ' + valueOrEmpty_(keywordRecord.secondaryKeywords),
+    'KEYWORD_NOTES: ' + valueOrEmpty_(keywordRecord.keywordNotes),
+  ].join('\n');
+}
+
+function callAiGenerateText_(provider, apiKey, prompt) {
+  if (provider === AI_PROVIDER_OPENAI) {
+    return callOpenAiGenerateText_(apiKey, prompt);
+  }
+
+  return callGeminiGenerateText_(apiKey, prompt);
+}
+
 function callGeminiGenerateText_(apiKey, prompt) {
-  const modelId = getGeminiModel_();
+  const modelId = getProviderModel_(AI_PROVIDER_GEMINI);
   const url =
     GEMINI_API_BASE_URL +
     encodeURIComponent(modelId) +
@@ -2110,6 +3429,48 @@ function callGeminiGenerateText_(apiKey, prompt) {
   }
 
   return extractGeminiTextFromResponse_(JSON.parse(response.getContentText() || '{}'));
+}
+
+function callOpenAiGenerateText_(apiKey, prompt) {
+  const modelId = getProviderModel_(AI_PROVIDER_OPENAI);
+  const url = OPENAI_API_BASE_URL + '/responses';
+  const response = fetchWithRetry_(url, {
+    method: 'post',
+    contentType: 'application/json',
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: 'Bearer ' + apiKey,
+    },
+    payload: JSON.stringify({
+      model: modelId,
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: prompt,
+            },
+          ],
+        },
+      ],
+      max_output_tokens: 120,
+    }),
+  });
+
+  if (!isSuccessfulResponse_(response.getResponseCode())) {
+    throw buildApiError_(url, response);
+  }
+
+  return extractOpenAiTextFromResponse_(JSON.parse(response.getContentText() || '{}'));
+}
+
+function promptForProviderModelSelection_(provider, apiKey, currentModel) {
+  if (provider === AI_PROVIDER_OPENAI) {
+    return promptForOpenAiModelSelection_(apiKey, currentModel);
+  }
+
+  return promptForGeminiModelSelection_(apiKey, currentModel);
 }
 
 function promptForGeminiModelSelection_(apiKey, currentModel) {
@@ -2156,8 +3517,52 @@ function promptForGeminiModelSelection_(apiKey, currentModel) {
   return matchingModel.modelId;
 }
 
+function promptForOpenAiModelSelection_(apiKey, currentModel) {
+  const ui = SpreadsheetApp.getUi();
+  const modelOptions = fetchOpenAiModelOptions_(apiKey);
+  if (!modelOptions.length) {
+    throw new Error('No supported OpenAI text-generation models were returned for this API key.');
+  }
+
+  const exampleList = modelOptions
+    .slice(0, 20)
+    .map(function(option) {
+      return option.modelId;
+    })
+    .join('\n');
+  const recommendedModel = findRecommendedOpenAiModel_(modelOptions, currentModel);
+  const response = ui.prompt(
+    'Select OpenAI Model',
+    'Enter the exact OpenAI model ID to save.\nCurrent: ' +
+      valueOrEmpty_(currentModel) +
+      '\nRecommended: ' +
+      recommendedModel +
+      '\n\nAvailable model IDs:\n' +
+      exampleList +
+      (modelOptions.length > 20 ? '\n...' : ''),
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    return '';
+  }
+
+  const requestedModel = String(response.getResponseText() || '').trim() || recommendedModel;
+  const matchingModel = modelOptions.find(function(option) {
+    return option.modelId === requestedModel;
+  });
+
+  if (!matchingModel) {
+    throw new Error(
+      'The selected model "' + requestedModel + '" was not found in the supported OpenAI model list for this API key.'
+    );
+  }
+
+  return matchingModel.modelId;
+}
+
 function fetchGeminiModelOptions_(apiKey) {
-  const cacheKey = buildGeminiModelCacheKey_(apiKey);
+  const cacheKey = buildProviderModelCacheKey_(AI_PROVIDER_GEMINI, apiKey);
   const cache = CacheService.getScriptCache();
   const cachedValue = cache.get(cacheKey);
   if (cachedValue) {
@@ -2214,6 +3619,46 @@ function fetchGeminiModelOptions_(apiKey) {
   return modelOptions;
 }
 
+function fetchOpenAiModelOptions_(apiKey) {
+  const cacheKey = buildProviderModelCacheKey_(AI_PROVIDER_OPENAI, apiKey);
+  const cache = CacheService.getScriptCache();
+  const cachedValue = cache.get(cacheKey);
+  if (cachedValue) {
+    return JSON.parse(cachedValue);
+  }
+
+  const url = OPENAI_API_BASE_URL + '/models';
+  const response = fetchWithRetry_(url, {
+    method: 'get',
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: 'Bearer ' + apiKey,
+    },
+  });
+
+  if (!isSuccessfulResponse_(response.getResponseCode())) {
+    throw buildApiError_(url, response);
+  }
+
+  const responseBody = JSON.parse(response.getContentText() || '{}');
+  const modelOptions = (responseBody.data || [])
+    .map(function(model) {
+      return {
+        modelId: String(model.id || '').trim(),
+        ownedBy: String(model.owned_by || '').trim(),
+      };
+    })
+    .filter(function(option) {
+      return isSupportedOpenAiModelId_(option.modelId);
+    })
+    .sort(function(left, right) {
+      return left.modelId.localeCompare(right.modelId);
+    });
+
+  cache.put(cacheKey, JSON.stringify(modelOptions), GEMINI_MODEL_CACHE_TTL_SECONDS);
+  return modelOptions;
+}
+
 function findRecommendedGeminiModel_(modelOptions, currentModel) {
   const preferredModels = [
     currentModel,
@@ -2234,6 +3679,45 @@ function findRecommendedGeminiModel_(modelOptions, currentModel) {
   return modelOptions[0].modelId;
 }
 
+function findRecommendedOpenAiModel_(modelOptions, currentModel) {
+  const preferredModels = [
+    currentModel,
+    'gpt-5.1-mini',
+    'gpt-5.1',
+    'gpt-4.1-mini',
+    'gpt-4.1',
+    'o4-mini',
+    'o3-mini',
+  ].filter(Boolean);
+
+  for (let i = 0; i < preferredModels.length; i += 1) {
+    const candidate = preferredModels[i];
+    const match = modelOptions.find(function(option) {
+      return option.modelId === candidate;
+    });
+    if (match) {
+      return match.modelId;
+    }
+  }
+
+  return modelOptions[0].modelId;
+}
+
+function isSupportedOpenAiModelId_(modelId) {
+  const normalizedModelId = String(modelId || '').trim().toLowerCase();
+  if (!normalizedModelId) {
+    return false;
+  }
+
+  if (
+    /embedding|whisper|transcribe|tts|speech|image|dall-e|moderation|realtime|search|computer-use|vision-preview|audio/.test(normalizedModelId)
+  ) {
+    return false;
+  }
+
+  return /^(gpt-|o[1-9]|o\d)/.test(normalizedModelId);
+}
+
 function extractGeminiModelId_(modelName) {
   const normalizedName = String(modelName || '').trim();
   if (!normalizedName) {
@@ -2243,12 +3727,37 @@ function extractGeminiModelId_(modelName) {
   return normalizedName.replace(/^models\//i, '').trim();
 }
 
-function buildGeminiModelCacheKey_(apiKey) {
-  return 'gemini_models_' + hashTextForCache_(String(apiKey || '').trim());
+function chunkArray_(items, batchSize) {
+  const batches = [];
+  const safeBatchSize = Math.max(1, Number(batchSize) || 1);
+
+  for (let index = 0; index < items.length; index += safeBatchSize) {
+    batches.push(items.slice(index, index + safeBatchSize));
+  }
+
+  return batches;
 }
 
-function buildGeminiResponseCacheKey_(modelId, prompt) {
-  return 'gemini_meta_' + hashTextForCache_(String(modelId || '') + '|' + String(prompt || ''));
+function buildProviderModelCacheKey_(provider, apiKey) {
+  return (
+    'ai_models_' +
+    hashTextForCache_(String(provider || '') + '|' + String(apiKey || '').trim())
+  );
+}
+
+function buildAiTextCacheKey_(feature, provider, modelId, prompt) {
+  return (
+    'ai_text_' +
+    hashTextForCache_(
+      String(feature || '') +
+        '|' +
+        String(provider || '') +
+        '|' +
+        String(modelId || '') +
+        '|' +
+        String(prompt || '')
+    )
+  );
 }
 
 function hashTextForCache_(value) {
@@ -2278,6 +3787,68 @@ function extractGeminiTextFromResponse_(responseBody) {
   }
 
   return text;
+}
+
+function extractOpenAiTextFromResponse_(responseBody) {
+  if (typeof responseBody.output_text === 'string' && responseBody.output_text.trim()) {
+    return responseBody.output_text.trim();
+  }
+
+  const textSegments = [];
+  const output = responseBody.output || [];
+
+  output.forEach(function(item) {
+    const content = item && item.content ? item.content : [];
+    content.forEach(function(part) {
+      if (part && (part.type === 'output_text' || part.type === 'text') && part.text) {
+        textSegments.push(String(part.text));
+      }
+    });
+  });
+
+  const text = textSegments.join(' ').trim();
+  if (!text) {
+    throw new Error('OpenAI returned no text content.');
+  }
+
+  return text;
+}
+
+function buildKeywordViewerFormula_(pageUrl) {
+  const viewerUrl = buildKeywordViewerUrl_(pageUrl);
+  if (!viewerUrl) {
+    return 'Deploy web app to enable';
+  }
+
+  return '=HYPERLINK("' + viewerUrl.replace(/"/g, '""') + '","View Keywords")';
+}
+
+function buildKeywordViewerUrl_(pageUrl) {
+  const serviceUrl = ScriptApp.getService().getUrl();
+  if (!serviceUrl) {
+    return '';
+  }
+
+  return (
+    serviceUrl +
+    '?view=keywords&pageUrl=' +
+    encodeURIComponent(normalizePageUrl_(pageUrl))
+  );
+}
+
+function renderKeywordViewer_(pageUrl) {
+  const normalizedPageUrl = pageUrl ? normalizePageUrl_(pageUrl) : '';
+  const keywordRecord = normalizedPageUrl
+    ? getPageKeywordRecordByPageUrl_(normalizedPageUrl)
+    : null;
+  const template = HtmlService.createTemplateFromFile('KeywordViewer');
+  template.pageUrl = normalizedPageUrl;
+  template.keywordRecord = keywordRecord;
+
+  return template
+    .evaluate()
+    .setTitle('Page Keywords')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
 function sanitizeGeminiMetaDescription_(value) {
@@ -2924,6 +4495,11 @@ function normalizeRowLength_(row, targetLength) {
 
 function valueOrEmpty_(value) {
   return value === null || value === undefined ? '' : value;
+}
+
+function toNumber_(value) {
+  const numericValue = Number(value);
+  return isNaN(numericValue) ? 0 : numericValue;
 }
 
 function truncateText_(value, maxLength) {

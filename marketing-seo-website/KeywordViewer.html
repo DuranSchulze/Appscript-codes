@@ -1,0 +1,151 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Page Keywords</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f8fb;
+        --card: #ffffff;
+        --text: #18212f;
+        --muted: #5f6b7a;
+        --border: #dde4ee;
+        --accent: #0b6bcb;
+        --tag: #eef5ff;
+      }
+
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      .wrap {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 10px 30px rgba(16, 33, 51, 0.06);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 28px;
+      }
+
+      h2 {
+        margin: 24px 0 10px;
+        font-size: 18px;
+      }
+
+      p {
+        margin: 0 0 12px;
+        line-height: 1.6;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .url {
+        word-break: break-word;
+        color: var(--accent);
+      }
+
+      .keywords {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 8px;
+      }
+
+      .tag {
+        background: var(--tag);
+        color: var(--accent);
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 14px;
+        border: 1px solid #d2e3fb;
+      }
+
+      .status {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #fff7e8;
+        border: 1px solid #f1d9a8;
+      }
+
+      .empty {
+        margin-top: 12px;
+        padding: 16px;
+        border-radius: 12px;
+        background: #f3f6fa;
+        border: 1px dashed var(--border);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>Page Keywords</h1>
+        <p class="muted">Keyword recommendations for one page.</p>
+
+        <? if (pageUrl) { ?>
+          <p class="url"><?= pageUrl ?></p>
+        <? } else { ?>
+          <div class="empty">
+            <p>No page URL was provided.</p>
+          </div>
+        <? } ?>
+
+        <? if (keywordRecord) { ?>
+          <h2>Primary Keyword</h2>
+          <div class="keywords">
+            <span class="tag"><?= keywordRecord.primary_keyword ?></span>
+          </div>
+
+          <h2>Secondary Keywords</h2>
+          <? var secondaryKeywords = String(keywordRecord.secondary_keywords || '').split('|').map(function(item) { return item.trim(); }).filter(Boolean); ?>
+          <? if (secondaryKeywords.length) { ?>
+            <div class="keywords">
+              <? for (var i = 0; i < secondaryKeywords.length; i += 1) { ?>
+                <span class="tag"><?= secondaryKeywords[i] ?></span>
+              <? } ?>
+            </div>
+          <? } else { ?>
+            <div class="empty">
+              <p>No secondary keywords were stored for this page yet.</p>
+            </div>
+          <? } ?>
+
+          <h2>Notes</h2>
+          <p><?= keywordRecord.keyword_notes || 'No keyword notes were stored for this page yet.' ?></p>
+
+          <? if (keywordRecord.recommendation_status && keywordRecord.recommendation_status !== 'GENERATED') { ?>
+            <div class="status">
+              <p><strong>Status:</strong> <?= keywordRecord.recommendation_status ?></p>
+              <? if (keywordRecord.ai_error_message) { ?>
+                <p><strong>Error:</strong> <?= keywordRecord.ai_error_message ?></p>
+              <? } ?>
+            </div>
+          <? } ?>
+        <? } else if (pageUrl) { ?>
+          <div class="empty">
+            <p>Keywords not generated yet for this page.</p>
+            <p class="muted">Run <strong>Generate Page Keywords</strong> from the spreadsheet menu first.</p>
+          </div>
+        <? } ?>
+      </div>
+    </div>
+  </body>
+</html>
