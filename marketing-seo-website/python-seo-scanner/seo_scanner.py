@@ -17,9 +17,9 @@ from rich.text import Text
 
 import config
 from crawler.site_crawler import SiteCrawler
-from google.search_console import SearchConsoleClient
-from google.ga4 import GA4Client
-from google.auth import clear_credentials
+from gclients.search_console import SearchConsoleClient
+from gclients.ga4 import GA4Client
+from gclients.auth import clear_credentials
 from ai.keyword_recommender import KeywordRecommender
 from reporter.markdown_reporter import MarkdownReporter
 from keyword_metrics_integration import (
@@ -35,7 +35,7 @@ console = Console()
 @app.command()
 def scan(
     url: str = typer.Argument(..., help="Website URL to scan (e.g., https://example.com)"),
-    max_pages: int = typer.Option(100, "--max-pages", "-p", help="Maximum pages to crawl"),
+    max_pages: int = typer.Option(10000, "--max-pages", "-p", help="Maximum pages to crawl"),
     max_depth: int = typer.Option(2, "--max-depth", "-d", help="Maximum crawl depth"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path (default: auto-generated)"),
     use_gsc: bool = typer.Option(False, "--gsc", help="Connect to Google Search Console"),
@@ -227,7 +227,7 @@ def scan(
                 # SEMrush enrichment
                 if keyword_provider in ["semrush", "both"] and config.SEMRUSH_API_KEY:
                     try:
-                        from google.semrush_keywords import SEMrushKeywordClient
+                        from gclients.semrush_keywords import SEMrushKeywordClient
                         
                         semrush_client = SEMrushKeywordClient()
                         if semrush_client.test_connection():
@@ -333,7 +333,7 @@ def auth_setup():
     # Test Search Console auth
     console.print("[bold]Testing Search Console authentication...[/bold]")
     try:
-        from google.auth import get_search_console_credentials
+        from gclients.auth import get_search_console_credentials
         creds = get_search_console_credentials()
         console.print("[green]✓[/green] Search Console authentication successful!")
     except Exception as e:
@@ -342,7 +342,7 @@ def auth_setup():
     # Test GA4 auth
     console.print("\n[bold]Testing GA4 authentication...[/bold]")
     try:
-        from google.auth import get_ga4_credentials
+        from gclients.auth import get_ga4_credentials
         creds = get_ga4_credentials()
         console.print("[green]✓[/green] GA4 authentication successful!")
     except Exception as e:
@@ -352,7 +352,8 @@ def auth_setup():
     if config.GOOGLE_ADS_DEVELOPER_TOKEN:
         console.print("\n[bold]Testing Google Ads authentication...[/bold]")
         try:
-            from google.ads_keywords import GoogleAdsKeywordClient
+            from gclients.ads_keywords import GoogleAdsKeywordClient
+            
             ads_client = GoogleAdsKeywordClient()
             if ads_client.connect():
                 console.print("[green]✓[/green] Google Ads authentication successful!")
@@ -433,7 +434,7 @@ def keyword_metrics(
         else:
             console.print("\n[bold cyan]Connecting to Google Ads API...[/bold cyan]")
             
-            from google.ads_keywords import GoogleAdsKeywordClient, format_keyword_metrics_table
+            from gclients.ads_keywords import GoogleAdsKeywordClient, format_keyword_metrics_table
             
             ads_client = GoogleAdsKeywordClient()
             if ads_client.connect():
@@ -470,7 +471,7 @@ def keyword_metrics(
         else:
             console.print("\n[bold cyan]Connecting to SEMrush API...[/bold cyan]")
             
-            from google.semrush_keywords import SEMrushKeywordClient, format_semrush_metrics_table
+            from gclients.semrush_keywords import SEMrushKeywordClient, format_semrush_metrics_table
             
             semrush_client = SEMrushKeywordClient()
             if semrush_client.test_connection():
@@ -509,13 +510,13 @@ def keyword_metrics(
     semrush_metrics = [m for m in all_metrics if m.get('source') == 'semrush']
     
     if google_ads_metrics:
-        from google.ads_keywords import format_keyword_metrics_table
+        from gclients.ads_keywords import format_keyword_metrics_table
         console.print("**Google Ads Results:**")
         console.print(format_keyword_metrics_table(google_ads_metrics))
         console.print("")
     
     if semrush_metrics:
-        from google.semrush_keywords import format_semrush_metrics_table
+        from gclients.semrush_keywords import format_semrush_metrics_table
         console.print("**SEMrush Results:**")
         console.print(format_semrush_metrics_table(semrush_metrics))
         console.print("")
@@ -532,11 +533,11 @@ def keyword_metrics(
         ]
         
         if google_ads_metrics:
-            from google.ads_keywords import format_keyword_metrics_table
+            from gclients.ads_keywords import format_keyword_metrics_table
             report_lines.extend(["\n## Google Ads Results\n", format_keyword_metrics_table(google_ads_metrics)])
         
         if semrush_metrics:
-            from google.semrush_keywords import format_semrush_metrics_table
+            from gclients.semrush_keywords import format_semrush_metrics_table
             report_lines.extend(["\n## SEMrush Results\n", format_semrush_metrics_table(semrush_metrics)])
         
         # Summary statistics

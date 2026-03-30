@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 import config
-from google.auth import get_ga4_credentials
+from gclients.auth import get_ga4_credentials
 
 
 class GA4Client:

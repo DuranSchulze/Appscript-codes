@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 import config
-from google.auth import get_search_console_credentials
+from gclients.auth import get_search_console_credentials
 
 
 class SearchConsoleClient:

@@ -3,8 +3,8 @@
 from typing import Dict, List, Optional, Set
 from collections import defaultdict
 
-from google.search_console import SearchConsoleClient
-from google.ads_keywords import GoogleAdsKeywordClient
+from gclients.search_console import SearchConsoleClient
+from gclients.ads_keywords import GoogleAdsKeywordClient
 
 
 class KeywordMetricsIntegration:

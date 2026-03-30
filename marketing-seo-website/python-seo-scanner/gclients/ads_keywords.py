@@ -6,7 +6,7 @@ from typing import List, Dict, Optional
 import os
 
 import config
-from google.auth import load_credentials
+from gclients.auth import load_credentials
 
 
 class GoogleAdsKeywordClient:
