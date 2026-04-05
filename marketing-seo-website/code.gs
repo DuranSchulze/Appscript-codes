@@ -2,6 +2,7 @@ const SHEET_NAMES = {
   PAGES: 'Pages',
   CONFIG: 'Config',
   LOGS: 'Logs',
+  DASHBOARD: 'Dashboard',
   AI_META_DESCRIPTIONS: 'AI Meta Descriptions',
   AI_SEO_AUDIT: 'AI SEO Audit',
   PAGE_KEYWORDS: 'Page Keywords',
@@ -36,7 +37,6 @@ const HEADERS = {
     'host',
     'page_url',
     'page_path',
-    'keyword_view_link',
     'source_method',
     'status_code',
     'title',
@@ -64,6 +64,14 @@ const HEADERS = {
     'pages_discovered',
     'pages_written',
     'message',
+  ],
+  DASHBOARD: [
+    'website_url',
+    'section',
+    'metric',
+    'value',
+    'details',
+    'updated_at',
   ],
   AI_META_DESCRIPTIONS: [
     'website_url',
@@ -99,16 +107,8 @@ const HEADERS = {
     'generated_at',
   ],
   PAGE_KEYWORDS: [
-    'website_url',
-    'host',
     'page_url',
-    'page_path',
-    'primary_keyword',
-    'secondary_keywords',
-    'keyword_notes',
-    'recommendation_status',
-    'ai_error_message',
-    'generated_at',
+    'keyword',
   ],
 };
 
@@ -133,6 +133,7 @@ const OPENAI_API_KEY_PROPERTY = 'OPENAI_API_KEY';
 const OPENAI_MODEL_PROPERTY = 'OPENAI_MODEL';
 const ACTIVE_AI_PROVIDER_PROPERTY = 'ACTIVE_AI_PROVIDER';
 const OPENAI_API_BASE_URL = 'https://api.openai.com/v1';
+const META_DESCRIPTION_MIN_LENGTH = 120;
 const META_DESCRIPTION_MAX_LENGTH = 150;
 const GEMINI_MODEL_CACHE_TTL_SECONDS = 21600;
 const GEMINI_RESPONSE_CACHE_TTL_SECONDS = 21600;
@@ -147,6 +148,8 @@ const LOW_CTR_THRESHOLD = 0.02;
 const HIGH_IMPRESSIONS_THRESHOLD = 100;
 const HIGH_SESSIONS_THRESHOLD = 50;
 const HIGH_USERS_THRESHOLD = 30;
+const PAGE_KEYWORD_ROWS_PER_PAGE = 6;
+const AI_SHEETS_FORMULA_FUNCTION = 'GEMINI';
 const SOURCE_METHOD_PRIORITY = {
   sitemap: 2,
   crawl: 1,
@@ -165,6 +168,10 @@ function onOpen() {
     .addItem('Check Google Connections', 'checkGoogleConnections')
     .addItem('Check Google Index Status', 'checkGoogleIndexStatus')
     .addItem('Submit to IndexNow', 'submitToIndexNow');
+  const dashboardMenu = ui
+    .createMenu('Dashboard')
+    .addItem('Refresh Dashboard', 'refreshDashboard')
+    .addItem('View Dashboard', 'viewDashboard');
   const aiToolsMenu = ui
     .createMenu('AI Tools')
     .addItem('Setup Gemini AI', 'setupGeminiAi')
@@ -175,12 +182,13 @@ function onOpen() {
     .addItem('Check Active AI Connection', 'checkActiveAiConnection')
     .addItem('Generate AI Meta Descriptions', 'generateAiMetaDescriptions')
     .addItem('Run AI SEO Audit', 'runAiSeoAudit')
-    .addItem('Generate Page Keywords', 'generatePageKeywords')
+    .addItem('Build Page Keywords Sheet', 'buildPageKeywordsSheet')
     .addItem('View AI Meta Descriptions', 'viewAiMetaDescriptions')
     .addItem('View AI SEO Audit', 'viewAiSeoAudit')
     .addItem('View Page Keywords Sheet', 'viewPageKeywords');
   const reportsMenu = ui
     .createMenu('Reports')
+    .addItem('View Dashboard', 'viewDashboard')
     .addItem('View Logs', 'viewLogs')
     .addItem('View AI SEO Audit', 'viewAiSeoAudit')
     .addItem('View Page Keywords Sheet', 'viewPageKeywords');
@@ -191,6 +199,7 @@ function onOpen() {
   ui.createMenu('SEO Workspace')
     .addSubMenu(websiteSetupMenu)
     .addSubMenu(googleDataMenu)
+    .addSubMenu(dashboardMenu)
     .addSubMenu(aiToolsMenu)
     .addSubMenu(reportsMenu)
     .addSubMenu(maintenanceMenu)
@@ -202,15 +211,8 @@ function onInstall() {
 }
 
 function doGet(e) {
-  const params = e && e.parameter ? e.parameter : {};
-  const view = String(params.view || '').trim().toLowerCase();
-
-  if (view === 'keywords') {
-    return renderKeywordViewer_(params.pageUrl || '');
-  }
-
   return HtmlService
-    .createHtmlOutput('<html><body><p>Keyword viewer is available through the Pages sheet links.</p></body></html>')
+    .createHtmlOutput('<html><body><p>SEO Workspace web output is not currently in use.</p></body></html>')
     .setTitle('SEO Workspace');
 }
 
@@ -356,6 +358,7 @@ function checkGoogleIndexStatus() {
     );
 
     writeGoogleInspectionResults_(selectedConfig.website_url, inspectionRun.resultsByUrl);
+    refreshDashboardForWebsite_(selectedConfig.website_url, refreshAt);
     appendLogRow_({
       timestamp: refreshAt,
       website_url: selectedConfig.website_url,
@@ -831,14 +834,6 @@ function generateAiMetaDescriptions() {
     return;
   }
 
-  let aiConnection;
-  try {
-    aiConnection = ensureActiveAiProviderReady_();
-  } catch (error) {
-    ui.alert(truncateText_(error && error.message ? error.message : String(error), 500));
-    return;
-  }
-
   const selectedConfig = selectWebsiteConfig_(configs);
   if (!selectedConfig) {
     return;
@@ -855,11 +850,11 @@ function generateAiMetaDescriptions() {
     const generationRun = buildAiMetaDescriptionRows_(
       selectedConfig,
       pageRows,
-      aiConnection,
       refreshAt
     );
 
     writeAiMetaDescriptionRows_(selectedConfig.website_url, generationRun.rows);
+    refreshDashboardForWebsite_(selectedConfig.website_url, refreshAt);
     appendLogRow_({
       timestamp: refreshAt,
       website_url: selectedConfig.website_url,
@@ -904,14 +899,6 @@ function runAiSeoAudit() {
     return;
   }
 
-  let aiConnection;
-  try {
-    aiConnection = ensureActiveAiProviderReady_();
-  } catch (error) {
-    ui.alert(truncateText_(error && error.message ? error.message : String(error), 500));
-    return;
-  }
-
   const selectedConfig = selectWebsiteConfig_(configs);
   if (!selectedConfig) {
     return;
@@ -930,11 +917,11 @@ function runAiSeoAudit() {
     const auditRun = buildAiSeoAuditRows_(
       selectedConfig,
       pageRows,
-      aiConnection,
       refreshAt
     );
 
     writeAiSeoAuditRows_(selectedConfig.website_url, auditRun.rows);
+    refreshDashboardForWebsite_(selectedConfig.website_url, refreshAt);
     appendLogRow_({
       timestamp: refreshAt,
       website_url: selectedConfig.website_url,
@@ -969,21 +956,34 @@ function runAiSeoAudit() {
   }
 }
 
-function generatePageKeywords() {
+function viewAiMetaDescriptions() {
+  ensureRequiredSheets_();
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(SHEET_NAMES.AI_META_DESCRIPTIONS);
+  spreadsheet.setActiveSheet(sheet);
+}
+
+function viewDashboard() {
+  ensureRequiredSheets_();
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(SHEET_NAMES.DASHBOARD);
+  spreadsheet.setActiveSheet(sheet);
+}
+
+function viewAiSeoAudit() {
+  ensureRequiredSheets_();
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(SHEET_NAMES.AI_SEO_AUDIT);
+  spreadsheet.setActiveSheet(sheet);
+}
+
+function buildPageKeywordsSheet() {
   ensureRequiredSheets_();
 
   const ui = SpreadsheetApp.getUi();
   const configs = getConfigRecords_();
   if (!configs.length) {
     ui.alert('No websites are configured yet. Run "Setup Website" first.');
-    return;
-  }
-
-  let aiConnection;
-  try {
-    aiConnection = ensureActiveAiProviderReady_();
-  } catch (error) {
-    ui.alert(truncateText_(error && error.message ? error.message : String(error), 500));
     return;
   }
 
@@ -1002,34 +1002,46 @@ function generatePageKeywords() {
       );
     }
 
-    const keywordRun = buildPageKeywordRows_(
-      selectedConfig,
-      pageRows,
-      aiConnection,
-      refreshAt
-    );
+    const keywordSheetData = buildPageKeywordSheetRows_(pageRows);
+    writePageKeywordSheet_(keywordSheetData);
 
-    writePageKeywordRows_(selectedConfig.website_url, keywordRun.rows);
     appendLogRow_({
       timestamp: refreshAt,
       website_url: selectedConfig.website_url,
-      action: 'generate_page_keywords',
-      status: keywordRun.status,
+      action: 'build_page_keywords_sheet',
+      status: 'SUCCESS',
       pages_discovered: pageRows.length,
-      pages_written: keywordRun.rows.length,
-      message: keywordRun.logMessage,
+      pages_written: keywordSheetData.rows.length,
+      message:
+        'Page Keywords sheet rebuilt with ' +
+        pageRows.length +
+        ' pages and ' +
+        PAGE_KEYWORD_ROWS_PER_PAGE +
+        ' keyword slots per page using =' +
+        AI_SHEETS_FORMULA_FUNCTION +
+        ' formulas.',
     });
 
     ui.alert(
-      'Page Keywords Generated',
-      keywordRun.popupMessage,
+      'Page Keywords Sheet Built',
+      'Website: ' +
+        selectedConfig.website_url +
+        '\n\nPages included: ' +
+        pageRows.length +
+        '\nKeyword rows written: ' +
+        keywordSheetData.rows.length +
+        '\nKeywords per page: ' +
+        PAGE_KEYWORD_ROWS_PER_PAGE +
+        '\nFormula used: =' +
+        AI_SHEETS_FORMULA_FUNCTION +
+        '(...)',
       ui.ButtonSet.OK
     );
   } catch (error) {
     appendLogRow_({
       timestamp: refreshAt,
       website_url: selectedConfig.website_url,
-      action: 'generate_page_keywords',
+      action: 'build_page_keywords_sheet',
       status: 'FAILED',
       pages_discovered: 0,
       pages_written: 0,
@@ -1037,25 +1049,11 @@ function generatePageKeywords() {
     });
 
     ui.alert(
-      'Page Keyword Generation Failed',
+      'Page Keywords Sheet Failed',
       truncateText_(error && error.message ? error.message : String(error), 500),
       ui.ButtonSet.OK
     );
   }
-}
-
-function viewAiMetaDescriptions() {
-  ensureRequiredSheets_();
-  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = spreadsheet.getSheetByName(SHEET_NAMES.AI_META_DESCRIPTIONS);
-  spreadsheet.setActiveSheet(sheet);
-}
-
-function viewAiSeoAudit() {
-  ensureRequiredSheets_();
-  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = spreadsheet.getSheetByName(SHEET_NAMES.AI_SEO_AUDIT);
-  spreadsheet.setActiveSheet(sheet);
 }
 
 function viewPageKeywords() {
@@ -1112,6 +1110,67 @@ function viewLogs() {
   spreadsheet.setActiveSheet(sheet);
 }
 
+function refreshDashboard() {
+  ensureRequiredSheets_();
+
+  const ui = SpreadsheetApp.getUi();
+  const configs = getConfigRecords_();
+  if (!configs.length) {
+    ui.alert('No websites are configured yet. Run "Setup Website" first.');
+    return;
+  }
+
+  const selectedConfig = selectWebsiteConfig_(configs);
+  if (!selectedConfig) {
+    return;
+  }
+
+  const refreshedAt = formatDateTime_(new Date());
+
+  try {
+    const summary = refreshDashboardForWebsite_(selectedConfig.website_url, refreshedAt);
+
+    appendLogRow_({
+      timestamp: refreshedAt,
+      website_url: selectedConfig.website_url,
+      action: 'refresh_dashboard',
+      status: 'SUCCESS',
+      pages_discovered: summary.pageCount,
+      pages_written: summary.rowCount,
+      message: 'Dashboard refreshed with ' + summary.rowCount + ' summary rows.',
+    });
+
+    ui.alert(
+      'Dashboard Refreshed',
+      'Website: ' +
+        selectedConfig.website_url +
+        '\n\nPages summarized: ' +
+        summary.pageCount +
+        '\nDashboard rows written: ' +
+        summary.rowCount +
+        '\nHigh-priority quick wins: ' +
+        summary.highPriorityCount,
+      ui.ButtonSet.OK
+    );
+  } catch (error) {
+    appendLogRow_({
+      timestamp: refreshedAt,
+      website_url: selectedConfig.website_url,
+      action: 'refresh_dashboard',
+      status: 'FAILED',
+      pages_discovered: 0,
+      pages_written: 0,
+      message: truncateText_(error && error.message ? error.message : String(error), 500),
+    });
+
+    ui.alert(
+      'Dashboard Refresh Failed',
+      truncateText_(error && error.message ? error.message : String(error), 500),
+      ui.ButtonSet.OK
+    );
+  }
+}
+
 function runRefreshWorkflow_(options) {
   ensureRequiredSheets_();
 
@@ -1147,6 +1206,7 @@ function runRefreshWorkflow_(options) {
       refreshAt,
       'SUCCESS'
     );
+    refreshDashboardForWebsite_(selectedConfig.website_url, refreshAt);
     appendLogRow_({
       timestamp: refreshAt,
       website_url: selectedConfig.website_url,
@@ -1243,7 +1303,6 @@ function buildWebsiteSnapshot_(config, dateRangeDays) {
         config.host,
         pageUrl,
         pagePath,
-        buildKeywordViewerFormula_(pageUrl),
         pageEntry.source_method,
         valueOrEmpty_(audit.status_code),
         valueOrEmpty_(audit.title),
@@ -2008,6 +2067,28 @@ function writePagesSnapshot_(websiteUrl, rows) {
   applySheetFormatting_(sheet, HEADERS.PAGES.length);
 }
 
+function writeDashboardRows_(websiteUrl, rows) {
+  const sheet = getOrCreateSheet_(SHEET_NAMES.DASHBOARD, HEADERS.DASHBOARD);
+  const existingData = getSheetValues_(sheet);
+  const retainedRows = existingData.rows.filter(function(row) {
+    return row[0] !== websiteUrl;
+  }).map(function(row) {
+    return normalizeRowLength_(row, HEADERS.DASHBOARD.length);
+  });
+  const allRows = retainedRows.concat(rows);
+
+  sheet.clearContents();
+  sheet
+    .getRange(1, 1, 1, HEADERS.DASHBOARD.length)
+    .setValues([HEADERS.DASHBOARD]);
+  if (allRows.length) {
+    sheet
+      .getRange(2, 1, allRows.length, HEADERS.DASHBOARD.length)
+      .setValues(allRows);
+  }
+  applyDashboardFormatting_(sheet);
+}
+
 function writeAiMetaDescriptionRows_(websiteUrl, rows) {
   const sheet = getOrCreateSheet_(SHEET_NAMES.AI_META_DESCRIPTIONS, HEADERS.AI_META_DESCRIPTIONS);
   const existingData = getSheetValues_(sheet);
@@ -2061,29 +2142,62 @@ function writeAiSeoAuditRows_(websiteUrl, rows) {
   applySheetFormatting_(sheet, HEADERS.AI_SEO_AUDIT.length);
 }
 
-function writePageKeywordRows_(websiteUrl, rows) {
-  const sheet = getOrCreateSheet_(SHEET_NAMES.PAGE_KEYWORDS, HEADERS.PAGE_KEYWORDS);
-  const existingData = getSheetValues_(sheet);
-  const retainedRows = existingData.rows.filter(function(row) {
-    return row[0] !== websiteUrl;
-  }).map(function(row) {
-    return normalizeRowLength_(row, HEADERS.PAGE_KEYWORDS.length);
-  });
-  const allRows = retainedRows.concat(rows);
+function buildPageKeywordSheetRows_(pageRows) {
+  const rows = [];
+  const mergeRanges = [];
+  let currentRowNumber = 2;
 
+  pageRows.forEach(function(pageRow) {
+    const pageUrl = normalizePageUrl_(pageRow.page_url);
+    const groupStartRow = currentRowNumber;
+
+    for (let slotIndex = 0; slotIndex < PAGE_KEYWORD_ROWS_PER_PAGE; slotIndex += 1) {
+      const rowNumber = currentRowNumber + slotIndex;
+      rows.push([
+        pageUrl,
+        buildPageKeywordFormulaForRow_(pageRow, slotIndex + 1, rowNumber, groupStartRow),
+      ]);
+    }
+
+    mergeRanges.push({
+      startRow: groupStartRow,
+      rowCount: PAGE_KEYWORD_ROWS_PER_PAGE,
+    });
+    currentRowNumber += PAGE_KEYWORD_ROWS_PER_PAGE;
+  });
+
+  return {
+    rows: rows,
+    mergeRanges: mergeRanges,
+  };
+}
+
+function writePageKeywordSheet_(keywordSheetData) {
+  const sheet = getOrCreateSheet_(SHEET_NAMES.PAGE_KEYWORDS, HEADERS.PAGE_KEYWORDS);
+  const rows = keywordSheetData.rows || [];
+  const mergeRanges = keywordSheetData.mergeRanges || [];
+
+  const lastRow = Math.max(sheet.getLastRow(), 1);
+  const lastColumn = Math.max(sheet.getLastColumn(), HEADERS.PAGE_KEYWORDS.length);
+  sheet.getRange(1, 1, lastRow, lastColumn).breakApart();
   sheet.clearContents();
   sheet
     .getRange(1, 1, 1, HEADERS.PAGE_KEYWORDS.length)
     .setValues([HEADERS.PAGE_KEYWORDS]);
-  if (allRows.length) {
-    for (let startIndex = 0; startIndex < allRows.length; startIndex += SHEET_WRITE_BATCH_SIZE) {
-      const batchRows = allRows.slice(startIndex, startIndex + SHEET_WRITE_BATCH_SIZE);
-      sheet
-        .getRange(2 + startIndex, 1, batchRows.length, HEADERS.PAGE_KEYWORDS.length)
-        .setValues(batchRows);
-    }
+
+  if (rows.length) {
+    sheet
+      .getRange(2, 1, rows.length, HEADERS.PAGE_KEYWORDS.length)
+      .setValues(rows);
   }
-  applySheetFormatting_(sheet, HEADERS.PAGE_KEYWORDS.length);
+
+  mergeRanges.forEach(function(rangeInfo) {
+    if (rangeInfo.rowCount > 1) {
+      sheet.getRange(rangeInfo.startRow, 1, rangeInfo.rowCount, 1).merge();
+    }
+  });
+
+  applyPageKeywordSheetFormatting_(sheet, rows.length);
 }
 
 function appendLogRow_(logRecord) {
@@ -2124,8 +2238,10 @@ function getDetailedPageRowsForWebsite_(websiteUrl) {
   const pageUrlIndex = HEADERS.PAGES.indexOf('page_url');
 
   return data.rows
-    .map(function(row) {
-      return rowToObject_(HEADERS.PAGES, normalizeRowLength_(row, HEADERS.PAGES.length));
+    .map(function(row, index) {
+      const record = rowToObject_(HEADERS.PAGES, normalizeRowLength_(row, HEADERS.PAGES.length));
+      record._sheet_row = index + 2;
+      return record;
     })
     .filter(function(record) {
       return record.website_url === websiteUrl && String(record.page_url || '').trim();
@@ -2137,21 +2253,17 @@ function getDetailedPageRowsForWebsite_(websiteUrl) {
     });
 }
 
-function getPageKeywordRecordByPageUrl_(pageUrl) {
-  const normalizedPageUrl = normalizePageUrl_(pageUrl);
-  const sheet = getOrCreateSheet_(SHEET_NAMES.PAGE_KEYWORDS, HEADERS.PAGE_KEYWORDS);
+function getRowsByWebsite_(sheetName, headers, websiteUrl) {
+  const sheet = getOrCreateSheet_(sheetName, headers);
   const data = getSheetValues_(sheet);
-  const pageUrlIndex = HEADERS.PAGE_KEYWORDS.indexOf('page_url');
 
-  const matchingRow = data.rows.find(function(row) {
-    return normalizeComparableUrl_(row[pageUrlIndex] || '') === normalizeComparableUrl_(normalizedPageUrl);
-  });
-
-  if (!matchingRow) {
-    return null;
-  }
-
-  return rowToObject_(HEADERS.PAGE_KEYWORDS, normalizeRowLength_(matchingRow, HEADERS.PAGE_KEYWORDS.length));
+  return data.rows
+    .map(function(row) {
+      return rowToObject_(headers, normalizeRowLength_(row, headers.length));
+    })
+    .filter(function(record) {
+      return record.website_url === websiteUrl;
+    });
 }
 
 function getPageUrlsForWebsite_(websiteUrl) {
@@ -2211,6 +2323,237 @@ function writeGoogleInspectionResults_(websiteUrl, resultsByUrl) {
     .getRange(2, 1, updatedRows.length, HEADERS.PAGES.length)
     .setValues(updatedRows);
   applySheetFormatting_(sheet, HEADERS.PAGES.length);
+}
+
+function refreshDashboardForWebsite_(websiteUrl, refreshedAt) {
+  const dashboardData = buildDashboardRows_(websiteUrl, refreshedAt || formatDateTime_(new Date()));
+  writeDashboardRows_(websiteUrl, dashboardData.rows);
+  return {
+    pageCount: dashboardData.pageCount,
+    rowCount: dashboardData.rows.length,
+    highPriorityCount: dashboardData.highPriorityCount,
+  };
+}
+
+function buildDashboardRows_(websiteUrl, refreshedAt) {
+  const pageRows = getDetailedPageRowsForWebsite_(websiteUrl);
+  const config = getConfigRecords_().find(function(record) {
+    return record.website_url === websiteUrl;
+  }) || {};
+
+  if (!pageRows.length) {
+    throw new Error('No pages were found for ' + websiteUrl + '. Run "Refresh Website" first.');
+  }
+
+  const metaRows = getRowsByWebsite_(SHEET_NAMES.AI_META_DESCRIPTIONS, HEADERS.AI_META_DESCRIPTIONS, websiteUrl);
+  const auditRows = getRowsByWebsite_(SHEET_NAMES.AI_SEO_AUDIT, HEADERS.AI_SEO_AUDIT, websiteUrl);
+
+  const overview = summarizeDashboardOverview_(pageRows);
+  const issueSummary = summarizeDashboardIssues_(pageRows);
+  const workflowSummary = summarizeDashboardWorkflow_(metaRows, auditRows);
+  const quickWins = buildDashboardQuickWins_(pageRows);
+  const rows = [];
+
+  function pushRow(section, metric, value, details) {
+    rows.push([
+      websiteUrl,
+      section,
+      metric,
+      value,
+      details,
+      refreshedAt,
+    ]);
+  }
+
+  pushRow('Overview', 'Tracked pages', overview.pageCount, 'Pages currently stored in the Pages tab.');
+  pushRow('Overview', 'Indexable pages', overview.indexableCount, 'Pages currently marked indexable from crawl and robots signals.');
+  pushRow('Overview', 'Non-indexable pages', overview.nonIndexableCount, 'Pages that may need indexability review.');
+  pushRow('Overview', 'Search visibility', overview.totalImpressions, 'Total impressions across tracked pages in the selected date range.');
+  pushRow('Overview', 'Search clicks', overview.totalClicks, 'Total clicks across tracked pages.');
+  pushRow('Overview', 'Average CTR', overview.averageCtrDisplay, 'Weighted CTR based on clicks and impressions.');
+  pushRow('Overview', 'Sessions', overview.totalSessions, 'Total GA4 sessions across tracked pages.');
+  pushRow('Overview', 'Users', overview.totalUsers, 'Total GA4 users across tracked pages.');
+  pushRow('Overview', 'Conversions', overview.totalConversions, 'Total recorded GA4 conversions across tracked pages.');
+  pushRow('Overview', 'Last refresh', valueOrEmpty_(config.last_refresh_at), 'Latest website refresh timestamp from Config.');
+  pushRow('Overview', 'Refresh status', valueOrEmpty_(config.last_refresh_status), 'Latest refresh status from Config.');
+
+  pushRow('Issues', 'Missing meta descriptions', issueSummary.missingMeta, 'Pages missing search snippet descriptions.');
+  pushRow('Issues', 'Missing title tags', issueSummary.missingTitle, 'Pages with empty titles.');
+  pushRow('Issues', 'Missing H1 tags', issueSummary.missingH1, 'Pages missing a main heading.');
+  pushRow('Issues', 'Meta descriptions too long', issueSummary.longMeta, 'Descriptions above the configured length limit.');
+  pushRow('Issues', 'Title tags too short', issueSummary.shortTitle, 'Titles shorter than the recommended minimum.');
+  pushRow('Issues', 'Title tags too long', issueSummary.longTitle, 'Titles longer than the recommended maximum.');
+  pushRow('Issues', 'Canonical mismatches', issueSummary.canonicalMismatch, 'Pages whose canonical points to a different URL.');
+  pushRow('Issues', 'Google inspection issues', issueSummary.googleInspectionIssues, 'Pages not returning an INSPECTED status.');
+  pushRow('Issues', 'Low CTR with impressions', issueSummary.lowCtrHighImpressions, 'Pages getting impressions but weak CTR.');
+
+  pushRow('Workflow', 'AI meta generated', workflowSummary.meta.generated, 'Rows with generated AI meta descriptions.');
+  pushRow('Workflow', 'AI meta failed', workflowSummary.meta.failed, 'Rows that need AI meta retry or review.');
+  pushRow('Workflow', 'AI SEO audit generated', workflowSummary.audit.generated, 'Rows with generated AI SEO recommendations.');
+  pushRow('Workflow', 'AI SEO audit failed', workflowSummary.audit.failed, 'Rows that need AI audit retry or review.');
+  pushRow('Workflow', 'High-priority audit rows', workflowSummary.audit.highPriority, 'Flagged audit rows marked HIGH priority.');
+
+  if (quickWins.length) {
+    quickWins.forEach(function(item, index) {
+      pushRow(
+        'Quick Wins',
+        'Priority ' + (index + 1),
+        item.page_path,
+        'Score ' + item.priorityScore + ' | ' + item.issueSummary + ' | ' + item.searchSignal + ' | ' + item.trafficSignal
+      );
+    });
+  } else {
+    pushRow('Quick Wins', 'Priority 1', 'No urgent quick wins', 'No pages currently met the quick-win thresholds.');
+  }
+
+  return {
+    rows: rows,
+    pageCount: pageRows.length,
+    highPriorityCount: quickWins.filter(function(item) {
+      return item.priorityLabel === 'HIGH';
+    }).length,
+  };
+}
+
+function summarizeDashboardOverview_(pageRows) {
+  const totals = pageRows.reduce(function(summary, pageRow) {
+    const isIndexable = String(pageRow.is_indexable || '').toLowerCase() === 'true';
+    summary.pageCount += 1;
+    summary.indexableCount += isIndexable ? 1 : 0;
+    summary.nonIndexableCount += isIndexable ? 0 : 1;
+    summary.totalClicks += toNumber_(pageRow.clicks);
+    summary.totalImpressions += toNumber_(pageRow.impressions);
+    summary.totalSessions += toNumber_(pageRow.sessions);
+    summary.totalUsers += toNumber_(pageRow.users);
+    summary.totalConversions += toNumber_(pageRow.conversions);
+    return summary;
+  }, {
+    pageCount: 0,
+    indexableCount: 0,
+    nonIndexableCount: 0,
+    totalClicks: 0,
+    totalImpressions: 0,
+    totalSessions: 0,
+    totalUsers: 0,
+    totalConversions: 0,
+  });
+
+  totals.averageCtrDisplay = totals.totalImpressions
+    ? (Math.round((totals.totalClicks / totals.totalImpressions) * 10000) / 100) + '%'
+    : '0%';
+
+  return totals;
+}
+
+function summarizeDashboardIssues_(pageRows) {
+  return pageRows.reduce(function(summary, pageRow) {
+    const title = sanitizeSingleLineText_(pageRow.title || '');
+    const metaDescription = sanitizeSingleLineText_(pageRow.meta_description || '');
+    const h1 = sanitizeSingleLineText_(pageRow.h1 || '');
+    const canonicalUrl = sanitizeSingleLineText_(pageRow.canonical_url || '');
+    const pageUrl = sanitizeSingleLineText_(pageRow.page_url || '');
+    const googleInspectionStatus = String(pageRow.google_inspection_status || '').toUpperCase();
+    const impressions = toNumber_(pageRow.impressions);
+    const ctr = toNumber_(pageRow.ctr);
+
+    if (!metaDescription) {
+      summary.missingMeta += 1;
+    } else if (metaDescription.length > META_DESCRIPTION_MAX_LENGTH) {
+      summary.longMeta += 1;
+    }
+
+    if (!title) {
+      summary.missingTitle += 1;
+    } else {
+      if (title.length < TITLE_MIN_LENGTH) {
+        summary.shortTitle += 1;
+      }
+      if (title.length > TITLE_MAX_LENGTH) {
+        summary.longTitle += 1;
+      }
+    }
+
+    if (!h1) {
+      summary.missingH1 += 1;
+    }
+
+    if (canonicalUrl) {
+      try {
+        if (normalizeComparableUrl_(canonicalUrl) !== normalizeComparableUrl_(pageUrl)) {
+          summary.canonicalMismatch += 1;
+        }
+      } catch (error) {
+        summary.canonicalMismatch += 1;
+      }
+    }
+
+    if (googleInspectionStatus && googleInspectionStatus !== 'INSPECTED') {
+      summary.googleInspectionIssues += 1;
+    }
+
+    if (impressions >= HIGH_IMPRESSIONS_THRESHOLD && ctr > 0 && ctr < LOW_CTR_THRESHOLD) {
+      summary.lowCtrHighImpressions += 1;
+    }
+
+    return summary;
+  }, {
+    missingMeta: 0,
+    missingTitle: 0,
+    missingH1: 0,
+    longMeta: 0,
+    shortTitle: 0,
+    longTitle: 0,
+    canonicalMismatch: 0,
+    googleInspectionIssues: 0,
+    lowCtrHighImpressions: 0,
+  });
+}
+
+function summarizeDashboardWorkflow_(metaRows, auditRows) {
+  function summarizeStatuses(rows) {
+    return rows.reduce(function(summary, row) {
+      const status = String(row.recommendation_status || '').toUpperCase();
+      if (status === 'GENERATED') {
+        summary.generated += 1;
+      } else if (status === 'FAILED') {
+        summary.failed += 1;
+      } else if (status.indexOf('SKIPPED') === 0) {
+        summary.skipped += 1;
+      } else if (status === 'NOT_NEEDED') {
+        summary.notNeeded += 1;
+      }
+      return summary;
+    }, {
+      generated: 0,
+      failed: 0,
+      skipped: 0,
+      notNeeded: 0,
+    });
+  }
+
+  const auditSummary = summarizeStatuses(auditRows);
+  auditSummary.highPriority = auditRows.filter(function(row) {
+    return String(row.priority_label || '').toUpperCase() === 'HIGH';
+  }).length;
+
+  return {
+    meta: summarizeStatuses(metaRows),
+    audit: auditSummary,
+  };
+}
+
+function buildDashboardQuickWins_(pageRows) {
+  return pageRows
+    .map(function(pageRow) {
+      return buildSeoAuditRecord_({ website_url: pageRow.website_url, host: pageRow.host }, pageRow);
+    })
+    .filter(function(auditRecord) {
+      return auditRecord && auditRecord.priorityScore >= 40;
+    })
+    .sort(function(left, right) {
+      return right.priorityScore - left.priorityScore;
+    })
+    .slice(0, 10);
 }
 
 function verifyIndexNowConfiguration_(config) {
@@ -2383,6 +2726,7 @@ function ensureRequiredSheets_() {
   getOrCreateSheet_(SHEET_NAMES.PAGES, HEADERS.PAGES);
   getOrCreateSheet_(SHEET_NAMES.CONFIG, HEADERS.CONFIG);
   getOrCreateSheet_(SHEET_NAMES.LOGS, HEADERS.LOGS);
+  getOrCreateSheet_(SHEET_NAMES.DASHBOARD, HEADERS.DASHBOARD);
   getOrCreateSheet_(SHEET_NAMES.AI_META_DESCRIPTIONS, HEADERS.AI_META_DESCRIPTIONS);
   getOrCreateSheet_(SHEET_NAMES.AI_SEO_AUDIT, HEADERS.AI_SEO_AUDIT);
   getOrCreateSheet_(SHEET_NAMES.PAGE_KEYWORDS, HEADERS.PAGE_KEYWORDS);
@@ -2566,101 +2910,47 @@ function validateOpenAiApiKey_(apiKey) {
   fetchOpenAiModelOptions_(apiKey);
 }
 
-function buildAiMetaDescriptionRows_(config, pageRows, aiConnection, generatedAt) {
+function buildAiMetaDescriptionRows_(config, pageRows, generatedAt) {
   const rows = [];
   const summary = {
     ok: 0,
-    generated: 0,
-    failed: 0,
-    skipped: 0,
-    batches: 0,
+    formulaRows: 0,
   };
-  let aiRequestsUsed = 0;
-  const pageBatches = chunkArray_(pageRows, GEMINI_BATCH_SIZE);
+  pageRows.forEach(function(pageRow) {
+    const existingMetaDescription = sanitizeSingleLineText_(pageRow.meta_description || '');
+    const existingCharCount = existingMetaDescription.length;
+    const lengthStatus = getMetaDescriptionLengthStatus_(existingMetaDescription);
+    const rowNumber = rows.length + 2;
 
-  pageBatches.forEach(function(pageBatch, batchIndex) {
-    summary.batches += 1;
-
-    pageBatch.forEach(function(pageRow) {
-      const existingMetaDescription = sanitizeSingleLineText_(pageRow.meta_description || '');
-      const existingCharCount = existingMetaDescription.length;
-      const lengthStatus = getMetaDescriptionLengthStatus_(existingMetaDescription);
-      let recommendedMetaDescription = '';
-      let aiCharCount = 0;
-      let recommendationStatus = 'NOT_NEEDED';
-      let aiErrorMessage = '';
-
-      if (lengthStatus === 'OK') {
-        summary.ok += 1;
-      } else if (aiRequestsUsed >= GEMINI_MAX_REQUESTS_PER_RUN) {
-        recommendationStatus = 'SKIPPED_RATE_LIMIT';
-        aiErrorMessage =
-          'Run limit of ' + GEMINI_MAX_REQUESTS_PER_RUN + ' AI requests reached';
-        summary.skipped += 1;
-      } else {
-        try {
-          const generationResult = generateRecommendedMetaDescription_(
-            pageRow,
-            aiConnection
-          );
-          recommendedMetaDescription = generationResult.text;
-          aiCharCount = recommendedMetaDescription.length;
-          recommendationStatus = 'GENERATED';
-          summary.generated += 1;
-          if (generationResult.usedApiCall) {
-            aiRequestsUsed += 1;
-            Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
-          }
-        } catch (error) {
-          recommendationStatus = 'FAILED';
-          aiErrorMessage = truncateText_(
-            error && error.message ? error.message : String(error),
-            200
-          );
-          summary.failed += 1;
-          aiRequestsUsed += 1;
-          Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
-        }
-      }
-
-      rows.push([
-        config.website_url,
-        config.host,
-        normalizePageUrl_(pageRow.page_url),
-        pageRow.page_path || extractPathFromUrl_(pageRow.page_url),
-        existingMetaDescription,
-        existingCharCount,
-        lengthStatus,
-        recommendedMetaDescription,
-        aiCharCount,
-        recommendationStatus,
-        aiErrorMessage,
-        generatedAt,
-      ]);
-    });
-
-    if (batchIndex < pageBatches.length - 1) {
-      Utilities.sleep(GEMINI_BATCH_DELAY_MS);
+    if (lengthStatus === 'OK') {
+      summary.ok += 1;
     }
+
+    rows.push([
+      config.website_url,
+      config.host,
+      normalizePageUrl_(pageRow.page_url),
+      pageRow.page_path || extractPathFromUrl_(pageRow.page_url),
+      existingMetaDescription,
+      existingCharCount,
+      lengthStatus,
+      buildAiMetaDescriptionFormulaForRow_(pageRow, rowNumber),
+      '=IF(LEN(H' + rowNumber + ')=0,"",LEN(H' + rowNumber + '))',
+      '=IF(LEN(H' + rowNumber + ')=0,"PENDING_FORMULA",IF(AND(I' + rowNumber + '>=' + META_DESCRIPTION_MIN_LENGTH + ',I' + rowNumber + '<=' + META_DESCRIPTION_MAX_LENGTH + '),"READY","CHECK_LENGTH"))',
+      '',
+      generatedAt,
+    ]);
+    summary.formulaRows += 1;
   });
 
-  const status = summary.failed ? 'WARNING' : 'SUCCESS';
-  const finalStatus = summary.failed || summary.skipped ? 'WARNING' : status;
+  const finalStatus = 'SUCCESS';
   const logMessage =
-    'Processed ' +
+    'Prepared ' +
     pageRows.length +
-    ' pages. OK: ' +
+    ' rows. Existing meta already OK: ' +
     summary.ok +
-    ', AI generated: ' +
-    summary.generated +
-    ', failed: ' +
-    summary.failed +
-    ', skipped: ' +
-    summary.skipped +
-    ', batches: ' +
-    summary.batches +
-    ', AI requests used: ' +
-    aiRequestsUsed +
+    ', formula rows written: ' +
+    summary.formulaRows +
     '.';
   const popupMessage =
     'Website: ' +
@@ -2669,23 +2959,12 @@ function buildAiMetaDescriptionRows_(config, pageRows, aiConnection, generatedAt
     pageRows.length +
     '\nAlready OK: ' +
     summary.ok +
-    '\nAI generated: ' +
-    summary.generated +
-    '\nFailed: ' +
-    summary.failed +
-    '\nSkipped for this run: ' +
-    summary.skipped +
-    '\nBatches processed: ' +
-    summary.batches +
-    '\nAI provider: ' +
-    aiConnection.provider +
-    '\nAI model: ' +
-    aiConnection.model +
-    '\nAI requests used: ' +
-    aiRequestsUsed +
-    ' / ' +
-    GEMINI_MAX_REQUESTS_PER_RUN +
-    '\n\nReview the recommendation_status and ai_error_message columns in the "AI Meta Descriptions" tab for any failures or skipped rows.';
+    '\nFormula rows written: ' +
+    summary.formulaRows +
+    '\nFormula used: =' +
+    AI_SHEETS_FORMULA_FUNCTION +
+    '(prompt, range)' +
+    '\n\nThe ai_recommended_meta_description column now uses sheet formulas. Review ai_char_count and recommendation_status to spot rows that need manual tightening.';
 
   return {
     rows: rows,
@@ -2695,7 +2974,7 @@ function buildAiMetaDescriptionRows_(config, pageRows, aiConnection, generatedAt
   };
 }
 
-function buildAiSeoAuditRows_(config, pageRows, aiConnection, generatedAt) {
+function buildAiSeoAuditRows_(config, pageRows, generatedAt) {
   const rows = [];
   const flaggedPages = pageRows
     .map(function(pageRow) {
@@ -2710,98 +2989,41 @@ function buildAiSeoAuditRows_(config, pageRows, aiConnection, generatedAt) {
 
   const summary = {
     flagged: flaggedPages.length,
-    generated: 0,
-    failed: 0,
-    skipped: 0,
-    batches: 0,
+    formulaRows: 0,
   };
-  let aiRequestsUsed = 0;
-  const pageBatches = chunkArray_(flaggedPages, GEMINI_BATCH_SIZE);
+  flaggedPages.forEach(function(auditRecord) {
+    const rowNumber = rows.length + 2;
 
-  pageBatches.forEach(function(pageBatch, batchIndex) {
-    if (!pageBatch.length) {
-      return;
-    }
-
-    summary.batches += 1;
-
-    pageBatch.forEach(function(auditRecord) {
-      let aiRecommendation = '';
-      let recommendationStatus = 'NOT_NEEDED';
-      let aiErrorMessage = '';
-
-      if (aiRequestsUsed >= GEMINI_MAX_REQUESTS_PER_RUN) {
-        recommendationStatus = 'SKIPPED_RATE_LIMIT';
-        aiErrorMessage =
-          'Run limit of ' + GEMINI_MAX_REQUESTS_PER_RUN + ' AI requests reached';
-        summary.skipped += 1;
-      } else {
-        try {
-          const generationResult = generateAiSeoAuditRecommendation_(
-            auditRecord,
-            aiConnection
-          );
-          aiRecommendation = generationResult.text;
-          recommendationStatus = 'GENERATED';
-          summary.generated += 1;
-          if (generationResult.usedApiCall) {
-            aiRequestsUsed += 1;
-            Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
-          }
-        } catch (error) {
-          recommendationStatus = 'FAILED';
-          aiErrorMessage = truncateText_(
-            error && error.message ? error.message : String(error),
-            200
-          );
-          summary.failed += 1;
-          aiRequestsUsed += 1;
-          Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
-        }
-      }
-
-      rows.push([
-        auditRecord.website_url,
-        auditRecord.host,
-        auditRecord.page_url,
-        auditRecord.page_path,
-        auditRecord.priorityScore,
-        auditRecord.priorityLabel,
-        auditRecord.issueCategory,
-        auditRecord.issueCode,
-        auditRecord.issueSummary,
-        auditRecord.severity,
-        auditRecord.trafficSignal,
-        auditRecord.searchSignal,
-        auditRecord.supportingData,
-        aiRecommendation,
-        recommendationStatus,
-        aiErrorMessage,
-        generatedAt,
-      ]);
-    });
-
-    if (batchIndex < pageBatches.length - 1) {
-      Utilities.sleep(GEMINI_BATCH_DELAY_MS);
-    }
+    rows.push([
+      auditRecord.website_url,
+      auditRecord.host,
+      auditRecord.page_url,
+      auditRecord.page_path,
+      auditRecord.priorityScore,
+      auditRecord.priorityLabel,
+      auditRecord.issueCategory,
+      auditRecord.issueCode,
+      auditRecord.issueSummary,
+      auditRecord.severity,
+      auditRecord.trafficSignal,
+      auditRecord.searchSignal,
+      auditRecord.supportingData,
+      buildAiSeoAuditFormulaForRow_(auditRecord, rowNumber),
+      '=IF(LEN(N' + rowNumber + ')=0,"PENDING_FORMULA","READY")',
+      '',
+      generatedAt,
+    ]);
+    summary.formulaRows += 1;
   });
 
-  const status = summary.failed || summary.skipped ? 'WARNING' : 'SUCCESS';
+  const status = 'SUCCESS';
   const logMessage =
     'Pages checked: ' +
     pageRows.length +
     ', flagged: ' +
     summary.flagged +
-    ', AI generated: ' +
-    summary.generated +
-    ', failed: ' +
-    summary.failed +
-    ', skipped: ' +
-    summary.skipped +
-    ', batches: ' +
-    summary.batches +
-    ', AI requests used: ' +
-    aiRequestsUsed +
+    ', formula rows written: ' +
+    summary.formulaRows +
     '.';
   const popupMessage =
     'Website: ' +
@@ -2810,145 +3032,12 @@ function buildAiSeoAuditRows_(config, pageRows, aiConnection, generatedAt) {
     pageRows.length +
     '\nFlagged pages: ' +
     summary.flagged +
-    '\nAI generated: ' +
-    summary.generated +
-    '\nFailed: ' +
-    summary.failed +
-    '\nSkipped for this run: ' +
-    summary.skipped +
-    '\nBatches processed: ' +
-    summary.batches +
-    '\nAI provider: ' +
-    aiConnection.provider +
-    '\nAI model: ' +
-    aiConnection.model +
-    '\nAI requests used: ' +
-    aiRequestsUsed +
-    ' / ' +
-    GEMINI_MAX_REQUESTS_PER_RUN +
-    '\n\nReview the recommendation_status and ai_error_message columns in the "AI SEO Audit" tab.';
-
-  return {
-    rows: rows,
-    status: status,
-    logMessage: logMessage,
-    popupMessage: popupMessage,
-  };
-}
-
-function buildPageKeywordRows_(config, pageRows, aiConnection, generatedAt) {
-  const rows = [];
-  const summary = {
-    generated: 0,
-    failed: 0,
-    skipped: 0,
-    batches: 0,
-  };
-  let aiRequestsUsed = 0;
-  const pageBatches = chunkArray_(pageRows, GEMINI_BATCH_SIZE);
-
-  pageBatches.forEach(function(pageBatch, batchIndex) {
-    if (!pageBatch.length) {
-      return;
-    }
-
-    summary.batches += 1;
-
-    pageBatch.forEach(function(pageRow) {
-      let keywordRecord = {
-        primaryKeyword: '',
-        secondaryKeywords: '',
-        keywordNotes: '',
-      };
-      let recommendationStatus = 'NOT_NEEDED';
-      let aiErrorMessage = '';
-
-      if (aiRequestsUsed >= GEMINI_MAX_REQUESTS_PER_RUN) {
-        recommendationStatus = 'SKIPPED_RATE_LIMIT';
-        aiErrorMessage =
-          'Run limit of ' + GEMINI_MAX_REQUESTS_PER_RUN + ' AI requests reached';
-        summary.skipped += 1;
-      } else {
-        try {
-          const generationResult = generatePageKeywordRecommendation_(
-            pageRow,
-            aiConnection
-          );
-          keywordRecord = generationResult.keywordRecord;
-          recommendationStatus = 'GENERATED';
-          summary.generated += 1;
-          if (generationResult.usedApiCall) {
-            aiRequestsUsed += 1;
-            Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
-          }
-        } catch (error) {
-          recommendationStatus = 'FAILED';
-          aiErrorMessage = truncateText_(
-            error && error.message ? error.message : String(error),
-            200
-          );
-          summary.failed += 1;
-          aiRequestsUsed += 1;
-          Utilities.sleep(GEMINI_REQUEST_DELAY_MS);
-        }
-      }
-
-      rows.push([
-        config.website_url,
-        config.host,
-        normalizePageUrl_(pageRow.page_url),
-        valueOrEmpty_(pageRow.page_path || extractPathFromUrl_(pageRow.page_url)),
-        keywordRecord.primaryKeyword,
-        keywordRecord.secondaryKeywords,
-        keywordRecord.keywordNotes,
-        recommendationStatus,
-        aiErrorMessage,
-        generatedAt,
-      ]);
-    });
-
-    if (batchIndex < pageBatches.length - 1) {
-      Utilities.sleep(GEMINI_BATCH_DELAY_MS);
-    }
-  });
-
-  const status = summary.failed || summary.skipped ? 'WARNING' : 'SUCCESS';
-  const logMessage =
-    'Pages checked: ' +
-    pageRows.length +
-    ', generated: ' +
-    summary.generated +
-    ', failed: ' +
-    summary.failed +
-    ', skipped: ' +
-    summary.skipped +
-    ', batches: ' +
-    summary.batches +
-    ', AI requests used: ' +
-    aiRequestsUsed +
-    '.';
-  const popupMessage =
-    'Website: ' +
-    config.website_url +
-    '\n\nPages checked: ' +
-    pageRows.length +
-    '\nGenerated: ' +
-    summary.generated +
-    '\nFailed: ' +
-    summary.failed +
-    '\nSkipped for this run: ' +
-    summary.skipped +
-    '\nBatches processed: ' +
-    summary.batches +
-    '\nAI provider: ' +
-    aiConnection.provider +
-    '\nAI model: ' +
-    aiConnection.model +
-    '\nAI requests used: ' +
-    aiRequestsUsed +
-    ' / ' +
-    GEMINI_MAX_REQUESTS_PER_RUN +
-    '\n\nReview the recommendation_status and ai_error_message columns in the "Page Keywords" tab.';
+    '\nFormula rows written: ' +
+    summary.formulaRows +
+    '\nFormula used: =' +
+    AI_SHEETS_FORMULA_FUNCTION +
+    '(prompt, range)' +
+    '\n\nThe ai_recommendation column now uses sheet formulas. Review recommendation_status after the sheet finishes calculating.';
 
   return {
     rows: rows,
@@ -3243,33 +3332,6 @@ function generateAiSeoAuditRecommendation_(auditRecord, aiConnection) {
   };
 }
 
-function generatePageKeywordRecommendation_(pageRow, aiConnection) {
-  const prompt = buildPageKeywordPrompt_(pageRow);
-  const cacheKey = buildAiTextCacheKey_(
-    'keywords',
-    aiConnection.provider,
-    aiConnection.model,
-    prompt
-  );
-  const cache = CacheService.getScriptCache();
-  const cachedResponse = cache.get(cacheKey);
-  if (cachedResponse) {
-    return {
-      keywordRecord: parsePageKeywordResponse_(cachedResponse),
-      usedApiCall: false,
-    };
-  }
-
-  const responseText = callAiGenerateText_(aiConnection.provider, aiConnection.apiKey, prompt);
-  const parsedKeywordRecord = parsePageKeywordResponse_(responseText);
-  cache.put(cacheKey, serializePageKeywordResponse_(parsedKeywordRecord), GEMINI_RESPONSE_CACHE_TTL_SECONDS);
-
-  return {
-    keywordRecord: parsedKeywordRecord,
-    usedApiCall: true,
-  };
-}
-
 function buildGeminiMetaDescriptionPrompt_(pageRow) {
   return [
     'You are rewriting a website meta description for SEO.',
@@ -3286,30 +3348,6 @@ function buildGeminiMetaDescriptionPrompt_(pageRow) {
     'Title: ' + valueOrEmpty_(pageRow.title),
     'H1: ' + valueOrEmpty_(pageRow.h1),
     'Current meta description: ' + valueOrEmpty_(pageRow.meta_description),
-  ].join('\n');
-}
-
-function buildPageKeywordPrompt_(pageRow) {
-  return [
-    'You are helping with SEO keyword targeting for a single page.',
-    'Use only the page signals below.',
-    'Do not invent products, services, locations, or claims that are not supported by the provided data.',
-    'Recommend one primary keyword and 4 to 6 secondary keywords that are realistic for this page.',
-    'Keep recommendations relevant to the page intent and avoid keyword stuffing.',
-    'Return exactly this format and nothing else:',
-    'PRIMARY_KEYWORD: <one keyword phrase>',
-    'SECONDARY_KEYWORDS: <keyword 1> | <keyword 2> | <keyword 3> | <keyword 4>',
-    'KEYWORD_NOTES: <short note explaining fit in one or two concise sentences>',
-    '',
-    'Page URL: ' + valueOrEmpty_(pageRow.page_url),
-    'Page path: ' + valueOrEmpty_(pageRow.page_path),
-    'Title: ' + valueOrEmpty_(pageRow.title),
-    'Meta description: ' + valueOrEmpty_(pageRow.meta_description),
-    'H1: ' + valueOrEmpty_(pageRow.h1),
-    'Clicks: ' + valueOrEmpty_(pageRow.clicks),
-    'Impressions: ' + valueOrEmpty_(pageRow.impressions),
-    'CTR: ' + valueOrEmpty_(pageRow.ctr),
-    'Average position: ' + valueOrEmpty_(pageRow.avg_position),
   ].join('\n');
 }
 
@@ -3345,48 +3383,6 @@ function buildAiSeoAuditPrompt_(auditRecord) {
   ].join('\n');
 }
 
-function parsePageKeywordResponse_(responseText) {
-  const normalizedText = String(responseText || '').replace(/\r/g, '').trim();
-  const primaryKeywordMatch = /PRIMARY_KEYWORD:\s*(.+)/i.exec(normalizedText);
-  const secondaryKeywordsMatch = /SECONDARY_KEYWORDS:\s*(.+)/i.exec(normalizedText);
-  const keywordNotesMatch = /KEYWORD_NOTES:\s*([\s\S]+)/i.exec(normalizedText);
-
-  const primaryKeyword = sanitizeSingleLineText_(primaryKeywordMatch ? primaryKeywordMatch[1] : '');
-  const secondaryKeywords = sanitizeSecondaryKeywords_(
-    secondaryKeywordsMatch ? secondaryKeywordsMatch[1] : ''
-  );
-  const keywordNotes = sanitizeSingleLineText_(keywordNotesMatch ? keywordNotesMatch[1] : '');
-
-  if (!primaryKeyword) {
-    throw new Error('The AI provider did not return a valid primary keyword.');
-  }
-
-  return {
-    primaryKeyword: primaryKeyword,
-    secondaryKeywords: secondaryKeywords,
-    keywordNotes: keywordNotes,
-  };
-}
-
-function sanitizeSecondaryKeywords_(value) {
-  const keywords = String(value || '')
-    .split('|')
-    .map(function(keyword) {
-      return sanitizeSingleLineText_(keyword);
-    })
-    .filter(Boolean)
-    .slice(0, 6);
-
-  return keywords.join(' | ');
-}
-
-function serializePageKeywordResponse_(keywordRecord) {
-  return [
-    'PRIMARY_KEYWORD: ' + valueOrEmpty_(keywordRecord.primaryKeyword),
-    'SECONDARY_KEYWORDS: ' + valueOrEmpty_(keywordRecord.secondaryKeywords),
-    'KEYWORD_NOTES: ' + valueOrEmpty_(keywordRecord.keywordNotes),
-  ].join('\n');
-}
 
 function callAiGenerateText_(provider, apiKey, prompt) {
   if (provider === AI_PROVIDER_OPENAI) {
@@ -3814,43 +3810,6 @@ function extractOpenAiTextFromResponse_(responseBody) {
   return text;
 }
 
-function buildKeywordViewerFormula_(pageUrl) {
-  const viewerUrl = buildKeywordViewerUrl_(pageUrl);
-  if (!viewerUrl) {
-    return 'Deploy web app to enable';
-  }
-
-  return '=HYPERLINK("' + viewerUrl.replace(/"/g, '""') + '","View Keywords")';
-}
-
-function buildKeywordViewerUrl_(pageUrl) {
-  const serviceUrl = ScriptApp.getService().getUrl();
-  if (!serviceUrl) {
-    return '';
-  }
-
-  return (
-    serviceUrl +
-    '?view=keywords&pageUrl=' +
-    encodeURIComponent(normalizePageUrl_(pageUrl))
-  );
-}
-
-function renderKeywordViewer_(pageUrl) {
-  const normalizedPageUrl = pageUrl ? normalizePageUrl_(pageUrl) : '';
-  const keywordRecord = normalizedPageUrl
-    ? getPageKeywordRecordByPageUrl_(normalizedPageUrl)
-    : null;
-  const template = HtmlService.createTemplateFromFile('KeywordViewer');
-  template.pageUrl = normalizedPageUrl;
-  template.keywordRecord = keywordRecord;
-
-  return template
-    .evaluate()
-    .setTitle('Page Keywords')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
-
 function sanitizeGeminiMetaDescription_(value) {
   let sanitizedValue = sanitizeSingleLineText_(value)
     .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
@@ -3868,6 +3827,137 @@ function sanitizeSingleLineText_(value) {
   return String(value || '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function buildPageKeywordFormulaForRow_(pageRow, keywordIndex, rowNumber, groupStartRow) {
+  const pageUrl = normalizePageUrl_(pageRow.page_url);
+  const pageSourceRange = buildPageKeywordSourceRange_(pageRow);
+  const promptSegments = [
+    'You are helping with SEO keyword research for a single page.',
+    'Return exactly one keyword phrase only.',
+    'Do not use numbering, bullets, labels, punctuation-only responses, or explanations.',
+    'Keep the phrase realistic, search-friendly, and closely aligned to the page.',
+    'If the page context is limited, stay conservative and relevant to the visible metadata.',
+    'Generate keyword idea #' + keywordIndex + ' of ' + PAGE_KEYWORD_ROWS_PER_PAGE + ' for this page.',
+    'Page URL: ' + pageUrl,
+    'Page path: ' + valueOrEmpty_(pageRow.page_path),
+    'Title: ' + valueOrEmpty_(pageRow.title),
+    'Meta description: ' + valueOrEmpty_(pageRow.meta_description),
+    'H1: ' + valueOrEmpty_(pageRow.h1),
+  ];
+
+  const escapedPrompt = escapeFormulaString_(promptSegments.join(' '));
+  const duplicateClause = buildPageKeywordDuplicateClause_(rowNumber, groupStartRow);
+
+  return (
+    '=IF(LEN($A' +
+    rowNumber +
+    ')=0,"",' +
+    AI_SHEETS_FORMULA_FUNCTION +
+    '("' +
+    escapedPrompt +
+    '"&' +
+    duplicateClause +
+    ',' +
+    pageSourceRange +
+    '))'
+  );
+}
+
+function buildAiMetaDescriptionFormulaForRow_(pageRow, rowNumber) {
+  const pageUrl = normalizePageUrl_(pageRow.page_url);
+  const pageSourceRange = buildPageKeywordSourceRange_(pageRow);
+  const existingMetaDescription = sanitizeSingleLineText_(pageRow.meta_description || '');
+  const promptSegments = [
+    'Rewrite the meta description for this page as a stronger SEO recommendation.',
+    'Use the existing meta description as a reference, but improve clarity and CTA strength.',
+    'Return plain text only.',
+    'Do not use quotes, labels, bullets, or multiple options.',
+    'Do not invent facts, pricing, offers, locations, or claims not supported by the page context.',
+    'Keep the result between ' + META_DESCRIPTION_MIN_LENGTH + ' and ' + META_DESCRIPTION_MAX_LENGTH + ' characters.',
+    'Aim for a concise, clickworthy search snippet with a natural CTA.',
+    'Page URL: ' + pageUrl,
+    'Existing meta description: ' + existingMetaDescription,
+    'Title: ' + valueOrEmpty_(pageRow.title),
+    'H1: ' + valueOrEmpty_(pageRow.h1),
+  ];
+
+  return (
+    '=IF(LEN($C' +
+    rowNumber +
+    ')=0,"",' +
+    AI_SHEETS_FORMULA_FUNCTION +
+    '("' +
+    escapeFormulaString_(promptSegments.join(' ')) +
+    '",' +
+    pageSourceRange +
+    '))'
+  );
+}
+
+function buildAiSeoAuditFormulaForRow_(auditRecord, rowNumber) {
+  const pageRow = auditRecord.pageData || {};
+  const pageSourceRange = buildPageKeywordSourceRange_(pageRow);
+  const promptSegments = [
+    'You are an SEO consultant writing one concise recommendation for a single page.',
+    'Use the issue summary and the provided page data only.',
+    'Return plain text only in 2 short sentences maximum.',
+    'Sentence 1 should explain the SEO issue clearly.',
+    'Sentence 2 should suggest the most practical next action.',
+    'Do not invent claims, content, offers, pricing, or unsupported details.',
+    'Priority label: ' + valueOrEmpty_(auditRecord.priorityLabel),
+    'Priority score: ' + valueOrEmpty_(auditRecord.priorityScore),
+    'Issue category: ' + valueOrEmpty_(auditRecord.issueCategory),
+    'Issue code: ' + valueOrEmpty_(auditRecord.issueCode),
+    'Issue summary: ' + valueOrEmpty_(auditRecord.issueSummary),
+    'Severity: ' + valueOrEmpty_(auditRecord.severity),
+    'Traffic metrics: ' + valueOrEmpty_(auditRecord.trafficSignal),
+    'Search metrics: ' + valueOrEmpty_(auditRecord.searchSignal),
+    'Supporting data: ' + valueOrEmpty_(auditRecord.supportingData),
+  ];
+
+  return (
+    '=IF(LEN($C' +
+    rowNumber +
+    ')=0,"",' +
+    AI_SHEETS_FORMULA_FUNCTION +
+    '("' +
+    escapeFormulaString_(promptSegments.join(' ')) +
+    '",' +
+    pageSourceRange +
+    '))'
+  );
+}
+
+function buildPageKeywordDuplicateClause_(rowNumber, groupStartRow) {
+  if (rowNumber <= groupStartRow) {
+    return '" Avoid duplicates with earlier keywords for this page: none."';
+  }
+
+  return (
+    '" Avoid duplicates with earlier keywords for this page: "&IFERROR(TEXTJOIN(", ", TRUE, FILTER($B$' +
+    groupStartRow +
+    ':B' +
+    (rowNumber - 1) +
+    ', $B$' +
+    groupStartRow +
+    ':B' +
+    (rowNumber - 1) +
+    '<>"")), "none")&"."'
+  );
+}
+
+function escapeFormulaString_(value) {
+  return String(value || '').replace(/"/g, '""');
+}
+
+function buildPageKeywordSourceRange_(pageRow) {
+  const sheetRow = Number(pageRow._sheet_row || 0);
+  if (!sheetRow) {
+    return '$A$1';
+  }
+
+  return "'" + SHEET_NAMES.PAGES.replace(/'/g, "''") + "'!C" + sheetRow + ':I' + sheetRow;
 }
 
 function getOrCreateSheet_(sheetName, headers) {
@@ -3902,6 +3992,43 @@ function applySheetFormatting_(sheet, columnCount) {
     sheet.insertColumnsAfter(sheet.getMaxColumns(), columnCount - sheet.getMaxColumns());
   }
   sheet.autoResizeColumns(1, columnCount);
+}
+
+function applyDashboardFormatting_(sheet) {
+  applySheetFormatting_(sheet, HEADERS.DASHBOARD.length);
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (spreadsheet.getSheetByName(SHEET_NAMES.DASHBOARD) !== sheet) {
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return;
+  }
+
+  sheet.getRange(2, 1, lastRow - 1, HEADERS.DASHBOARD.length).sort([
+    { column: 2, ascending: true },
+    { column: 3, ascending: true },
+  ]);
+}
+
+function applyPageKeywordSheetFormatting_(sheet, rowCount) {
+  applySheetFormatting_(sheet, HEADERS.PAGE_KEYWORDS.length);
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidth(1, 340);
+  sheet.setColumnWidth(2, 280);
+
+  if (rowCount <= 0) {
+    return;
+  }
+
+  const pageRange = sheet.getRange(2, 1, rowCount, 1);
+  pageRange.setWrap(true);
+  pageRange.setVerticalAlignment('middle');
+
+  const keywordRange = sheet.getRange(2, 2, rowCount, 1);
+  keywordRange.setWrap(true);
+  keywordRange.setVerticalAlignment('middle');
 }
 
 function getSheetValues_(sheet) {
