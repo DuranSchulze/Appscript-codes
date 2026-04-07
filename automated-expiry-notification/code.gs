@@ -1,4 +1,4 @@
-// System Version: March 30, 2026 8:08 am
+// System Version: April 7, 2026 7:30 am
 
 var CONFIG = {
   SHEET_NAME: "VISA automation",
@@ -79,6 +79,7 @@ var HEADER_ALIASES = {
 
 var STATUS = {
   ACTIVE: "Active",
+  NOTICE_SENT: "Notice Sent",
   SENT: "Sent",
   ERROR: "Error",
   SKIPPED: "Skipped",
@@ -107,6 +108,7 @@ var PROP_KEYS = {
   OPEN_TRACKING_BASE_URL: "OPEN_TRACKING_BASE_URL",
   DEFAULT_CC_EMAILS: "DEFAULT_CC_EMAILS",
   DAILY_TRIGGER_HOUR: "DAILY_TRIGGER_HOUR",
+  DAILY_TRIGGER_MINUTE: "DAILY_TRIGGER_MINUTE",
 };
 
 var AI_PROVIDER = {
@@ -392,7 +394,7 @@ function runSetupWizard() {
 
   ui.alert(
     "🚀 Setup This Sheet for Automation",
-    "Welcome! This wizard will guide you through setting up a sheet tab for the Expiry Notification automation.\n\nYou will:\n  Step 1 — Select or create a sheet tab\n  Step 2 — Verify column headers\n  Step 3 — Apply dropdowns\n  Step 4 — Activate the daily schedule\n\nClick OK to begin.",
+    "Welcome! This wizard will guide you through setting up a sheet tab for the Expiry Notification automation.\n\nYou will:\n  Step 1 — Select or create a sheet tab\n  Step 2 — Verify column headers and create automation-managed columns\n  Step 3 — Apply dropdowns\n  Step 4 — Activate the daily schedule\n\nClick OK to begin.",
     ui.ButtonSet.OK,
   );
 
@@ -400,6 +402,7 @@ function runSetupWizard() {
     tabName: "",
     sheet: null,
     columnsOk: false,
+    setupColumnsApplied: false,
     dropsApplied: false,
     scheduleActive: false,
   };
@@ -585,10 +588,12 @@ function wizardStep2Columns(ss, ui, context) {
   }
 
   if (missing.length === 0) {
+    ensureSetupAutomationColumns(context.sheet, context.tabName, flexMap.map);
+    context.setupColumnsApplied = true;
     context.columnsOk = true;
     ui.alert(
       "Step 2 Complete ✓",
-      "All required columns detected automatically.\n\nProceeding to Step 3.",
+      "All required columns detected automatically.\n\nAutomation-managed columns were created/verified for this tab.\n\nProceeding to Step 3.",
       ui.ButtonSet.OK,
     );
     return context;
@@ -612,8 +617,18 @@ function wizardStep2Columns(ss, ui, context) {
       if (!recheck.map[required[j]]) stillMissing.push(HEADERS[required[j]]);
     }
     context.columnsOk = stillMissing.length === 0;
+    if (context.columnsOk) {
+      ensureSetupAutomationColumns(context.sheet, context.tabName, recheck.map);
+      context.setupColumnsApplied = true;
+      ui.alert(
+        "Automation Columns Ready",
+        "Required columns are now mapped.\n\nAutomation-managed columns were created/verified for this tab.",
+        ui.ButtonSet.OK,
+      );
+    }
   } else {
     context.columnsOk = false;
+    context.setupColumnsApplied = false;
     ui.alert(
       "Step 2 — Warning",
       "Continuing without all required columns. The automation may not work correctly until columns are mapped.\n\nYou can fix this later via Tab Management → Map Tab Columns.",
@@ -657,7 +672,13 @@ function wizardStep3Dropdowns(ss, ui, context) {
   if (colMap.STATUS) {
     var statusRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(
-        [STATUS.ACTIVE, STATUS.SENT, STATUS.ERROR, STATUS.SKIPPED],
+        [
+          STATUS.ACTIVE,
+          STATUS.NOTICE_SENT,
+          STATUS.SENT,
+          STATUS.ERROR,
+          STATUS.SKIPPED,
+        ],
         true,
       )
       .setAllowInvalid(true)
@@ -720,10 +741,14 @@ function wizardStep3Dropdowns(ss, ui, context) {
 }
 
 /**
- * Wizard Step 4 — offer to activate the daily 8 AM trigger.
+ * Wizard Step 4 — offer to activate the configured daily trigger.
  */
 function wizardStep4Schedule(ui, context) {
   var triggerCount = getTriggersByHandler("runDailyCheck").length;
+  var scheduledTime = formatDailyTriggerTime(
+    getDailyTriggerHour(),
+    getDailyTriggerMinute(),
+  );
   var currentStatus =
     triggerCount > 0
       ? "ACTIVE (" + triggerCount + " trigger already set)"
@@ -733,7 +758,9 @@ function wizardStep4Schedule(ui, context) {
     "Step 4 of 4 — Daily Schedule",
     "Current daily schedule status: " +
       currentStatus +
-      "\n\nActivate the daily 8 AM email schedule now?",
+      "\n\nActivate the daily " +
+      scheduledTime +
+      " email schedule now?",
     ui.ButtonSet.YES_NO,
   );
 
@@ -766,6 +793,10 @@ function wizardStep5Summary(ui, context) {
       (context.columnsOk
         ? "✓ All required columns OK"
         : "⚠ Some columns missing — map them via Tab Management"),
+    "Automation Cols: " +
+      (context.setupColumnsApplied
+        ? "✓ Created/verified"
+        : "— Not fully applied"),
     "Dropdowns:       " + (context.dropsApplied ? "✓ Applied" : "— Skipped"),
     "Daily Schedule:  " +
       (context.scheduleActive ? "✓ Active" : "— Not activated"),
@@ -1872,12 +1903,19 @@ function viewDocumentation() {
       "- [Expiry Date]\n" +
       "- [Date of Expiration]\n" +
       "- [Date of Expiry]\n" +
+      "- [Any Other Column Header]\n" +
       "- Put these directly in the Remarks column to auto-fill row data\n" +
+      "- Example custom fields: [Company], [Issued Date], [ID No. /Document No.]\n" +
       "- Example: Good day [Client Name], your [Document Type] expires on [Expiry Date].\n\n" +
       "Reminder Rules:\n" +
       "- First reminder sends on the computed Notice Date target\n" +
-      "- Final reminder sends on the exact Expiry Date\n" +
+      "- After the first reminder, Status becomes Notice Sent to block duplicate notice emails\n" +
+      "- Final reminder sends on the exact Expiry Date and then marks Status as Sent\n" +
+      "- No reminder emails are sent after the Expiry Date has passed\n" +
       "- A row is fully complete only after the final reminder is sent\n\n" +
+      "Setup Behavior:\n" +
+      "- Setup now creates or verifies automation-managed columns on existing tabs\n" +
+      "- LOGS is the run-history page for sends, skips, and errors\n\n" +
       "Reply Tracking:\n" +
       "- The sheet auto-creates a Reply Status column next to Status when needed\n" +
       "- Pending = email was sent and the system is waiting for a reply\n" +
@@ -1906,6 +1944,12 @@ function showAbout() {
       "It sends one reminder based on the Notice Date\n" +
       "(for example, 90 days before expiry), and one final\n" +
       "reminder on the exact Expiry Date.\n\n" +
+      "Status drives the send flow:\n" +
+      "Active = first notice can send\n" +
+      "Notice Sent = final expiry-day reminder only\n" +
+      "Sent = fully completed\n\n" +
+      "Setup also prepares automation-managed columns on the selected tab.\n" +
+      "LOGS remains the run-history sheet.\n\n" +
       "Default CC emails can be configured from\n" +
       "Automation Settings > Set Default CC Emails.\n" +
       "Any Staff Email in the row is also CC'd.\n\n" +
@@ -1918,7 +1962,8 @@ function showAbout() {
       "In the Remarks column, users can write the email body\n" +
       "and use these fields:\n" +
       "[Client Name], [Document Type], [Expiry Date],\n" +
-      "[Date of Expiration], [Date of Expiry]\n\n" +
+      "[Date of Expiration], [Date of Expiry],\n" +
+      "or any other sheet header like [Company]\n\n" +
       "Example:\n" +
       "Good day [Client Name], your [Document Type]\n" +
       "expires on [Expiry Date].\n\n" +
@@ -2715,17 +2760,19 @@ function checkScheduleStatus() {
   var replyTriggers = getTriggersByHandler("runReplyScan");
 
   var configuredHour = getDailyTriggerHour();
+  var configuredMinute = getDailyTriggerMinute();
+  var configuredTime = formatDailyTriggerTime(configuredHour, configuredMinute);
   var msg;
   if (active.length === 0) {
     msg =
       "Status: INACTIVE\n\nNo daily schedule is set up.\nConfigured send time: " +
-      configuredHour +
-      ":00\nUse 'Activate Daily Schedule' to enable it.";
+      configuredTime +
+      "\nUse 'Activate Daily Schedule' to enable it.";
   } else {
     var lines = [
       "Status: ACTIVE",
       "",
-      "Send time: " + configuredHour + ":00 Philippine Time (Asia/Manila)",
+      "Send time: " + configuredTime + " Philippine Time (Asia/Manila)",
       active.length + " trigger(s) active.",
     ];
     if (active.length > 1) {
@@ -2953,6 +3000,7 @@ function runDailyCheck() {
       var status = getCellStr(row, colMap.STATUS);
       var replyStatus = getCellStr(row, colMap.REPLY_STATUS);
       var sendMode = getRowSendMode(row, colMap);
+      var templateContext = buildRowTemplateContext(visaSheet, tabName, row);
 
       if (!isProcessableStatus(status)) continue;
 
@@ -3041,14 +3089,24 @@ function runDailyCheck() {
       var targetDate = computeTargetDate(expiryDate, offset);
       var isNoticeDue = isTargetDateDue(targetDate, today);
       var isExpiryDay = isSameDay(expiryDate, today);
+      var isPastExpiry =
+        getMidnight(today).getTime() > getMidnight(expiryDate).getTime();
       var sameDayFinal = isSameDay(targetDate, expiryDate);
-      var firstReminderSent = !!(colMap.SENT_AT && row[colMap.SENT_AT - 1]);
-      var finalReminderSent = !!(
-        colMap.FINAL_NOTICE_SENT_AT && row[colMap.FINAL_NOTICE_SENT_AT - 1]
-      );
+      var statusAllowsNotice = isStatusBlank(status) || isStatusActive(status);
+      var statusAllowsFinal = statusAllowsNotice || isStatusNoticeSent(status);
 
-      var shouldSendNotice = isNoticeDue && !firstReminderSent;
-      var shouldSendFinal = isExpiryDay && !finalReminderSent;
+      var shouldSendNotice = isNoticeDue && statusAllowsNotice && !isPastExpiry;
+      var shouldSendFinal = isExpiryDay && statusAllowsFinal && !isPastExpiry;
+
+      if (isPastExpiry) {
+        appendLog(
+          logsSheet,
+          tabName,
+          clientName,
+          "SKIPPED",
+          "Expiry date has already passed. No further reminder emails will be sent for this row.",
+        );
+      }
 
       if (isReplyStatusReplied(replyStatus)) {
         shouldSendNotice = false;
@@ -3109,6 +3167,7 @@ function runDailyCheck() {
             expiryDate,
             docType,
             noticeToken,
+            templateContext,
             "notice",
           );
           var noticeSubject = buildStageSubject(baseSubject, "notice");
@@ -3158,7 +3217,7 @@ function runDailyCheck() {
               rowIndex,
               colMap,
               tabName,
-              STATUS.ACTIVE,
+              STATUS.NOTICE_SENT,
             );
           }
 
@@ -3206,6 +3265,7 @@ function runDailyCheck() {
             expiryDate,
             docType,
             finalToken,
+            templateContext,
             "final",
           );
           var finalSubject = buildStageSubject(baseSubject, "final");
@@ -3231,7 +3291,7 @@ function runDailyCheck() {
             messageId: finalMeta.messageId,
           });
 
-          if (!firstReminderSent && !shouldSendNotice) {
+          if (!isStatusNoticeSent(status) && !shouldSendNotice) {
             colMap = ensureReplyStatusColumn(visaSheet, tabName, colMap);
             writePostSendMetadata(visaSheet, rowIndex, colMap, {
               sentAt: new Date(),
@@ -3476,7 +3536,7 @@ function setTabDataStartRow(tabName, rowNum) {
 function normalizeHeaderName(value) {
   return String(value || "")
     .toLowerCase()
-    .replace(/[._-]+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -3944,6 +4004,14 @@ function isStatusActive(statusValue) {
   );
 }
 
+function isStatusNoticeSent(statusValue) {
+  return (
+    String(statusValue || "")
+      .trim()
+      .toLowerCase() === STATUS.NOTICE_SENT.toLowerCase()
+  );
+}
+
 /**
  * Returns true when status is blank/empty.
  */
@@ -3953,10 +4021,14 @@ function isStatusBlank(statusValue) {
 
 /**
  * Returns true when a row should be considered for processing.
- * Current rule: process rows with Active or blank Status.
+ * Current rule: process rows with Active, Notice Sent, or blank Status.
  */
 function isProcessableStatus(statusValue) {
-  return isStatusActive(statusValue) || isStatusBlank(statusValue);
+  return (
+    isStatusActive(statusValue) ||
+    isStatusNoticeSent(statusValue) ||
+    isStatusBlank(statusValue)
+  );
 }
 
 function isReplyStatusReplied(replyStatusValue) {
@@ -4057,7 +4129,13 @@ function setStatus(sheet, rowIndex, statusColIndex, statusValue) {
 }
 
 function getDefaultStatusOptions() {
-  return [STATUS.ACTIVE, STATUS.SENT, STATUS.ERROR, STATUS.SKIPPED];
+  return [
+    STATUS.ACTIVE,
+    STATUS.NOTICE_SENT,
+    STATUS.SENT,
+    STATUS.ERROR,
+    STATUS.SKIPPED,
+  ];
 }
 
 function getStatusOptionsForTab(sheet, tabName, colMap) {
@@ -4265,6 +4343,35 @@ function ensureOpenTrackingColumns(sheet, tabName, colMap) {
   return buildColumnMap(sheet, tabName);
 }
 
+function ensureSetupAutomationColumns(sheet, tabName, colMap) {
+  var updatedMap = colMap || buildColumnMap(sheet, tabName);
+  var directKeys = [
+    "STATUS",
+    "STAFF_EMAIL",
+    "SEND_MODE",
+    "SENT_AT",
+    "SENT_THREAD_ID",
+    "SENT_MESSAGE_ID",
+  ];
+
+  for (var i = 0; i < directKeys.length; i++) {
+    var key = directKeys[i];
+    if (!updatedMap[key]) {
+      updatedMap[key] = ensureColumnExists(sheet, tabName, key);
+    }
+  }
+
+  updatedMap = buildColumnMap(sheet, tabName);
+  updatedMap = ensureReplyMetadataColumns(sheet, tabName, updatedMap);
+  updatedMap.REPLY_KEYWORD =
+    updatedMap.REPLY_KEYWORD || ensureColumnExists(sheet, tabName, "REPLY_KEYWORD");
+  updatedMap = buildColumnMap(sheet, tabName);
+  updatedMap = ensureFinalNoticeColumns(sheet, tabName, updatedMap);
+  updatedMap = ensureOpenTrackingColumns(sheet, tabName, updatedMap);
+
+  return buildColumnMap(sheet, tabName);
+}
+
 function writeFinalNoticeMetadata(sheet, rowIndex, colMap, meta) {
   var finalAt = meta && meta.sentAt ? meta.sentAt : new Date();
   var threadId = meta && meta.threadId ? String(meta.threadId) : "";
@@ -4298,6 +4405,7 @@ function buildStageEmailContent(
   expiryDate,
   docType,
   openToken,
+  templateContext,
   stage,
 ) {
   var content = buildEmailContent(
@@ -4306,6 +4414,7 @@ function buildStageEmailContent(
     expiryDate,
     docType,
     openToken,
+    templateContext,
   );
 
   if (stage === "final") {
@@ -4678,6 +4787,7 @@ function buildEmailContent(
   expiryDate,
   docType,
   openToken,
+  templateContext,
 ) {
   var expiryStr = formatDate(expiryDate);
   var docTypeText = docType ? docType : "Visa/Permit";
@@ -4690,6 +4800,7 @@ function buildEmailContent(
       clientName,
       expiryStr,
       docTypeText,
+      templateContext,
     );
     source = "Remarks";
   } else {
@@ -4699,6 +4810,7 @@ function buildEmailContent(
       clientName,
       expiryStr,
       docTypeText,
+      templateContext,
     );
     source = fallback.source;
   }
@@ -4725,7 +4837,7 @@ function buildEmailContent(
  * Backward-compatible helper that returns only HTML body.
  */
 function buildEmailBody(remarks, clientName, expiryDate, docType) {
-  return buildEmailContent(remarks, clientName, expiryDate, docType, "")
+  return buildEmailContent(remarks, clientName, expiryDate, docType, "", null)
     .htmlBody;
 }
 
@@ -4872,12 +4984,63 @@ function applyTemplatePlaceholders(
   clientName,
   expiryStr,
   docType,
+  templateContext,
 ) {
-  return String(templateText || "")
+  var rendered = String(templateText || "")
     .replace(/\[\s*client\s*name\s*\]/gi, clientName || "")
     .replace(/\[\s*date\s*of\s*(expiration|expiry)\s*\]/gi, expiryStr || "")
     .replace(/\[\s*expiry\s*date\s*\]/gi, expiryStr || "")
     .replace(/\[\s*document\s*type\s*\]/gi, docType || "Visa/Permit");
+
+  return replaceGenericTemplateTokens(rendered, templateContext);
+}
+
+function formatTemplateValue(value) {
+  if (value instanceof Date) {
+    if (!isNaN(value.getTime())) return formatDate(value);
+    return "";
+  }
+  return String(value === null || value === undefined ? "" : value).trim();
+}
+
+function buildRowTemplateContext(sheet, tabName, rowValues) {
+  var context = {};
+  if (!sheet || !rowValues) return context;
+
+  var headerInfo = resolveEffectiveHeaderRow(sheet, tabName);
+  var headers = headerInfo.headers || [];
+  var lastCol = sheet.getLastColumn();
+  if (headers.length === 0 && lastCol > 0) {
+    headers = getRowValues(sheet, headerInfo.headerRow, lastCol);
+  }
+
+  for (var i = 0; i < headers.length && i < rowValues.length; i++) {
+    var headerText = String(headers[i] || "").trim();
+    if (!headerText) continue;
+
+    var rawValue = rowValues[i];
+    var formattedValue = formatTemplateValue(rawValue);
+    if (!formattedValue && formattedValue !== "0") continue;
+
+    context[normalizeHeaderName(headerText)] = formattedValue;
+  }
+
+  return context;
+}
+
+function replaceGenericTemplateTokens(templateText, templateContext) {
+  var context = templateContext || {};
+  return String(templateText || "").replace(
+    /\[([^\]]+)\]/g,
+    function (match, token) {
+      var normalized = normalizeHeaderName(token);
+      if (!normalized) return match;
+      if (Object.prototype.hasOwnProperty.call(context, normalized)) {
+        return context[normalized];
+      }
+      return match;
+    },
+  );
 }
 
 /**
@@ -5113,31 +5276,72 @@ function getDailyTriggerHour() {
     : CONFIG.TRIGGER_HOUR;
 }
 
+function getDailyTriggerMinute() {
+  var stored = getPropString(PROP_KEYS.DAILY_TRIGGER_MINUTE, "");
+  var parsed = parseInt(stored, 10);
+  return !isNaN(parsed) && parsed >= 0 && parsed <= 59 ? parsed : 0;
+}
+
+function formatTwoDigits(value) {
+  var num = parseInt(value, 10);
+  if (isNaN(num) || num < 0) num = 0;
+  return num < 10 ? "0" + num : String(num);
+}
+
+function formatDailyTriggerTime(hour, minute) {
+  return hour + ":" + formatTwoDigits(minute);
+}
+
+function parseDailyTriggerTimeInput(rawText) {
+  var text = String(rawText || "").trim();
+  if (!text) return null;
+
+  if (/^\d{1,2}$/.test(text)) {
+    var hourOnly = parseInt(text, 10);
+    if (hourOnly >= 0 && hourOnly <= 23) {
+      return { hour: hourOnly, minute: 0 };
+    }
+    return null;
+  }
+
+  var match = text.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!match) return null;
+
+  var hour = parseInt(match[1], 10);
+  var minute = parseInt(match[2], 10);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+
+  return { hour: hour, minute: minute };
+}
+
 /**
  * Dialog to let the user set the daily send time.
  */
 function setDailyTriggerHourDialog() {
   var ui = SpreadsheetApp.getUi();
   var current = getDailyTriggerHour();
+  var currentMinute = getDailyTriggerMinute();
   var response = ui.prompt(
     "Set Daily Send Time",
-    "Enter the hour (0–23) for the daily email schedule.\n\nExamples: 8 = 8:00 AM, 14 = 2:00 PM\n\nCurrent: " +
-      current +
-      ":00",
+    "Enter the daily email schedule time in 24-hour format.\n\nExamples: 8 = 8:00 AM, 8:30 = 8:30 AM, 14:15 = 2:15 PM\n\nCurrent: " +
+      formatDailyTriggerTime(current, currentMinute),
     ui.ButtonSet.OK_CANCEL,
   );
   if (response.getSelectedButton() !== ui.Button.OK) return;
-  var input = parseInt(response.getResponseText().trim(), 10);
-  if (isNaN(input) || input < 0 || input > 23) {
-    ui.alert("Invalid hour. Please enter a number between 0 and 23.");
+  var parsed = parseDailyTriggerTimeInput(response.getResponseText());
+  if (!parsed) {
+    ui.alert(
+      "Invalid time. Please enter a valid 24-hour time like 8, 8:30, or 14:15.",
+    );
     return;
   }
-  setPropString(PROP_KEYS.DAILY_TRIGGER_HOUR, String(input));
+  setPropString(PROP_KEYS.DAILY_TRIGGER_HOUR, String(parsed.hour));
+  setPropString(PROP_KEYS.DAILY_TRIGGER_MINUTE, String(parsed.minute));
   ui.alert(
     "Send Time Updated",
     "Daily send time set to " +
-      input +
-      ":00 Philippine Time.\n\nClick 'Activate Daily Schedule' to apply the new time.",
+      formatDailyTriggerTime(parsed.hour, parsed.minute) +
+      " Philippine Time.\n\nClick 'Activate Daily Schedule' to apply the new time.",
     ui.ButtonSet.OK,
   );
 }
@@ -5147,18 +5351,20 @@ function installTrigger() {
   removeTrigger();
 
   var hour = getDailyTriggerHour();
+  var minute = getDailyTriggerMinute();
 
   ScriptApp.newTrigger("runDailyCheck")
     .timeBased()
     .everyDays(1)
     .atHour(hour)
+    .nearMinute(minute)
     .inTimezone("Asia/Manila")
     .create();
 
   var msg =
     "Daily schedule activated. runDailyCheck() will run automatically every day at " +
-    hour +
-    ":00 Philippine Time (Asia/Manila).";
+    formatDailyTriggerTime(hour, minute) +
+    " Philippine Time (Asia/Manila).\n\nNote: Apps Script time-based triggers run in a scheduled window, so the actual fire time may be near that minute rather than exact to the second.";
   Logger.log(msg);
   try {
     SpreadsheetApp.getUi().alert(
@@ -5848,7 +6054,13 @@ function setupSheetDropdowns() {
   if (colMap.STATUS) {
     var statusRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(
-        [STATUS.ACTIVE, STATUS.SENT, STATUS.ERROR, STATUS.SKIPPED],
+        [
+          STATUS.ACTIVE,
+          STATUS.NOTICE_SENT,
+          STATUS.SENT,
+          STATUS.ERROR,
+          STATUS.SKIPPED,
+        ],
         true,
       )
       .setAllowInvalid(true)
@@ -6362,9 +6574,31 @@ function diagnosticInspectRow() {
       : "N/A";
   var finalReminderDueNow =
     !isNaN(expiryDate.getTime()) && isSameDay(expiryDate, today) ? "YES" : "No";
+  var pastExpiry =
+    !isNaN(expiryDate.getTime()) &&
+    getMidnight(today).getTime() > getMidnight(expiryDate).getTime()
+      ? "YES"
+      : "No";
   var firstReminderSent =
     colMap.SENT_AT && row[colMap.SENT_AT - 1] ? "YES" : "No";
   var finalReminderSent = finalNoticeSentAt ? "YES" : "No";
+  var stageEligibility = [
+    "Notice eligible now: " +
+      (offset !== null &&
+      !isNaN(expiryDate.getTime()) &&
+      isTargetDateDue(computeTargetDate(expiryDate, offset), today) &&
+      (isStatusBlank(status) || isStatusActive(status))
+        ? "YES"
+        : "No"),
+    "Final eligible now:  " +
+      (!isNaN(expiryDate.getTime()) &&
+      isSameDay(expiryDate, today) &&
+      (isStatusBlank(status) ||
+        isStatusActive(status) ||
+        isStatusNoticeSent(status))
+        ? "YES"
+        : "No"),
+  ];
 
   // Resolve attachments for per-file breakdown
   var attachDisplay = "(none)";
@@ -6431,6 +6665,9 @@ function diagnosticInspectRow() {
     "Target Date:  " + targetStr,
     "Notice Reminder Due Now: " + sendEligibleNow,
     "Final Reminder Due Now:  " + finalReminderDueNow,
+    "Past Expiry Date:        " + pastExpiry,
+    stageEligibility[0],
+    stageEligibility[1],
     "First Reminder Sent:     " + firstReminderSent,
     "Final Reminder Sent:     " + finalReminderSent,
     "",
@@ -6602,12 +6839,14 @@ function diagnosticSendTestRow() {
     colMap = ensureOpenTrackingColumns(sheet, tabName, colMap);
   }
   var openToken = trackingEnabled ? generateOpenTrackingToken() : "";
+  var templateContext = buildRowTemplateContext(sheet, tabName, row);
   var emailContent = buildEmailContent(
     remarks,
     clientName,
     expiryDate,
     docType,
     openToken,
+    templateContext,
   );
 
   try {
