@@ -1770,37 +1770,69 @@ function wizardStep1Tab(ss, ui, context) {
     }
 
     var pickResp = ui.prompt(
-      "Step 1 of 4 — Select Existing Tab",
+      "Step 1 of 4 — Select Existing Tab(s)",
       "Available tabs:\n\n" +
         options.join("\n") +
-        "\n\nEnter the number of the tab to use:",
+        "\n\nEnter ONE OR MORE tab numbers, separated by commas (e.g. 1,2,3,4) " +
+        "or as a range (e.g. 1-3). Names also work.",
       ui.ButtonSet.OK_CANCEL,
     );
     if (pickResp.getSelectedButton() !== ui.Button.OK) return null;
 
-    var idx = parseInt(pickResp.getResponseText().trim(), 10);
-    if (isNaN(idx) || idx < 1 || idx > sheets.length) {
-      ui.alert("Invalid selection. Setup cancelled.");
+    var rawInput = String(pickResp.getResponseText() || "").trim();
+    if (!rawInput) {
+      ui.alert("No selection entered. Setup cancelled.");
       return null;
     }
 
-    var selectedSheet = sheets[idx - 1];
-    var selectedName = selectedSheet.getName();
-    var selectedId = selectedSheet.getSheetId();
+    // Use the same multi-select parser the other menu items use, so
+    // "1,2,3,4" registers ALL four tabs (not just the first).
+    var sheetEntries = sheets.map(function (sh) {
+      return { sheet: sh, sheetName: sh.getName() };
+    });
+    var parsed = parseTabSelectionInput(rawInput, sheetEntries);
 
-    // Register by ID+name if not already registered
-    var alreadyRegistered = currentIds.indexOf(selectedId) >= 0;
-    if (!alreadyRegistered) {
-      currentEntries.push({ id: selectedId, name: selectedName });
+    if (parsed.selected.length === 0) {
+      ui.alert(
+        "Invalid Selection",
+        "Could not resolve: " + parsed.errors.join(", ") +
+          "\n\nValid range is 1-" + sheets.length + ". Setup cancelled.",
+        ui.ButtonSet.OK,
+      );
+      return null;
+    }
+
+    // Register every newly-selected tab.
+    var addedNames = [];
+    for (var n = 0; n < parsed.selected.length; n++) {
+      var sel = parsed.selected[n].sheet;
+      if (currentIds.indexOf(sel.getSheetId()) < 0) {
+        currentEntries.push({ id: sel.getSheetId(), name: sel.getName() });
+        currentIds.push(sel.getSheetId());
+        addedNames.push(sel.getName());
+      }
+    }
+    if (addedNames.length > 0) {
       setConfiguredTabEntries(currentEntries);
     }
 
-    context.tabName = selectedName;
-    context.sheet = selectedSheet;
+    // The first selected tab drives the wizard's per-tab dialogs;
+    // allTabNames lets later steps loop over every tab the user picked.
+    var primarySheet = parsed.selected[0].sheet;
+    context.tabName = primarySheet.getName();
+    context.sheet = primarySheet;
+    context.allTabNames = parsed.selected.map(function (e) { return e.sheetName; });
+
+    var allLabel = context.allTabNames.join(", ");
+    var skippedNote = parsed.errors.length > 0
+      ? "\n\n⚠ Skipped (could not resolve): " + parsed.errors.join(", ")
+      : "";
 
     ui.alert(
       "Step 1 Complete ✓",
-      'Tab "' + selectedName + '" registered.\n\nProceeding to Step 2.',
+      "Selected " + context.allTabNames.length + " tab(s): " + allLabel +
+        "\n\nProceeding to Step 2 (will run per tab)." +
+        skippedNote,
       ui.ButtonSet.OK,
     );
     return context;
@@ -1808,74 +1840,106 @@ function wizardStep1Tab(ss, ui, context) {
 }
 
 function wizardStep2Columns(ss, ui, context) {
-  var missing = findMissingUserInputColumns(context.sheet, context.tabName);
+  // If the user picked multiple tabs in Step 1, run the column check for
+  // every tab. Otherwise just the primary.
+  var tabNames = context.allTabNames && context.allTabNames.length > 0
+    ? context.allTabNames
+    : [context.tabName];
 
-  if (missing.length === 0) {
-    ensureSetupAutomationColumns(context.sheet, context.tabName,
-      buildColumnMap(context.sheet, context.tabName));
-    context.setupColumnsApplied = true;
-    context.columnsOk = true;
-    ui.alert(
-      "Step 2 Complete ✓",
-      "All " + REQUIRED_USER_COLUMNS.length +
-        " required user-input columns are present.\n\nCode-managed columns were created/verified for this tab.\n\nProceeding to Step 3.",
-      ui.ButtonSet.OK,
-    );
-    return context;
+  var allOk = true;
+  var allApplied = true;
+  var perTabSummary = [];
+
+  for (var t = 0; t < tabNames.length; t++) {
+    var tabName = tabNames[t];
+    var sheet = ss.getSheetByName(tabName);
+    if (!sheet) {
+      perTabSummary.push("✗ " + tabName + " — sheet not found");
+      allOk = false;
+      allApplied = false;
+      continue;
+    }
+
+    var result = wizardStep2ColumnsForTab(ui, sheet, tabName, t + 1, tabNames.length);
+    if (result === null) return null; // user cancelled
+    perTabSummary.push(result.summary);
+    if (!result.columnsOk) allOk = false;
+    if (!result.setupColumnsApplied) allApplied = false;
   }
 
-  var missingLabels = missing.map(function (m) { return m.label; });
+  context.columnsOk = allOk;
+  context.setupColumnsApplied = allApplied;
 
-  var addNow = ui.alert(
-    "Step 2 of 4 — Missing User-Input Columns",
-    "These required user-input columns are missing from \"" +
-      context.tabName + "\":\n\n  • " + missingLabels.join("\n  • ") +
-      "\n\nAdd them automatically (headers appended at the end of the row)?\n\nChoose No to map them manually instead.",
-    ui.ButtonSet.YES_NO_CANCEL,
-  );
-
-  if (addNow === ui.Button.CANCEL) return null;
-
-  if (addNow === ui.Button.YES) {
-    ensureUserInputColumns(context.sheet, context.tabName);
-  } else {
-    mapTabColumns();
-  }
-
-  // Re-check after either path.
-  var stillMissing = findMissingUserInputColumns(context.sheet, context.tabName);
-  context.columnsOk = stillMissing.length === 0;
-
-  if (context.columnsOk) {
-    ensureSetupAutomationColumns(context.sheet, context.tabName,
-      buildColumnMap(context.sheet, context.tabName));
-    context.setupColumnsApplied = true;
+  if (tabNames.length > 1) {
     ui.alert(
-      "Step 2 Complete ✓",
-      "All required user-input columns are in place.\n\nCode-managed columns were created/verified for this tab.",
-      ui.ButtonSet.OK,
-    );
-  } else {
-    var stillMissingLabels = stillMissing.map(function (m) { return m.label; });
-    context.setupColumnsApplied = false;
-    ui.alert(
-      "Step 2 — Warning",
-      "These columns are still missing:\n\n  • " +
-        stillMissingLabels.join("\n  • ") +
-        "\n\nThe automation will skip rows until these are addressed.",
+      "Step 2 Summary (" + tabNames.length + " tabs)",
+      perTabSummary.join("\n") + "\n\nProceeding to Step 3.",
       ui.ButtonSet.OK,
     );
   }
-
   return context;
 }
 
+// Runs Step 2 for ONE tab. Returns { columnsOk, setupColumnsApplied, summary }
+// or null if the user cancelled out.
+function wizardStep2ColumnsForTab(ui, sheet, tabName, ordinal, total) {
+  var prefix = total > 1 ? "[" + ordinal + "/" + total + "] " + tabName + " — " : "";
+  var missing = findMissingUserInputColumns(sheet, tabName);
+
+  if (missing.length === 0) {
+    ensureSetupAutomationColumns(sheet, tabName, buildColumnMap(sheet, tabName));
+    if (total === 1) {
+      ui.alert(
+        "Step 2 Complete ✓",
+        "All " + REQUIRED_USER_COLUMNS.length +
+          " required user-input columns are present.\n\nCode-managed columns were created/verified for this tab.\n\nProceeding to Step 3.",
+        ui.ButtonSet.OK,
+      );
+    }
+    return { columnsOk: true, setupColumnsApplied: true,
+             summary: "✓ " + tabName + " — all columns OK" };
+  }
+
+  var missingLabels = missing.map(function (m) { return m.label; });
+  var addNow = ui.alert(
+    "Step 2 — Missing User-Input Columns",
+    prefix + "These required user-input columns are missing:\n\n  • " +
+      missingLabels.join("\n  • ") +
+      "\n\nAdd them automatically (headers appended at the end of the row)?" +
+      "\n\nChoose No to skip and continue.",
+    ui.ButtonSet.YES_NO_CANCEL,
+  );
+  if (addNow === ui.Button.CANCEL) return null;
+
+  if (addNow === ui.Button.YES) {
+    ensureUserInputColumns(sheet, tabName);
+  }
+
+  var stillMissing = findMissingUserInputColumns(sheet, tabName);
+  var ok = stillMissing.length === 0;
+
+  if (ok) {
+    ensureSetupAutomationColumns(sheet, tabName, buildColumnMap(sheet, tabName));
+    return { columnsOk: true, setupColumnsApplied: true,
+             summary: "✓ " + tabName + " — columns added" };
+  }
+
+  return { columnsOk: false, setupColumnsApplied: false,
+           summary: "⚠ " + tabName + " — still missing: " +
+             stillMissing.map(function (m) { return m.label; }).join(", ") };
+}
+
 function wizardStep3Dropdowns(ss, ui, context) {
+  var tabNames = context.allTabNames && context.allTabNames.length > 0
+    ? context.allTabNames
+    : [context.tabName];
+  var label = tabNames.length === 1 ? '"' + tabNames[0] + '"'
+                                    : tabNames.length + " selected tabs";
+
   var apply = ui.alert(
     "Step 3 of 4 — Dropdowns",
-    'Apply dropdown options to the Status, Send Mode, and Notice Date columns in "' +
-      context.tabName +
-      '"?\n\nThis makes data entry easier. Default values will be used.',
+    "Apply dropdown options to the Status, Send Mode, and Notice Date columns in " +
+      label + "?\n\nThis makes data entry easier. Default values will be used.",
     ui.ButtonSet.YES_NO,
   );
 
@@ -1889,83 +1953,65 @@ function wizardStep3Dropdowns(ss, ui, context) {
     return context;
   }
 
-  var sheet = context.sheet;
-  var tabName = context.tabName;
+  var perTabSummary = [];
+  var anyApplied = false;
+  for (var t = 0; t < tabNames.length; t++) {
+    var tabName = tabNames[t];
+    var sheet = ss.getSheetByName(tabName);
+    if (!sheet) {
+      perTabSummary.push("✗ " + tabName + " — sheet not found");
+      continue;
+    }
+    var applied = wizardStep3DropdownsForTab(sheet, tabName);
+    if (applied.length > 0) {
+      anyApplied = true;
+      perTabSummary.push("✓ " + tabName + " — " + applied.join(", "));
+    } else {
+      perTabSummary.push("⚠ " + tabName + " — no matching columns");
+    }
+  }
+  context.dropsApplied = anyApplied;
+
+  ui.alert("Step 3 Complete",
+    perTabSummary.join("\n") + "\n\nProceeding to Step 4.", ui.ButtonSet.OK);
+  return context;
+}
+
+// Applies Status / Send Mode / Notice Date dropdowns for ONE tab.
+function wizardStep3DropdownsForTab(sheet, tabName) {
   var colMap = buildColumnMap(sheet, tabName);
   var dataStartRow = getTabDataStartRow(tabName);
-  var lastRow = sheet.getLastRow();
-  var dataLastRow = Math.max(lastRow, dataStartRow + 100);
+  var dataLastRow = Math.max(sheet.getLastRow(), dataStartRow + 100);
   var applied = [];
 
   if (colMap.STATUS) {
-    var statusRule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(
-        [
-          STATUS.ACTIVE,
-          STATUS.NOTICE_SENT,
-          STATUS.SENT,
-          STATUS.ERROR,
-          STATUS.SKIPPED,
-        ],
-        true,
-      )
-      .setAllowInvalid(true)
-      .build();
-    sheet
-      .getRange(dataStartRow, colMap.STATUS, dataLastRow - dataStartRow + 1, 1)
-      .setDataValidation(statusRule);
+    sheet.getRange(dataStartRow, colMap.STATUS, dataLastRow - dataStartRow + 1, 1)
+      .setDataValidation(
+        SpreadsheetApp.newDataValidation()
+          .requireValueInList(
+            [STATUS.ACTIVE, STATUS.NOTICE_SENT, STATUS.SENT, STATUS.ERROR, STATUS.SKIPPED],
+            true)
+          .setAllowInvalid(true).build());
     applied.push("Status");
   }
-
   if (colMap.SEND_MODE) {
-    var sendModeRule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(
-        [SEND_MODE.AUTO, SEND_MODE.HOLD, SEND_MODE.MANUAL_ONLY],
-        true,
-      )
-      .setAllowInvalid(true)
-      .build();
-    sheet
-      .getRange(
-        dataStartRow,
-        colMap.SEND_MODE,
-        dataLastRow - dataStartRow + 1,
-        1,
-      )
-      .setDataValidation(sendModeRule);
+    sheet.getRange(dataStartRow, colMap.SEND_MODE, dataLastRow - dataStartRow + 1, 1)
+      .setDataValidation(
+        SpreadsheetApp.newDataValidation()
+          .requireValueInList(
+            [SEND_MODE.AUTO, SEND_MODE.HOLD, SEND_MODE.MANUAL_ONLY], true)
+          .setAllowInvalid(true).build());
     applied.push("Send Mode");
   }
-
   if (colMap.NOTICE_DATE) {
-    var noticeOptions = getNoticeOptionsForTab(tabName);
-    var noticeRule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(noticeOptions, true)
-      .setAllowInvalid(true)
-      .build();
-    sheet
-      .getRange(
-        dataStartRow,
-        colMap.NOTICE_DATE,
-        dataLastRow - dataStartRow + 1,
-        1,
-      )
-      .setDataValidation(noticeRule);
+    sheet.getRange(dataStartRow, colMap.NOTICE_DATE, dataLastRow - dataStartRow + 1, 1)
+      .setDataValidation(
+        SpreadsheetApp.newDataValidation()
+          .requireValueInList(getNoticeOptionsForTab(tabName), true)
+          .setAllowInvalid(true).build());
     applied.push("Notice Date");
   }
-
-  context.dropsApplied = applied.length > 0;
-
-  ui.alert(
-    "Step 3 Complete ✓",
-    applied.length > 0
-      ? "Dropdowns applied to: " +
-          applied.join(", ") +
-          ".\n\nProceeding to Step 4."
-      : "No matching columns found for dropdowns. You can retry later.\n\nProceeding to Step 4.",
-    ui.ButtonSet.OK,
-  );
-
-  return context;
+  return applied;
 }
 
 function wizardStep4Schedule(ui, context) {
@@ -2010,7 +2056,7 @@ function wizardStep5Summary(ui, context) {
   var lines = [
     "✅ Setup Complete!",
     "",
-    "Tab:             " + context.tabName,
+    "Tab(s):          " + ((context.allTabNames && context.allTabNames.length > 1) ? (context.allTabNames.length + " tabs: " + context.allTabNames.join(", ")) : context.tabName),
     "Columns:         " +
       (context.columnsOk
         ? "✓ All required columns OK"
