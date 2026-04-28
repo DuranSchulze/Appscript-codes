@@ -135,7 +135,6 @@ function formatParsedNoticeOffset(offset) {
   return offset.value + " " + offset.unit;
 }
 
-
 function validateDateParsing() {
   var ui = SpreadsheetApp.getUi();
 
@@ -880,4 +879,202 @@ function diagnosticSendTestRow() {
   } catch (e) {
     ui.alert("Failed to send: " + e.message);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HealthCheck — verify daily trigger + staff Send-As alias coverage
+// ═══════════════════════════════════════════════════════════════════════════
+
+function runHealthCheck() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var logsSheet = ensureLogsSheet(ss);
+
+  var lines = ["HEALTH CHECK"];
+  var nowStr = Utilities.formatDate(
+    new Date(),
+    "Asia/Manila",
+    "yyyy-MM-dd HH:mm 'PHT'",
+  );
+  lines.push(nowStr);
+  lines.push("");
+
+  var failCount = 0;
+  var warnCount = 0;
+
+  // 1. Daily send trigger
+  var dailyTriggers = getTriggersByHandler("runDailyCheck");
+  var configuredTime = formatDailyTriggerTime(
+    getDailyTriggerHour(),
+    getDailyTriggerMinute(),
+  );
+  if (dailyTriggers.length === 1) {
+    lines.push(
+      "[PASS] Daily send trigger installed (" + configuredTime + " PHT)",
+    );
+  } else if (dailyTriggers.length === 0) {
+    lines.push(
+      "[FAIL] No daily send trigger installed. " +
+        "Run: Automation Settings → Activate Daily Schedule.",
+    );
+    failCount++;
+  } else {
+    lines.push(
+      "[FAIL] " +
+        dailyTriggers.length +
+        " duplicate daily triggers detected. " +
+        "Run: Deactivate Daily Schedule, then Activate Daily Schedule.",
+    );
+    failCount++;
+  }
+
+  // 2. Reply scan trigger (informational)
+  var replyTriggers = getTriggersByHandler("runReplyScan");
+  if (replyTriggers.length === 2) {
+    lines.push("[INFO] Reply scan triggers installed (9:00, 15:00 PHT)");
+  } else if (replyTriggers.length === 0) {
+    lines.push(
+      "[INFO] Reply scan not installed (optional). " +
+        "Use: Activate Reply Scan (2x Daily).",
+    );
+  } else {
+    lines.push(
+      "[WARN] Reply scan trigger count is " +
+        replyTriggers.length +
+        " (expected 2). Re-activate to clean up.",
+    );
+    warnCount++;
+  }
+
+  lines.push("");
+
+  // 3. Assigned Staff Email is verified Send-As alias on runner account
+  resetVerifiedSenderAliasCache();
+  var runnerEmail = getSenderAccountEmail() || "(unknown)";
+  lines.push("Script runner account: " + runnerEmail);
+
+  var sheetConfigs = resolveAutomationSheets(ss);
+  var seenEmails = {}; // normalized email -> { tab, row }
+  var unverified = [];
+  var totalRowsChecked = 0;
+  var tabsScanned = 0;
+
+  for (var i = 0; i < sheetConfigs.length; i++) {
+    var config = sheetConfigs[i];
+    var sheet = config.sheet;
+    var tabName = config.sheetName;
+    if (!sheet) continue;
+
+    var colMap = buildColumnMap(sheet, tabName);
+    if (!colMap.STAFF_EMAIL) {
+      lines.push(
+        "[WARN] Tab '" + tabName + "' has no Assigned Staff Email column.",
+      );
+      warnCount++;
+      continue;
+    }
+
+    var dataStartRow = getTabDataStartRow(tabName);
+    var lastRow = sheet.getLastRow();
+    if (lastRow < dataStartRow) {
+      tabsScanned++;
+      continue;
+    }
+
+    var values = sheet
+      .getRange(dataStartRow, colMap.STAFF_EMAIL, lastRow - dataStartRow + 1, 1)
+      .getValues();
+
+    tabsScanned++;
+    for (var r = 0; r < values.length; r++) {
+      var raw = String(values[r][0] || "").trim();
+      if (!raw) continue;
+      totalRowsChecked++;
+      var normalized = raw.toLowerCase();
+      if (seenEmails[normalized]) continue;
+      seenEmails[normalized] = { tab: tabName, row: dataStartRow + r };
+
+      if (!canSendAs(raw)) {
+        unverified.push({
+          email: raw,
+          tab: tabName,
+          row: dataStartRow + r,
+        });
+      }
+    }
+  }
+
+  var uniqueCount = Object.keys(seenEmails).length;
+  lines.push(
+    "Scanned " +
+      tabsScanned +
+      " tab(s), " +
+      totalRowsChecked +
+      " staff-email cell(s), " +
+      uniqueCount +
+      " unique address(es).",
+  );
+
+  if (uniqueCount === 0) {
+    lines.push(
+      "[INFO] No Assigned Staff Email values found in the configured tabs.",
+    );
+  } else if (unverified.length === 0) {
+    lines.push(
+      "[PASS] All " +
+        uniqueCount +
+        " staff email(s) are verified Send-As aliases.",
+    );
+  } else {
+    lines.push(
+      "[FAIL] " +
+        unverified.length +
+        " of " +
+        uniqueCount +
+        " staff email(s) are NOT verified Send-As aliases:",
+    );
+    for (var u = 0; u < unverified.length; u++) {
+      var item = unverified[u];
+      lines.push(
+        "       - " +
+          item.email +
+          "  (tab: " +
+          item.tab +
+          ", first seen row " +
+          item.row +
+          ")",
+      );
+    }
+    lines.push("");
+    lines.push("Fix: on the script-runner account (" + runnerEmail + "),");
+    lines.push(
+      "     Gmail → Settings → Accounts → Send mail as → Add another email address.",
+    );
+    failCount++;
+  }
+
+  lines.push("");
+  if (failCount === 0 && warnCount === 0) {
+    lines.push("Result: ALL CHECKS PASSED");
+  } else {
+    lines.push(
+      "Result: " + failCount + " failure(s), " + warnCount + " warning(s)",
+    );
+  }
+
+  var report = lines.join("\n");
+  try {
+    appendLog(
+      logsSheet,
+      "",
+      "",
+      failCount > 0 ? "ERROR" : "INFO",
+      "Health Check: " +
+        (failCount === 0 && warnCount === 0
+          ? "all checks passed"
+          : failCount + " fail / " + warnCount + " warn"),
+    );
+  } catch (e) {}
+
+  ui.alert("Health Check", report.substring(0, 1800), ui.ButtonSet.OK);
 }

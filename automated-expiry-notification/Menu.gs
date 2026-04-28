@@ -1,8 +1,6 @@
-
 // ═══════════════════════════════════════════════════════════════════════════
 // MENU — entry point UI and read-only info dialogs
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Menu — onOpen + spreadsheet menu spec
@@ -11,14 +9,22 @@
 var ROOT_MENU_NAME = "🔔 Expiry Notifications";
 
 var ROOT_MENU_SPEC = [
-  { type: "item", label: "🚀 Setup This Sheet for Automation", fn: "runSetupWizard" },
+  {
+    type: "item",
+    label: "🚀 Setup This Sheet for Automation",
+    fn: "runSetupWizard",
+  },
   { type: "separator" },
   {
     type: "submenu",
     label: "Status & Overview",
     items: [
       { type: "item", label: "Show System Status", fn: "showSystemStatus" },
-      { type: "item", label: "View Last Run Summary", fn: "checkScheduleStatus" },
+      {
+        type: "item",
+        label: "View Last Run Summary",
+        fn: "checkScheduleStatus",
+      },
       { type: "item", label: "Show All Tabs Info", fn: "showAllTabsInfo" },
     ],
   },
@@ -27,11 +33,23 @@ var ROOT_MENU_SPEC = [
     type: "submenu",
     label: "Tab Management",
     items: [
-      { type: "item", label: "Configure Automation Tabs (multi)", fn: "configureAutomationSheets" },
+      {
+        type: "item",
+        label: "Configure Automation Tabs (multi)",
+        fn: "configureAutomationSheets",
+      },
       { type: "item", label: "Select Working Tab(s)", fn: "selectWorkingTab" },
-      { type: "item", label: "Setup Tab Dropdowns (multi)", fn: "setupSheetDropdowns" },
+      {
+        type: "item",
+        label: "Setup Tab Dropdowns (multi)",
+        fn: "setupSheetDropdowns",
+      },
       { type: "item", label: "Map Tab Columns (multi)", fn: "mapTabColumns" },
-      { type: "item", label: "Set Tab Header Row (multi)", fn: "setTabHeaderRowDialog" },
+      {
+        type: "item",
+        label: "Set Tab Header Row (multi)",
+        fn: "setTabHeaderRowDialog",
+      },
     ],
   },
   { type: "separator" },
@@ -42,7 +60,11 @@ var ROOT_MENU_SPEC = [
       { type: "item", label: "Activate Daily Schedule", fn: "installTrigger" },
       { type: "item", label: "Set Send Time", fn: "setDailyTriggerHourDialog" },
       { type: "item", label: "Deactivate Daily Schedule", fn: "removeTrigger" },
-      { type: "item", label: "Set Default CC Emails", fn: "setDefaultCcEmailsDialog" },
+      {
+        type: "item",
+        label: "Set Default CC Emails",
+        fn: "setDefaultCcEmailsDialog",
+      },
       { type: "separator" },
       { type: "item", label: "Set Reply Keywords", fn: "setReplyKeywords" },
       {
@@ -50,9 +72,17 @@ var ROOT_MENU_SPEC = [
         label: "Activate Reply Scan (2x Daily)",
         fn: "installReplyScanTrigger",
       },
-      { type: "item", label: "Deactivate Reply Scan", fn: "removeReplyScanTrigger" },
+      {
+        type: "item",
+        label: "Deactivate Reply Scan",
+        fn: "removeReplyScanTrigger",
+      },
       { type: "separator" },
-      { type: "item", label: "Set Open Tracking URL", fn: "setOpenTrackingBaseUrl" },
+      {
+        type: "item",
+        label: "Set Open Tracking URL",
+        fn: "setOpenTrackingBaseUrl",
+      },
     ],
   },
   { type: "separator" },
@@ -62,18 +92,39 @@ var ROOT_MENU_SPEC = [
     items: [
       { type: "item", label: "Run Manual Check Now", fn: "manualRunNow" },
       { type: "item", label: "Preview Target Dates", fn: "previewTargetDates" },
+      { type: "item", label: "Run Health Check", fn: "runHealthCheck" },
       { type: "separator" },
       { type: "item", label: "Inspect Row...", fn: "diagnosticInspectRow" },
-      { type: "item", label: "Send Test Email by No....", fn: "diagnosticSendTestRow" },
+      {
+        type: "item",
+        label: "Send Test Email by No....",
+        fn: "diagnosticSendTestRow",
+      },
       { type: "separator" },
       { type: "item", label: "Test Gmail Send", fn: "testGmailSend" },
       { type: "item", label: "Test Drive Access", fn: "testDriveAccess" },
       { type: "item", label: "Test All Connections", fn: "testAllConnections" },
       { type: "separator" },
-      { type: "item", label: "Check Column Mappings", fn: "checkColumnMappings" },
-      { type: "item", label: "Validate Tab Structure", fn: "validateActiveTabStructure" },
-      { type: "item", label: "View Tab Configuration", fn: "viewTabConfiguration" },
-      { type: "item", label: "Check Reply Tracking Setup", fn: "checkReplyTrackingSetup" },
+      {
+        type: "item",
+        label: "Check Column Mappings",
+        fn: "checkColumnMappings",
+      },
+      {
+        type: "item",
+        label: "Validate Tab Structure",
+        fn: "validateActiveTabStructure",
+      },
+      {
+        type: "item",
+        label: "View Tab Configuration",
+        fn: "viewTabConfiguration",
+      },
+      {
+        type: "item",
+        label: "Check Reply Tracking Setup",
+        fn: "checkReplyTrackingSetup",
+      },
       {
         type: "item",
         label: "Preview Fallback Template",
@@ -369,7 +420,6 @@ function showIntegrationLinkDialog() {
 
   ui.showModalDialog(html, "Integration Link");
 }
-
 
 function viewDocumentation() {
   var ui = SpreadsheetApp.getUi();

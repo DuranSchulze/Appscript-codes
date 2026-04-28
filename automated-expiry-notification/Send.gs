@@ -1,8 +1,6 @@
-
 // ═══════════════════════════════════════════════════════════════════════════
 // SEND — outbound email pipeline (rules → compose → AI → alias → deliver)
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SendRules — send-mode (Auto/Hold/Manual Only) helpers
@@ -57,7 +55,9 @@ function getVerifiedSenderAliases() {
   var lookup = {};
 
   function add(email) {
-    var normalized = String(email || "").trim().toLowerCase();
+    var normalized = String(email || "")
+      .trim()
+      .toLowerCase();
     if (normalized) lookup[normalized] = true;
   }
 
@@ -78,7 +78,9 @@ function getVerifiedSenderAliases() {
 }
 
 function canSendAs(email) {
-  var normalized = String(email || "").trim().toLowerCase();
+  var normalized = String(email || "")
+    .trim()
+    .toLowerCase();
   if (!normalized) return false;
   var lookup = getVerifiedSenderAliases();
   return !!lookup[normalized];
@@ -463,7 +465,6 @@ function resolveAttachments(rawField) {
   };
 }
 
-
 function buildFallbackLinksHtml(failedLinks) {
   if (!failedLinks || failedLinks.length === 0) return "";
 
@@ -555,13 +556,18 @@ function buildEmailContent(
   var htmlBody = String(bodyText || "").replace(/\n/g, "<br>");
   htmlBody = injectOpenTrackingPixel(htmlBody, openToken);
 
+  // Neutral-gray card wrapper. Inline styles only (Gmail/Outlook safe).
+  // Outer page background + centered white card with thin border.
   htmlBody = [
-    '<div style="font-family:Arial,sans-serif;font-size:14px;color:#333;max-width:600px;line-height:1.6;">',
+    '<div style="background:#f5f5f5;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;color:#333333;">',
+    '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:6px;padding:32px;font-size:14px;line-height:1.6;color:#333333;">',
     htmlBody,
-    '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">',
-    '<p style="font-size:11px;color:#999;">This is an automated reminder. Email opens may be tracked for delivery visibility.</p>',
+    '<div style="border-top:1px solid #eeeeee;margin:24px 0 0 0;padding-top:16px;font-size:11px;color:#999999;">',
+    "This is an automated reminder. Email opens may be tracked for delivery visibility.",
     "</div>",
-  ].join("\n");
+    "</div>",
+    "</div>",
+  ].join("");
 
   return {
     htmlBody: htmlBody,
@@ -581,7 +587,6 @@ function buildStageSubject(baseSubject, stage) {
   }
   return baseSubject;
 }
-
 
 function buildStageEmailContent(
   remarks,
@@ -626,7 +631,6 @@ function applyTemplatePlaceholders(
   return replaceGenericTemplateTokens(rendered, templateContext);
 }
 
-
 function formatTemplateValue(value) {
   if (value instanceof Date) {
     if (!isNaN(value.getTime())) return formatDate(value);
@@ -634,7 +638,6 @@ function formatTemplateValue(value) {
   }
   return String(value === null || value === undefined ? "" : value).trim();
 }
-
 
 function buildRowTemplateContext(sheet, tabName, rowValues) {
   var context = {};
@@ -660,7 +663,6 @@ function buildRowTemplateContext(sheet, tabName, rowValues) {
 
   return context;
 }
-
 
 function replaceGenericTemplateTokens(templateText, templateContext) {
   var context = templateContext || {};
@@ -706,7 +708,6 @@ function getStaticRedirectLinkUrl() {
 
 // 33 Email Delivery
 
-
 function getDefaultCcEmails() {
   var raw = getPropString(PROP_KEYS.DEFAULT_CC_EMAILS, "");
   if (!raw) return [];
@@ -719,7 +720,6 @@ function getDefaultCcEmails() {
   }
 }
 
-
 function setDefaultCcEmails(emails) {
   var normalized = normalizeEmailList(emails);
   if (normalized.length === 0) {
@@ -729,7 +729,6 @@ function setDefaultCcEmails(emails) {
 
   setPropString(PROP_KEYS.DEFAULT_CC_EMAILS, JSON.stringify(normalized));
 }
-
 
 function resolveCcEmails(clientEmails, staffEmail) {
   var combined = mergeUniqueEmails(getDefaultCcEmails(), staffEmail);
@@ -749,12 +748,10 @@ function resolveCcEmails(clientEmails, staffEmail) {
   return filtered;
 }
 
-
 function formatCcDisplay(ccEmails) {
   var ccList = normalizeEmailList(ccEmails);
   return ccList.length > 0 ? ccList.join(", ") : "(none)";
 }
-
 
 function setDefaultCcEmailsDialog() {
   var ui = SpreadsheetApp.getUi();
@@ -805,7 +802,6 @@ function getSenderAccountEmail() {
   return "";
 }
 
-
 function getSenderDisplayName(email) {
   var raw = String(email || "").trim();
   var atIndex = raw.indexOf("@");
@@ -853,7 +849,6 @@ function sendReminderEmail(
   // Best-effort metadata lookup from Sent mailbox.
   return lookupRecentSentMessageMeta(clientEmail, subject);
 }
-
 
 function sendReminderEmails(
   clientEmails,
@@ -938,7 +933,6 @@ function lookupRecentSentMessageMeta(clientEmail, subject) {
 
   return meta;
 }
-
 
 function escapeForQuotedPrintable(value) {
   return String(value || "").replace(/"/g, '\\"');
