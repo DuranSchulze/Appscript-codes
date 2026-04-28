@@ -1,91 +1,145 @@
 # Automated Expiry Notification
 
-Behavior-safe Apps Script modularization of the spreadsheet automation for expiry reminders, reply tracking, and open tracking.
+Google Apps Script automation that sends staged expiry-reminder emails from a
+Google Sheet, tracks Gmail replies, and tracks email opens via a 1×1 pixel.
+Each row's outgoing email is sent FROM the row's `Assigned Staff Email`, so
+the client sees the staff member as the sender.
 
-## Architecture Map
+## Column contract
 
-- [00_config.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/00_config.gs): constants, enums, property keys, header aliases, defaults
-- [01_menu.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/01_menu.gs): `onOpen`, menu structure, menu builder helpers
-- [10_setup_wizard.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/10_setup_wizard.gs): guided setup flow
-- [11_status_ui.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/11_status_ui.gs): status dialogs, docs, about, integration link UI
-- [12_tab_management.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/12_tab_management.gs): configured tab selection and working-tab helpers
-- [13_tab_mapping.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/13_tab_mapping.gs): mapping UI, header row selection, mapping diagnostics
-- [14_dropdowns.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/14_dropdowns.gs): status/send-mode/notice-date dropdown setup
-- [20_properties.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/20_properties.gs): document property access and typed wrappers
-- [21_sheet_resolution.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/21_sheet_resolution.gs): configured sheet storage and spreadsheet resolution
-- [22_column_mapping_core.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/22_column_mapping_core.gs): column-map persistence, alias matching, fuzzy detection
-- [23_sheet_row_ops.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/23_sheet_row_ops.gs): row lookups, status writes, metadata writes, ensure-column helpers
-- [30_run_daily_check.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/30_run_daily_check.gs): manual run entrypoint and daily orchestration
-- [31_notification_rules.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/31_notification_rules.gs): send-mode rule helpers
-- [32_email_content.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/32_email_content.gs): subject/body composition, template fallback, token replacement
-- [33_email_delivery.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/33_email_delivery.gs): Gmail delivery, sender resolution, CC resolution
-- [34_attachments.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/34_attachments.gs): Drive attachment parsing and fallback link handling
-- [35_ai_generation.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/35_ai_generation.gs): Gemini settings, fetch, diagnostics, fallback template controls
-- [40_reply_tracking.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/40_reply_tracking.gs): reply scan orchestration and reply matching
-- [41_open_tracking.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/41_open_tracking.gs): tracking URL config, `doGet`, token lookup, open writes
-- [42_triggers.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/42_triggers.gs): trigger install/remove and schedule parsing
-- [43_logs.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/43_logs.gs): logs sheet bootstrap and append helpers
-- [44_diagnostics.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/44_diagnostics.gs): connectivity tests, previews, row inspection, diagnostics actions
-- [90_shared_utils.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/90_shared_utils.gs): cross-domain pure helpers for parsing, normalization, and dates
-- [code.gs](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/code.gs): placeholder only
-- [appsscript.json](/Users/zafajardo/Documents/Development/dds-all-system/automated-expiry-notification/appsscript.json): Apps Script manifest
+### Team A — required user-input columns
 
-## Stable Entrypoints
+The setup wizard validates that all eight are present (header aliases are
+honored — e.g. an existing "Staff Email" column matches "Assigned Staff
+Email"). If any are missing, the wizard offers to add them.
 
-These public functions remain available for menus, triggers, or web app deployment:
+| Column                     | Notes                                              |
+| -------------------------- | -------------------------------------------------- |
+| Company/Client Name        |                                                    |
+| Client Email               |                                                    |
+| Expiry Date / Renewal Date |                                                    |
+| Notice Date                |                                                    |
+| Description                | (was "Remarks" — alias preserved)                  |
+| Attached Files             |                                                    |
+| Name of Staff              | display name on outgoing emails                    |
+| Assigned Staff Email       | From-address; must be a Gmail "Send mail as" alias |
 
-- `onOpen`
-- `runDailyCheck`
-- `manualRunNow`
-- `runReplyScan`
-- `doGet`
-- all existing menu-exposed setup and diagnostics functions referenced in `01_menu.gs`
+### Team V — code-managed columns
 
-## Dependency Direction
+Headers are auto-created only when missing. Existing user-renamed variants are
+matched via aliases and preserved.
 
-- Config: `00_config.gs`
-- Shared pure utilities: `90_shared_utils.gs`
-- Services and persistence: `20_*`, `21_*`, `22_*`, `23_*`, `33_*`, `34_*`, `43_*`
-- Domain logic: `30_*`, `31_*`, `32_*`, `35_*`, `40_*`, `41_*`, `42_*`
-- UI and entrypoints: `01_*`, `10_*`, `11_*`, `12_*`, `13_*`, `14_*`, `44_*`
+`Status`, `Reply Status`, `Final Notice Sent At`, `Final Notice Thread Id`,
+`Final Notice Message Id`, `Send Mode`, `Sent At`, `Sent Thread Id`,
+`Sent Message Id`, `Replied At`, `Reply Keyword`, `Open Tracking Token`,
+`First Opened At`, `Last Opened At`, `Open Count`.
 
-Diagnostics may depend on any module. Other modules should not depend on diagnostics.
+Both lists are exported from [ConfigConstants.gs](ConfigConstants.gs)
+as `REQUIRED_USER_COLUMNS` and `MANAGED_COLUMNS`.
 
-## Main Flows
+## File layout
 
-### Daily Run
+Every `.gs` file lives at the project root. One file per logic area, named
+for what it contains. Apps Script is a flat namespace, so identifiers from
+any file are visible to every other file.
 
-1. `runDailyCheck` resolves the automation spreadsheet and configured tabs.
-2. Each tab loads its header/data row settings and effective column map.
-3. Each row is checked for status, send mode, required fields, target date, and reply state.
-4. Notice or final-stage content is composed, delivered, and logged.
-5. Row metadata and logs are updated through centralized sheet helpers.
+| File                                                       | Contains                                                 |
+| ---------------------------------------------------------- | -------------------------------------------------------- |
+| [ConfigConstants.gs](ConfigConstants.gs)                   | Constants, enums, header aliases, column contract        |
+| [PropertiesStore.gs](PropertiesStore.gs)                   | PropertiesService access wrappers                        |
+| [SheetResolution.gs](SheetResolution.gs)                   | Configured-tab resolution + spreadsheet lookup           |
+| [Menu.gs](Menu.gs)                                         | `onOpen` and the spreadsheet menu spec                   |
+| [SetupWizard.gs](SetupWizard.gs)                           | Guided setup flow                                        |
+| [StatusUi.gs](StatusUi.gs)                                 | Status / docs / about / integration dialogs              |
+| [TabManagement.gs](TabManagement.gs)                       | Configure + select automation tabs                       |
+| [ColumnMappingUi.gs](ColumnMappingUi.gs)                   | Map Tab Columns + header-row dialogs                     |
+| [ColumnMappingCore.gs](ColumnMappingCore.gs)               | Column-map persistence, alias matching, fuzzy detection  |
+| [Dropdowns.gs](Dropdowns.gs)                               | Status / Send Mode / Notice Date dropdown setup          |
+| [ValidateUserColumns.gs](ValidateUserColumns.gs)           | Team A presence check + staff-alias classification       |
+| [RowOps.gs](RowOps.gs)                                     | Row reads, status writes, ensure-column helpers          |
+| [SendRules.gs](SendRules.gs)                               | Send-mode rule helpers                                   |
+| [EmailCompose.gs](EmailCompose.gs)                         | Subject/body composition + token replacement             |
+| [Attachments.gs](Attachments.gs)                           | Drive attachment parsing + fallback links                |
+| [AiGeneration.gs](AiGeneration.gs)                         | Gemini fetch + fallback template controls                |
+| [AliasResolver.gs](AliasResolver.gs)                       | Verified Gmail alias check                               |
+| [EmailDelivery.gs](EmailDelivery.gs)                       | Gmail delivery, sender resolution, CC                    |
+| [ReplyTracking.gs](ReplyTracking.gs)                       | Reply-scan orchestration + matching                      |
+| [OpenTracking.gs](OpenTracking.gs)                         | Tracking URL + `doGet` + open writes                     |
+| [DailyRun.gs](DailyRun.gs)                                 | `runDailyCheck` + `manualRunNow` orchestration           |
+| [Triggers.gs](Triggers.gs)                                 | Trigger install/remove + schedule parsing                |
+| [Logs.gs](Logs.gs)                                         | LOGS sheet bootstrap + append helpers                    |
+| [Diagnostics.gs](Diagnostics.gs)                           | Connectivity tests, previews, row inspection             |
+| [SharedUtils.gs](SharedUtils.gs)                           | Cross-domain pure helpers (parsing, dates)               |
+| [UiPrompts.gs](UiPrompts.gs)                               | Multi-tab selection prompt helper                        |
+| [appsscript.json](appsscript.json)                         | Apps Script manifest                                     |
 
-### Reply Scan
+## Import into Google Sheet Apps Script
 
-1. `runReplyScan` resolves configured tabs and required reply-tracking columns.
-2. Sent thread metadata is read from the sheet.
-3. Gmail threads are scanned for matching reply keywords.
-4. Reply status columns and logs are updated when matches are found.
+1. In the target spreadsheet open **Extensions → Apps Script**.
+2. For each `.gs` file in this repo, create a matching file in the editor
+   (**Files → ＋ → Script**) using the same name (without the `.gs`
+   suffix — the editor adds it). Paste the file contents.
+3. Open **Project Settings → Show "appsscript.json" manifest file in editor**.
+4. Replace the editor's `appsscript.json` with this repo's
+   [appsscript.json](appsscript.json).
+5. Reload the spreadsheet — the **🔔 Expiry Notifications** menu appears.
+   Run **🚀 Setup This Sheet for Automation** to begin.
 
-### Tab Setup
+## Stable entrypoints
 
-1. `runSetupWizard` handles tab selection or creation.
-2. Column detection and optional manual mapping run through the mapping core.
-3. Automation-managed columns are ensured by row ops.
-4. Dropdowns and schedule setup are applied through their dedicated modules.
+These names are kept for menu, trigger, and web-app deployment compatibility:
+`onOpen`, `runDailyCheck`, `manualRunNow`, `runReplyScan`, `doGet`, plus all
+menu-exposed setup and diagnostics functions.
 
-### Open Tracking
+## Per-row sender
 
-1. Email content injects an open-tracking pixel when a tracking base URL exists.
-2. `doGet(e)` handles `open` and `click` modes.
-3. Token lookup resolves the matching row across configured tabs.
-4. Open counters, timestamps, reply markers, and logs are updated centrally.
+[EmailDelivery.gs](EmailDelivery.gs) calls `GmailApp.sendEmail` with
+`{ from: staffEmail, name: staffName }`. Gmail only accepts the `from`
+option when the address is a verified "Send mail as" alias on the
+script-runner's Gmail account.
 
-## Developer Conventions
+[AliasResolver.gs](AliasResolver.gs) checks `GmailApp.getAliases()` (cached
+per execution) and exposes `canSendAs(email)`. Daily-run skips any row
+whose staff email isn't verified, marks the row Status = `Error`, and
+writes a clear message to the LOGS sheet. The setup wizard runs the same
+check across every distinct staff email and warns the user before
+scheduling.
 
-- Keep menu labels and public entrypoint names stable unless compatibility is intentionally changed.
-- Route property access through `20_properties.gs`.
-- Route sheet mutations and ensure-column behavior through `23_sheet_row_ops.gs`.
-- Keep Gmail, Drive, and UrlFetch integrations isolated from rule decisions when touching behavior.
-- Prefer adding new pure helpers to `90_shared_utils.gs` only when they are truly cross-domain.
+## Multi-tab menu
+
+Every per-tab setup operation ("Map Tab Columns", "Setup Tab Dropdowns",
+"Set Tab Header Row", "Select Working Tab") accepts a comma-separated tab
+list (`1,3` or `1-3` or names) via the `promptSelectTabs` helper in
+[UiPrompts.gs](UiPrompts.gs). The selected tabs are processed in a loop
+and a per-tab result summary is shown at the end.
+
+## Main flows
+
+### Daily run ([DailyRun.gs](DailyRun.gs))
+
+1. `runDailyCheck` resolves configured tabs and resets the alias cache.
+2. For each tab, ensure managed columns → validate Team A columns → load
+   data rows.
+3. Per row: validate Team A fields, check send mode, decide notice vs final,
+   verify the staff email is a valid alias, compose body (manual remarks → AI
+   → fallback template), inject the open-tracking pixel, send via Gmail with
+   per-row `from`, write metadata, log.
+
+### Reply scan ([ReplyTracking.gs](ReplyTracking.gs))
+
+Triggered 9 AM and 3 PM Asia/Manila. For each row with a thread id, loads
+the Gmail thread and matches keyword regex. Self-message filter now
+covers ALL verified aliases (not just the runner) since outgoing mail can
+come from any staff alias.
+
+### Open tracking ([OpenTracking.gs](OpenTracking.gs))
+
+`doGet(e)` handles `?mode=open&t=TOKEN`, finds the row across configured
+tabs, increments open count, writes timestamps, marks Reply Status as
+`Replied` with keyword `OPEN_TRACKED`.
+
+### Setup wizard ([SetupWizard.gs](SetupWizard.gs))
+
+Tab pick/create → user-column validation (offer to auto-add missing) →
+ensure managed columns → dropdowns → staff alias pre-flight → schedule
+install.

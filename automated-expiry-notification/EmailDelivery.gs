@@ -119,11 +119,16 @@ function sendReminderEmail(
   htmlBody,
   blobItems,
   senderName,
+  fromEmail,
 ) {
   var options = {
     htmlBody: htmlBody,
     name: senderName || CONFIG.SENDER_NAME,
   };
+
+  // From-address must be a verified Gmail alias of the script runner.
+  // Caller is responsible for that check; we just pass it through.
+  if (fromEmail) options.from = fromEmail;
 
   var normalizedCc = normalizeEmailList(ccEmails);
   if (normalizedCc.length > 0) {
@@ -151,6 +156,7 @@ function sendReminderEmails(
   htmlBody,
   blobItems,
   senderName,
+  fromEmail,
 ) {
   var recipients = normalizeEmailList(clientEmails);
   var result = {
@@ -178,6 +184,7 @@ function sendReminderEmails(
         htmlBody,
         blobItems,
         senderName,
+        fromEmail,
       );
       if (result.success.length === 0) result.meta = meta;
       result.success.push(recipient);

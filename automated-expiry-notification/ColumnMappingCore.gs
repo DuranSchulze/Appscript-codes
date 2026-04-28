@@ -9,20 +9,17 @@ function buildColumnMap(sheet, tabName) {
 }
 
 function validateColumnMap(colMap, headerRow) {
-  var required = [
-    "CLIENT_NAME",
-    "CLIENT_EMAIL",
-    "EXPIRY_DATE",
-    "NOTICE_DATE",
-    "STATUS",
-  ];
+  // Validates that all Team A (user-input) columns exist. Managed columns
+  // (Status, etc.) are not validated here — they are auto-created by
+  // ensureSetupAutomationColumns before this check runs.
   var missing = [];
-  for (var i = 0; i < required.length; i++) {
-    if (!colMap[required[i]]) missing.push(HEADERS[required[i]]);
+  for (var i = 0; i < REQUIRED_USER_COLUMNS.length; i++) {
+    var key = REQUIRED_USER_COLUMNS[i];
+    if (!colMap[key]) missing.push(HEADERS[key]);
   }
   var rowLabel = headerRow || CONFIG.HEADER_ROW;
   return missing.length > 0
-    ? "Required column(s) not found in row " +
+    ? "Required user-input column(s) not found in row " +
         rowLabel +
         ": " +
         missing.join(", ")
@@ -392,16 +389,9 @@ function buildFlexibleColumnMap(sheet, tabName) {
     }
   }
 
-  // 3) Fill remaining gaps with fuzzy matching for critical columns
-  var criticalColumns = [
-    "CLIENT_NAME",
-    "CLIENT_EMAIL",
-    "EXPIRY_DATE",
-    "NOTICE_DATE",
-    "STATUS",
-  ];
-  for (var i = 0; i < criticalColumns.length; i++) {
-    var key = criticalColumns[i];
+  // 3) Fill remaining gaps with fuzzy matching for required user-input columns
+  for (var i = 0; i < REQUIRED_USER_COLUMNS.length; i++) {
+    var key = REQUIRED_USER_COLUMNS[i];
     if (!result.map[key]) {
       for (var normalizedHeader in headerToIndex) {
         var match = fuzzyMatchHeader(
@@ -424,17 +414,11 @@ function buildFlexibleColumnMap(sheet, tabName) {
   if (usedFuzzy) sources.push("fuzzy");
   result.source = sources.join("+") || "none";
 
-  // Validate required columns
-  var required = [
-    "CLIENT_NAME",
-    "CLIENT_EMAIL",
-    "EXPIRY_DATE",
-    "NOTICE_DATE",
-    "STATUS",
-  ];
-  for (var i = 0; i < required.length; i++) {
-    if (!result.map[required[i]]) {
-      result.warnings.push("Missing required column: " + required[i]);
+  // Validate required user-input columns
+  for (var i = 0; i < REQUIRED_USER_COLUMNS.length; i++) {
+    var reqKey = REQUIRED_USER_COLUMNS[i];
+    if (!result.map[reqKey]) {
+      result.warnings.push("Missing required column: " + reqKey);
     }
   }
 
@@ -468,18 +452,11 @@ function validateFlexibleColumnMap(flexibleResult) {
     return "No column map available";
   }
 
-  var required = [
-    "CLIENT_NAME",
-    "CLIENT_EMAIL",
-    "EXPIRY_DATE",
-    "NOTICE_DATE",
-    "STATUS",
-  ];
   var missing = [];
-
-  for (var i = 0; i < required.length; i++) {
-    if (!flexibleResult.map[required[i]]) {
-      missing.push(required[i]);
+  for (var i = 0; i < REQUIRED_USER_COLUMNS.length; i++) {
+    var reqKey = REQUIRED_USER_COLUMNS[i];
+    if (!flexibleResult.map[reqKey]) {
+      missing.push(reqKey);
     }
   }
 

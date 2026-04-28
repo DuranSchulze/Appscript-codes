@@ -48,6 +48,8 @@ function runReplyScan() {
   var sheetConfigs = resolveAutomationSheets(ss);
   var keywords = getReplyKeywords();
 
+  resetVerifiedSenderAliasCache();
+
   var totalScanned = 0,
     totalUpdated = 0,
     totalSkipped = 0;
@@ -234,7 +236,9 @@ function findReplyMatchForRow(threadId, clientEmail, keywords, sentAt) {
     var thread = GmailApp.getThreadById(threadId);
     if (!thread) return null;
     var messages = thread.getMessages();
-    var senderEmail = getSenderAccountEmail().toLowerCase();
+    // Outgoing messages may come from any verified alias (Send mail as), not
+    // just the runner account. Filter all of them as "self".
+    var ourAddresses = listVerifiedSenderAliases();
     var clientLower = String(clientEmail || "").toLowerCase();
 
     for (var i = messages.length - 1; i >= 0; i--) {
@@ -244,7 +248,14 @@ function findReplyMatchForRow(threadId, clientEmail, keywords, sentAt) {
       }
 
       var from = String(msg.getFrom() || "").toLowerCase();
-      if (senderEmail && from.indexOf(senderEmail) >= 0) continue;
+      var isFromUs = false;
+      for (var a = 0; a < ourAddresses.length; a++) {
+        if (ourAddresses[a] && from.indexOf(ourAddresses[a]) >= 0) {
+          isFromUs = true;
+          break;
+        }
+      }
+      if (isFromUs) continue;
       if (clientLower && from.indexOf(clientLower) < 0) continue;
 
       var haystack = (

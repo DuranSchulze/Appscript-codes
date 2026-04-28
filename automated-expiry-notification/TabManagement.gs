@@ -4,72 +4,29 @@ function selectWorkingTab() {
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // resolveAutomationSheets auto-purges deleted tabs and returns only live ones
-  var sheetConfigs = resolveAutomationSheets(ss);
+  var selectedNames = promptSelectTabs({
+    ss: ss,
+    title: "Select Working Tab(s)",
+    source: "configured",
+    prompt:
+      "Pick one or more configured tabs. The first becomes the default 'working tab' " +
+      "for diagnostics; the rest stay registered and continue to be processed by the daily run.\n" +
+      "Enter numbers (e.g. 1,3) or a range (1-3).",
+  });
+  if (selectedNames.length === 0) return;
 
-  if (sheetConfigs.length === 0) {
-    ui.alert(
-      "No Active Tabs Found",
-      "No configured tabs exist (or all were deleted/renamed).\n\nUse 'Configure Automation Tabs' to register tabs.",
-      ui.ButtonSet.OK,
-    );
-    return;
-  }
-
-  var lastSelected = getPropString(
-    getTabConfigKey("_GLOBAL", TAB_CONFIG_KEYS.LAST_SELECTED),
-    "",
-  );
-
-  var options = [];
-  for (var i = 0; i < sheetConfigs.length; i++) {
-    var config = sheetConfigs[i];
-    var sheet = config.sheet; // always non-null here (purged above)
-    var icon = "✓";
-    var status = "";
-
-    var flexMap = buildFlexibleColumnMap(sheet, config.sheetName);
-    var hasMissing = flexMap.warnings.some(function (w) {
-      return w.indexOf("Missing required") >= 0;
-    });
-    if (hasMissing) {
-      icon = "⚠";
-      status = " (missing columns)";
-    }
-
-    var marker = config.sheetName === lastSelected ? " ★ [current]" : "";
-    options.push(
-      i + 1 + ". " + icon + " " + config.sheetName + status + marker,
-    );
-  }
-
-  var response = ui.prompt(
-    "Select Working Tab",
-    "✓ = ready, ⚠ = needs column setup   ★ = currently selected\n\n" +
-      options.join("\n") +
-      "\n\nEnter number:",
-    ui.ButtonSet.OK_CANCEL,
-  );
-
-  if (response.getSelectedButton() !== ui.Button.OK) return;
-
-  var idx = parseInt(response.getResponseText().trim(), 10);
-  if (isNaN(idx) || idx < 1 || idx > sheetConfigs.length) {
-    ui.alert("Invalid selection.");
-    return;
-  }
-
-  var selected = sheetConfigs[idx - 1];
+  var primary = selectedNames[0];
   setPropString(
     getTabConfigKey("_GLOBAL", TAB_CONFIG_KEYS.LAST_SELECTED),
-    selected.sheetName,
+    primary,
   );
 
   ui.alert(
     "Working Tab Set",
-    '"' +
-      selected.sheetName +
-      '" is now your working tab.\n\nThis tab will be used for subsequent operations.',
+    selectedNames.length === 1
+      ? '"' + primary + '" is now your working tab.'
+      : '"' + primary + '" is now the primary working tab.\n\nAlso selected: ' +
+          selectedNames.slice(1).join(", "),
     ui.ButtonSet.OK,
   );
 }

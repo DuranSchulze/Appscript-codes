@@ -6,17 +6,19 @@ function validateActiveTabStructure() {
   var config = getWorkingTabConfig(ss);
 
   if (!config) return;
+  var sheet = config.sheet;
+  var sheetName = config.sheetName;
 
-  if (!config.sheet) {
-    ui.alert("Tab '" + config.sheetName + "' not found!");
+  if (!sheet) {
+    ui.alert("Tab '" + sheetName + "' not found!");
     return;
   }
 
-  var flexMap = buildFlexibleColumnMap(config.sheet, config.sheetName);
+  var flexMap = buildFlexibleColumnMap(sheet, sheetName);
   var validation = validateFlexibleColumnMap(flexMap);
 
   var lines = [
-    "Tab: " + config.sheetName,
+    "Tab: " + sheetName,
     "Header Row: " + flexMap.headerRow,
     "Column Source: " + flexMap.source,
     "",
@@ -79,13 +81,15 @@ function checkColumnMappings() {
   var config = getWorkingTabConfig(ss);
 
   if (!config) return;
+  var sheet = config.sheet;
+  var sheetName = config.sheetName;
 
-  var stored = getTabColumnMapping(config.sheetName);
-  var flexMap = buildFlexibleColumnMap(config.sheet, config.sheetName);
+  var stored = getTabColumnMapping(sheetName);
+  var flexMap = buildFlexibleColumnMap(sheet, sheetName);
 
   var lines = [
-    "Tab: " + config.sheetName,
-    "Configured Header Row: " + getTabHeaderRow(config.sheetName),
+    "Tab: " + sheetName,
+    "Configured Header Row: " + getTabHeaderRow(sheetName),
     "Effective Header Row: " + flexMap.headerRow,
     "Mapping Source: " + flexMap.source,
     "Stored Mapping: " +
@@ -196,33 +200,55 @@ function formatHeaderOptionsForPrompt(availableHeaders, maxItems) {
 function mapTabColumns() {
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var config = promptSelectConfiguredSheet(ss, "Map Tab Columns");
 
-  if (!config || !config.sheet) {
-    ui.alert("Tab not found.");
-    return;
+  var selectedNames = promptSelectTabs({
+    ss: ss,
+    title: "Map Tab Columns",
+    source: "configured",
+    prompt: "Pick one or more tabs to map. The mapping dialog runs once per tab.",
+  });
+  if (selectedNames.length === 0) return;
+
+  var summaries = [];
+  for (var s = 0; s < selectedNames.length; s++) {
+    var sheetName = selectedNames[s];
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      summaries.push("✗ " + sheetName + " — tab not found");
+      continue;
+    }
+    var result = mapColumnsForTab(ui, sheet, sheetName, s + 1, selectedNames.length);
+    summaries.push(result);
+    if (result.indexOf("CANCELLED") >= 0) break;
   }
 
-  var headerInfo = resolveEffectiveHeaderRow(config.sheet, config.sheetName);
+  ui.alert(
+    "Map Tab Columns — Summary",
+    summaries.join("\n"),
+    ui.ButtonSet.OK,
+  );
+}
+
+function mapColumnsForTab(ui, sheet, sheetName, ordinal, total) {
+  var prefix = "[" + ordinal + "/" + total + "] " + sheetName;
+  var headerInfo = resolveEffectiveHeaderRow(sheet, sheetName);
   var headerValues = headerInfo.headers || [];
   var availableHeaders = buildAvailableHeaderChoices(headerValues);
   if (availableHeaders.length === 0) {
     ui.alert(
-      "No usable headers found in tab '" +
-        config.sheetName +
-        "'. Set a valid header row first.",
+      prefix + " — No usable headers found. Set a valid header row first.",
     );
-    return;
+    return "✗ " + sheetName + " — no headers";
   }
 
-  var suggestions = detectColumnMappings(config.sheet, config.sheetName);
+  var suggestions = detectColumnMappings(sheet, sheetName);
   var suggestedMap = buildSuggestedHeaderMap(suggestions);
-  var currentMapping = getTabColumnMapping(config.sheetName);
+  var currentMapping = getTabColumnMapping(sheetName);
   var mapKeys = getMapTabColumnKeys();
 
   var lines = [
-    "Tab: " + config.sheetName,
-    "Configured Header Row: " + getTabHeaderRow(config.sheetName),
+    "Tab: " + sheetName,
+    "Configured Header Row: " + getTabHeaderRow(sheetName),
     "Effective Header Row: " + headerInfo.headerRow,
   ];
   if (headerInfo.usedFallback && headerInfo.reason) {
@@ -240,7 +266,7 @@ function mapTabColumns() {
   );
 
   ui.alert(
-    "Map Tab Columns",
+    "Map Tab Columns — " + prefix,
     lines.join("\n").substring(0, 1800),
     ui.ButtonSet.OK,
   );
@@ -276,8 +302,8 @@ function mapTabColumns() {
       );
 
       if (response.getSelectedButton() !== ui.Button.OK) {
-        ui.alert("Column mapping cancelled. No changes were saved.");
-        return;
+        ui.alert("Column mapping cancelled for " + sheetName + ". No changes saved.");
+        return "CANCELLED " + sheetName;
       }
 
       var input = response.getResponseText().trim();
@@ -306,95 +332,75 @@ function mapTabColumns() {
     }
   }
 
-  saveTabColumnMapping(config.sheetName, newMapping);
+  saveTabColumnMapping(sheetName, newMapping);
 
-  var savedFlexMap = buildFlexibleColumnMap(config.sheet, config.sheetName);
+  var savedFlexMap = buildFlexibleColumnMap(sheet, sheetName);
   var validationMessage = validateFlexibleColumnMap(savedFlexMap);
 
-  var saveLines = [
-    "Tab: " + config.sheetName,
-    "Saved mappings: " + Object.keys(newMapping).length,
-    "Effective header row: " + savedFlexMap.headerRow,
-  ];
-
-  if (validationMessage) {
-    saveLines.push("");
-    saveLines.push("Validation warning:");
-    saveLines.push(validationMessage);
-  } else {
-    saveLines.push("");
-    saveLines.push("All required columns are mapped.");
-  }
-
-  ui.alert(
-    "Column Mapping Saved",
-    saveLines.join("\n").substring(0, 1800),
-    ui.ButtonSet.OK,
-  );
+  return validationMessage
+    ? "⚠ " + sheetName + " — saved " + Object.keys(newMapping).length +
+        " mapping(s); " + validationMessage.split("\n")[0]
+    : "✓ " + sheetName + " — saved " + Object.keys(newMapping).length +
+        " mapping(s); all required columns mapped";
 }
 
 function setTabHeaderRowDialog() {
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var config = promptSelectConfiguredSheet(ss, "Set Header Row");
 
-  if (!config || !config.sheet) {
-    ui.alert("Tab not found.");
-    return;
-  }
+  var selectedNames = promptSelectTabs({
+    ss: ss,
+    title: "Set Tab Header Row",
+    source: "configured",
+    prompt: "Pick one or more tabs. The same header row number is applied to each.",
+  });
+  if (selectedNames.length === 0) return;
 
-  var currentRow = getTabHeaderRow(config.sheetName);
-
-  var response = ui.prompt(
-    "Set Header Row for '" + config.sheetName + "'",
-    "Current header row: " +
-      currentRow +
-      "\n\nEnter new header row number (default is 2):",
+  var rowResp = ui.prompt(
+    "Set Header Row",
+    "Enter the header row number to apply to: " + selectedNames.join(", ") +
+      "\n\n(Default is 2.)",
     ui.ButtonSet.OK_CANCEL,
   );
+  if (rowResp.getSelectedButton() !== ui.Button.OK) return;
 
-  if (response.getSelectedButton() !== ui.Button.OK) return;
-
-  var newRow = parseInt(response.getResponseText().trim(), 10);
+  var newRow = parseInt(rowResp.getResponseText().trim(), 10);
   if (isNaN(newRow) || newRow < 1) {
     ui.alert("Invalid row number.");
     return;
   }
 
-  var finalRow = newRow;
-  var headerInfo = resolveEffectiveHeaderRow(
-    config.sheet,
-    config.sheetName,
-    newRow,
-  );
-  if (headerInfo.usedFallback && headerInfo.headerRow !== newRow) {
-    var useSuggested = ui.alert(
-      "Header Row Suggestion",
-      "Row " +
-        newRow +
-        " appears to be a divider/non-header row.\n\n" +
-        "Suggested header row: " +
-        headerInfo.headerRow +
-        "\n\nUse the suggested row?",
-      ui.ButtonSet.YES_NO,
-    );
-    if (useSuggested === ui.Button.YES) {
-      finalRow = headerInfo.headerRow;
+  var summaries = [];
+  for (var s = 0; s < selectedNames.length; s++) {
+    var sheetName = selectedNames[s];
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      summaries.push("✗ " + sheetName + " — not found");
+      continue;
     }
+
+    var finalRow = newRow;
+    var headerInfo = resolveEffectiveHeaderRow(sheet, sheetName, newRow);
+    if (headerInfo.usedFallback && headerInfo.headerRow !== newRow) {
+      var useSuggested = ui.alert(
+        "Header Row Suggestion — " + sheetName,
+        "Row " + newRow +
+          " looks like a divider/non-header row in this tab.\n\n" +
+          "Suggested header row: " + headerInfo.headerRow +
+          "\n\nUse the suggested row for this tab?",
+        ui.ButtonSet.YES_NO,
+      );
+      if (useSuggested === ui.Button.YES) {
+        finalRow = headerInfo.headerRow;
+      }
+    }
+
+    setTabHeaderRow(sheetName, finalRow);
+    setTabDataStartRow(sheetName, finalRow + 1);
+    summaries.push("✓ " + sheetName + " — header row " + finalRow + ", data starts row " + (finalRow + 1));
   }
 
-  setTabHeaderRow(config.sheetName, finalRow);
-  setTabDataStartRow(config.sheetName, finalRow + 1);
-
-  ui.alert(
-    "Header row set to " +
-      finalRow +
-      " for '" +
-      config.sheetName +
-      "'.\nData start row set to " +
-      (finalRow + 1) +
-      ".",
-  );
+  ui.alert("Header Rows Updated", summaries.join("\n"), ui.ButtonSet.OK);
 }
 
 function viewTabConfiguration() {
@@ -403,14 +409,15 @@ function viewTabConfiguration() {
   var config = getWorkingTabConfig(ss);
 
   if (!config) return;
+  var sheetName = config.sheetName;
 
-  var headerRow = getTabHeaderRow(config.sheetName);
-  var dataStartRow = getTabDataStartRow(config.sheetName);
-  var mapping = getTabColumnMapping(config.sheetName);
-  var noticeOpts = getNoticeOptionsForTab(config.sheetName);
+  var headerRow = getTabHeaderRow(sheetName);
+  var dataStartRow = getTabDataStartRow(sheetName);
+  var mapping = getTabColumnMapping(sheetName);
+  var noticeOpts = getNoticeOptionsForTab(sheetName);
 
   var lines = [
-    "Tab: " + config.sheetName,
+    "Tab: " + sheetName,
     "",
     "Header Row: " + headerRow,
     "Data Start Row: " + dataStartRow,
@@ -432,19 +439,22 @@ function checkReplyTrackingSetup() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var config = getWorkingTabConfig(ss);
 
-  if (!config || !config.sheet) {
+  if (!config) return;
+  var sheet = config.sheet;
+  var sheetName = config.sheetName;
+  if (!sheet) {
     ui.alert("No tab selected.");
     return;
   }
 
-  var flexMap = buildFlexibleColumnMap(config.sheet, config.sheetName);
+  var flexMap = buildFlexibleColumnMap(sheet, sheetName);
   var hasThreadId = !!flexMap.map.SENT_THREAD_ID;
   var hasReplyStatus = !!flexMap.map.REPLY_STATUS;
   var keywords = getReplyKeywords();
   var triggerActive = getTriggersByHandler("runReplyScan").length > 0;
 
   var lines = [
-    "Tab: " + config.sheetName,
+    "Tab: " + sheetName,
     "",
     "Required Columns:",
     "  " + (hasThreadId ? "✓" : "✗") + " Sent Thread Id column",

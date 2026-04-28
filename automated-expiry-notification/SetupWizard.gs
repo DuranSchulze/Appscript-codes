@@ -28,10 +28,44 @@ function runSetupWizard() {
   context = wizardStep3Dropdowns(ss, ui, context);
   if (!context) return;
 
+  wizardStepStaffAliasCheck(ss, ui, context);
+
   context = wizardStep4Schedule(ui, context);
   if (!context) return;
 
   wizardStep5Summary(ui, context);
+}
+
+// Pre-flight check: every distinct Assigned Staff Email across configured
+// tabs must be a verified Gmail "Send mail as" alias of the script runner.
+// Otherwise those rows will error at send time. We only warn here — the
+// user may add aliases in Gmail then re-run.
+function wizardStepStaffAliasCheck(ss, ui, context) {
+  var configured = getConfiguredTabEntries();
+  var tabNames = configured.length > 0
+    ? configured.map(function (e) { return e.name; })
+    : [context.tabName];
+
+  var staffEmails = listDistinctStaffEmailsForTabs(ss, tabNames);
+  if (staffEmails.length === 0) {
+    context.aliasCheckPassed = true;
+    return context;
+  }
+
+  var classified = classifyStaffEmailsByAliasVerification(staffEmails);
+  context.aliasCheckPassed = classified.unverified.length === 0;
+
+  if (context.aliasCheckPassed) return context;
+
+  ui.alert(
+    "Sender Alias Check ⚠",
+    "Outgoing emails are sent FROM the row's Assigned Staff Email. The following addresses are NOT registered as Gmail \"Send mail as\" aliases on this script's account, so rows using them will be marked Error at send time:\n\n  • " +
+      classified.unverified.join("\n  • ") +
+      "\n\nFix it in Gmail → Settings → Accounts and Import → Send mail as → Add another email address. Then re-run this wizard.",
+    ui.ButtonSet.OK,
+  );
+
+  return context;
 }
 
 function wizardStep1Tab(ss, ui, context) {
@@ -70,7 +104,9 @@ function wizardStep1Tab(ss, ui, context) {
 
     var newSheet = ss.insertSheet(newName);
 
-    // Write required headers into row 1
+    // Write required user-input headers into row 1, in the canonical order
+    // a person would naturally fill in. Code-managed columns are added
+    // later by ensureSetupAutomationColumns.
     var requiredHeaders = [
       HEADERS.NO,
       HEADERS.CLIENT_NAME,
@@ -80,9 +116,8 @@ function wizardStep1Tab(ss, ui, context) {
       HEADERS.NOTICE_DATE,
       HEADERS.REMARKS,
       HEADERS.ATTACHMENTS,
-      HEADERS.STATUS,
+      HEADERS.STAFF_NAME,
       HEADERS.STAFF_EMAIL,
-      HEADERS.SEND_MODE,
     ];
     newSheet
       .getRange(1, 1, 1, requiredHeaders.length)
@@ -180,64 +215,61 @@ function wizardStep1Tab(ss, ui, context) {
 }
 
 function wizardStep2Columns(ss, ui, context) {
-  var flexMap = buildFlexibleColumnMap(context.sheet, context.tabName);
-  var required = [
-    "CLIENT_NAME",
-    "CLIENT_EMAIL",
-    "EXPIRY_DATE",
-    "NOTICE_DATE",
-    "STATUS",
-  ];
-  var missing = [];
-  for (var i = 0; i < required.length; i++) {
-    if (!flexMap.map[required[i]]) missing.push(HEADERS[required[i]]);
-  }
+  var missing = findMissingUserInputColumns(context.sheet, context.tabName);
 
   if (missing.length === 0) {
-    ensureSetupAutomationColumns(context.sheet, context.tabName, flexMap.map);
+    ensureSetupAutomationColumns(context.sheet, context.tabName,
+      buildColumnMap(context.sheet, context.tabName));
     context.setupColumnsApplied = true;
     context.columnsOk = true;
     ui.alert(
       "Step 2 Complete ✓",
-      "All required columns detected automatically.\n\nAutomation-managed columns were created/verified for this tab.\n\nProceeding to Step 3.",
+      "All " + REQUIRED_USER_COLUMNS.length +
+        " required user-input columns are present.\n\nCode-managed columns were created/verified for this tab.\n\nProceeding to Step 3.",
       ui.ButtonSet.OK,
     );
     return context;
   }
 
-  // Some columns missing
-  var mapNow = ui.alert(
-    "Step 2 of 4 — Column Check",
-    "The following required columns were not detected:\n\n  • " +
-      missing.join("\n  • ") +
-      "\n\nWould you like to map columns manually now?",
-    ui.ButtonSet.YES_NO,
+  var missingLabels = missing.map(function (m) { return m.label; });
+
+  var addNow = ui.alert(
+    "Step 2 of 4 — Missing User-Input Columns",
+    "These required user-input columns are missing from \"" +
+      context.tabName + "\":\n\n  • " + missingLabels.join("\n  • ") +
+      "\n\nAdd them automatically (headers appended at the end of the row)?\n\nChoose No to map them manually instead.",
+    ui.ButtonSet.YES_NO_CANCEL,
   );
 
-  if (mapNow === ui.Button.YES) {
-    mapTabColumns();
-    // Re-check after mapping
-    var recheck = buildFlexibleColumnMap(context.sheet, context.tabName);
-    var stillMissing = [];
-    for (var j = 0; j < required.length; j++) {
-      if (!recheck.map[required[j]]) stillMissing.push(HEADERS[required[j]]);
-    }
-    context.columnsOk = stillMissing.length === 0;
-    if (context.columnsOk) {
-      ensureSetupAutomationColumns(context.sheet, context.tabName, recheck.map);
-      context.setupColumnsApplied = true;
-      ui.alert(
-        "Automation Columns Ready",
-        "Required columns are now mapped.\n\nAutomation-managed columns were created/verified for this tab.",
-        ui.ButtonSet.OK,
-      );
-    }
+  if (addNow === ui.Button.CANCEL) return null;
+
+  if (addNow === ui.Button.YES) {
+    ensureUserInputColumns(context.sheet, context.tabName);
   } else {
-    context.columnsOk = false;
+    mapTabColumns();
+  }
+
+  // Re-check after either path.
+  var stillMissing = findMissingUserInputColumns(context.sheet, context.tabName);
+  context.columnsOk = stillMissing.length === 0;
+
+  if (context.columnsOk) {
+    ensureSetupAutomationColumns(context.sheet, context.tabName,
+      buildColumnMap(context.sheet, context.tabName));
+    context.setupColumnsApplied = true;
+    ui.alert(
+      "Step 2 Complete ✓",
+      "All required user-input columns are in place.\n\nCode-managed columns were created/verified for this tab.",
+      ui.ButtonSet.OK,
+    );
+  } else {
+    var stillMissingLabels = stillMissing.map(function (m) { return m.label; });
     context.setupColumnsApplied = false;
     ui.alert(
       "Step 2 — Warning",
-      "Continuing without all required columns. The automation may not work correctly until columns are mapped.\n\nYou can fix this later via Tab Management → Map Tab Columns.",
+      "These columns are still missing:\n\n  • " +
+        stillMissingLabels.join("\n  • ") +
+        "\n\nThe automation will skip rows until these are addressed.",
       ui.ButtonSet.OK,
     );
   }
@@ -395,6 +427,10 @@ function wizardStep5Summary(ui, context) {
         ? "✓ Created/verified"
         : "— Not fully applied"),
     "Dropdowns:       " + (context.dropsApplied ? "✓ Applied" : "— Skipped"),
+    "Sender Aliases:  " +
+      (context.aliasCheckPassed === false
+        ? "⚠ Some staff emails not verified — fix in Gmail Send-As"
+        : "✓ All staff emails verified"),
     "Daily Schedule:  " +
       (context.scheduleActive ? "✓ Active" : "— Not activated"),
     "",

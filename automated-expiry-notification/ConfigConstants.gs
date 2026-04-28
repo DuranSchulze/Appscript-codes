@@ -19,10 +19,11 @@ var HEADERS = {
   DOC_TYPE: "Type of ID/Document",
   EXPIRY_DATE: "Expiry Date",
   NOTICE_DATE: "Notice Date",
-  REMARKS: "Remarks",
+  REMARKS: "Description",
   ATTACHMENTS: "Attached Files",
   STATUS: "Status",
-  STAFF_EMAIL: "Staff Email",
+  STAFF_NAME: "Name of Staff",
+  STAFF_EMAIL: "Assigned Staff Email",
   SEND_MODE: "Send Mode",
   SENT_AT: "Sent At",
   SENT_THREAD_ID: "Sent Thread Id",
@@ -39,6 +40,40 @@ var HEADERS = {
   FINAL_NOTICE_MESSAGE_ID: "Final Notice Message Id",
 };
 
+// Team A — required user-input columns. Setup verifies all are present in
+// the sheet (creating any missing) and the daily run validates per-row.
+var REQUIRED_USER_COLUMNS = [
+  "CLIENT_NAME",
+  "CLIENT_EMAIL",
+  "EXPIRY_DATE",
+  "NOTICE_DATE",
+  "REMARKS",
+  "ATTACHMENTS",
+  "STAFF_NAME",
+  "STAFF_EMAIL",
+];
+
+// Team V — code-managed columns. Setup creates the header only when missing;
+// existing headers (incl. user-renamed variants matched via aliases) are
+// preserved. Order is the order ensure-* helpers add them.
+var MANAGED_COLUMNS = [
+  "STATUS",
+  "REPLY_STATUS",
+  "FINAL_NOTICE_SENT_AT",
+  "FINAL_NOTICE_THREAD_ID",
+  "FINAL_NOTICE_MESSAGE_ID",
+  "SEND_MODE",
+  "SENT_AT",
+  "SENT_THREAD_ID",
+  "SENT_MESSAGE_ID",
+  "REPLIED_AT",
+  "REPLY_KEYWORD",
+  "OPEN_TOKEN",
+  "FIRST_OPENED_AT",
+  "LAST_OPENED_AT",
+  "OPEN_COUNT",
+];
+
 var HEADER_ALIASES = {
   CLIENT_NAME: ["Seller", "Seller Name", "Buyer", "Buyer Name"],
   CLIENT_EMAIL: [
@@ -50,9 +85,10 @@ var HEADER_ALIASES = {
     "Buyer Mail",
   ],
   DOC_TYPE: ["Services", "Service"],
-  EXPIRY_DATE: ["Due Date"],
+  EXPIRY_DATE: ["Due Date", "Renewal Date", "Expiry Date/Renewal Date"],
   NOTICE_DATE: ["Remaining Days", "Reminder Days"],
   REMARKS: [
+    "Remarks",
     "Reminder (Email Content)",
     "Reminder Email Content",
     "Reminder Content",
@@ -65,7 +101,8 @@ var HEADER_ALIASES = {
     "Google Sheets",
   ],
   STATUS: ["Project Status"],
-  STAFF_EMAIL: ["Assigned Staff Email"],
+  STAFF_NAME: ["Staff Name", "Assigned Staff", "Staff", "Owner", "Handler"],
+  STAFF_EMAIL: ["Staff Email", "Owner Email", "Handler Email"],
   SENT_THREAD_ID: ["Sent Thread ID"],
   SENT_MESSAGE_ID: ["Sent Message ID"],
   SEND_MODE: ["Send Option", "Mode"],
@@ -220,6 +257,8 @@ var FLEXIBLE_HEADER_ALIASES = {
     "Date of Expiration",
     "Expiry",
     "Due Date",
+    "Renewal Date",
+    "Expiry Date/Renewal Date",
   ],
   NOTICE_DATE: [
     "Notice Date",
@@ -232,6 +271,7 @@ var FLEXIBLE_HEADER_ALIASES = {
     "Reminder Days",
   ],
   REMARKS: [
+    "Description",
     "Remarks",
     "Notes",
     "Comments",
@@ -264,13 +304,21 @@ var FLEXIBLE_HEADER_ALIASES = {
     "Processing Status",
     "Project Status",
   ],
-  STAFF_EMAIL: [
-    "Staff Email",
-    "Assigned Staff Email",
+  STAFF_NAME: [
+    "Name of Staff",
+    "Staff Name",
+    "Assigned Staff",
     "Staff",
-    "Handler Email",
+    "Owner",
+    "Handler",
     "Assigned To",
+  ],
+  STAFF_EMAIL: [
+    "Assigned Staff Email",
+    "Staff Email",
+    "Handler Email",
     "Owner Email",
+    "Assignee Email",
   ],
   SEND_MODE: [
     "Send Mode",

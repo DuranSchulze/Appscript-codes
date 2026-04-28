@@ -25,9 +25,11 @@ function runDailyCheck() {
   var ss = getAutomationSpreadsheet();
   var logsSheet = ensureLogsSheet(ss);
   var sheetConfigs = resolveAutomationSheets(ss);
-  var senderEmail = getSenderAccountEmail();
   var trackingEnabled = !!getOpenTrackingBaseUrl();
   var today = getMidnight(new Date());
+
+  // Reset alias cache so each run reflects current "Send mail as" config.
+  resetVerifiedSenderAliasCache();
 
   var totalAllTabs = 0,
     sentAllTabs = 0,
@@ -56,6 +58,9 @@ function runDailyCheck() {
     var dataStartRow = getTabDataStartRow(tabName);
 
     var colMap = buildColumnMap(visaSheet, tabName);
+    // Auto-create any missing managed (Team V) columns before validating
+    // user-input (Team A) columns.
+    colMap = ensureSetupAutomationColumns(visaSheet, tabName, colMap);
     var mapError = validateColumnMap(colMap, headerRow);
     if (mapError) {
       appendLog(
@@ -111,6 +116,7 @@ function runDailyCheck() {
       var clientEmailRaw = getCellStr(row, colMap.CLIENT_EMAIL);
       var clientEmailList = parseClientEmails(clientEmailRaw);
       var staffEmail = getCellStr(row, colMap.STAFF_EMAIL);
+      var staffName = getCellStr(row, colMap.STAFF_NAME);
       var docType = getCellStr(row, colMap.DOC_TYPE);
       var expiryRaw = colMap.EXPIRY_DATE ? row[colMap.EXPIRY_DATE - 1] : "";
       var noticeStr = getCellStr(row, colMap.NOTICE_DATE);
@@ -165,6 +171,8 @@ function runDailyCheck() {
       if (clientEmailList.length === 0) missing.push("Client Email");
       if (!expiryRaw) missing.push("Expiry Date");
       if (!noticeStr) missing.push("Notice Date");
+      if (!staffName) missing.push("Name of Staff");
+      if (!staffEmail) missing.push("Assigned Staff Email");
       if (missing.length > 0) {
         var errMsg = "Missing required field(s): " + missing.join(", ");
         setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.ERROR);
@@ -274,9 +282,29 @@ function runDailyCheck() {
       var baseSubject = buildEmailSubject(docType, clientName, expiryDate);
       var clientEmailDisplay = clientEmailList.join(", ");
 
+      // Per-row sender = Assigned Staff Email. Skip the row entirely if the
+      // address isn't a verified Gmail "Send mail as" alias of the runner —
+      // sending anyway would mis-attribute the email to the wrong account.
+      if (!canSendAs(staffEmail)) {
+        setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.ERROR);
+        appendLog(
+          logsSheet,
+          tabName,
+          clientName,
+          "ERROR",
+          'Assigned Staff Email "' +
+            staffEmail +
+            '" is not a verified Gmail "Send mail as" alias on the script-runner account. ' +
+            "Add it under Gmail Settings → Accounts → Send mail as, then retry.",
+        );
+        errors++;
+        continue;
+      }
+
       try {
         var sentThisRow = false;
-        var displayName = getSenderDisplayName(senderEmail);
+        var displayName = staffName || CONFIG.SENDER_NAME;
+        var senderEmail = staffEmail;
 
         if (shouldSendNotice) {
           var noticeToken = trackingEnabled ? generateOpenTrackingToken() : "";
@@ -303,6 +331,7 @@ function runDailyCheck() {
             noticeHtmlBody,
             attachResult.blobs,
             displayName,
+            senderEmail,
           );
           var noticeMeta = noticeSendResult.meta;
 
@@ -340,7 +369,6 @@ function runDailyCheck() {
             );
           }
 
-          setStaffEmail(visaSheet, rowIndex, colMap.STAFF_EMAIL, senderEmail);
           appendLog(
             logsSheet,
             tabName,
@@ -401,6 +429,7 @@ function runDailyCheck() {
             finalHtmlBody,
             attachResult.blobs,
             displayName,
+            senderEmail,
           );
           var finalMeta = finalSendResult.meta;
 
@@ -429,7 +458,6 @@ function runDailyCheck() {
           }
 
           setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.SENT);
-          setStaffEmail(visaSheet, rowIndex, colMap.STAFF_EMAIL, senderEmail);
           appendLog(
             logsSheet,
             tabName,

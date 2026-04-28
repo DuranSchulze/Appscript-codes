@@ -333,29 +333,36 @@ function ensureOpenTrackingColumns(sheet, tabName, colMap) {
 
 function ensureSetupAutomationColumns(sheet, tabName, colMap) {
   var updatedMap = colMap || buildColumnMap(sheet, tabName);
-  var directKeys = [
-    "STATUS",
-    "STAFF_EMAIL",
-    "SEND_MODE",
-    "SENT_AT",
-    "SENT_THREAD_ID",
-    "SENT_MESSAGE_ID",
-  ];
 
-  for (var i = 0; i < directKeys.length; i++) {
-    var key = directKeys[i];
+  // MANAGED_COLUMNS lists every code-owned column. Header is added only
+  // when missing (existing user-renamed variants are matched via aliases).
+  for (var i = 0; i < MANAGED_COLUMNS.length; i++) {
+    var key = MANAGED_COLUMNS[i];
     if (!updatedMap[key]) {
       updatedMap[key] = ensureColumnExists(sheet, tabName, key);
     }
   }
 
+  // Refresh map then apply REPLY_STATUS validation rule.
   updatedMap = buildColumnMap(sheet, tabName);
-  updatedMap = ensureReplyMetadataColumns(sheet, tabName, updatedMap);
-  updatedMap.REPLY_KEYWORD =
-    updatedMap.REPLY_KEYWORD || ensureColumnExists(sheet, tabName, "REPLY_KEYWORD");
-  updatedMap = buildColumnMap(sheet, tabName);
-  updatedMap = ensureFinalNoticeColumns(sheet, tabName, updatedMap);
-  updatedMap = ensureOpenTrackingColumns(sheet, tabName, updatedMap);
+  if (updatedMap.REPLY_STATUS) {
+    applyReplyStatusValidation(sheet, tabName, updatedMap);
+  }
+
+  return updatedMap;
+}
+
+// Adds any Team A user-input columns that are missing. Used by the setup
+// wizard when the user opts in to creating them.
+function ensureUserInputColumns(sheet, tabName, colMap) {
+  var updatedMap = colMap || buildColumnMap(sheet, tabName);
+
+  for (var i = 0; i < REQUIRED_USER_COLUMNS.length; i++) {
+    var key = REQUIRED_USER_COLUMNS[i];
+    if (!updatedMap[key]) {
+      updatedMap[key] = ensureColumnExists(sheet, tabName, key);
+    }
+  }
 
   return buildColumnMap(sheet, tabName);
 }
