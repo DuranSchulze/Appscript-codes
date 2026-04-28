@@ -34,44 +34,26 @@ matched via aliases and preserved.
 `Sent Message Id`, `Replied At`, `Reply Keyword`, `Open Tracking Token`,
 `First Opened At`, `Last Opened At`, `Open Count`.
 
-Both lists are exported from [ConfigConstants.gs](ConfigConstants.gs)
+Both lists are exported from [Foundation.gs](Foundation.gs)
 as `REQUIRED_USER_COLUMNS` and `MANAGED_COLUMNS`.
 
 ## File layout
 
-Every `.gs` file lives at the project root. One file per logic area, named
-for what it contains. Apps Script is a flat namespace, so identifiers from
-any file are visible to every other file.
+Seven `.gs` files at the project root, each one responsibility. Apps Script
+is a single namespace, so identifiers in any file are visible to every other
+file. Each file uses chapter banners (`// ═══ ChapterName ═══`) to mark the
+former module boundaries.
 
-| File                                                       | Contains                                                 |
-| ---------------------------------------------------------- | -------------------------------------------------------- |
-| [ConfigConstants.gs](ConfigConstants.gs)                   | Constants, enums, header aliases, column contract        |
-| [PropertiesStore.gs](PropertiesStore.gs)                   | PropertiesService access wrappers                        |
-| [SheetResolution.gs](SheetResolution.gs)                   | Configured-tab resolution + spreadsheet lookup           |
-| [Menu.gs](Menu.gs)                                         | `onOpen` and the spreadsheet menu spec                   |
-| [SetupWizard.gs](SetupWizard.gs)                           | Guided setup flow                                        |
-| [StatusUi.gs](StatusUi.gs)                                 | Status / docs / about / integration dialogs              |
-| [TabManagement.gs](TabManagement.gs)                       | Configure + select automation tabs                       |
-| [ColumnMappingUi.gs](ColumnMappingUi.gs)                   | Map Tab Columns + header-row dialogs                     |
-| [ColumnMappingCore.gs](ColumnMappingCore.gs)               | Column-map persistence, alias matching, fuzzy detection  |
-| [Dropdowns.gs](Dropdowns.gs)                               | Status / Send Mode / Notice Date dropdown setup          |
-| [ValidateUserColumns.gs](ValidateUserColumns.gs)           | Team A presence check + staff-alias classification       |
-| [RowOps.gs](RowOps.gs)                                     | Row reads, status writes, ensure-column helpers          |
-| [SendRules.gs](SendRules.gs)                               | Send-mode rule helpers                                   |
-| [EmailCompose.gs](EmailCompose.gs)                         | Subject/body composition + token replacement             |
-| [Attachments.gs](Attachments.gs)                           | Drive attachment parsing + fallback links                |
-| [AiGeneration.gs](AiGeneration.gs)                         | Gemini fetch + fallback template controls                |
-| [AliasResolver.gs](AliasResolver.gs)                       | Verified Gmail alias check                               |
-| [EmailDelivery.gs](EmailDelivery.gs)                       | Gmail delivery, sender resolution, CC                    |
-| [ReplyTracking.gs](ReplyTracking.gs)                       | Reply-scan orchestration + matching                      |
-| [OpenTracking.gs](OpenTracking.gs)                         | Tracking URL + `doGet` + open writes                     |
-| [DailyRun.gs](DailyRun.gs)                                 | `runDailyCheck` + `manualRunNow` orchestration           |
-| [Triggers.gs](Triggers.gs)                                 | Trigger install/remove + schedule parsing                |
-| [Logs.gs](Logs.gs)                                         | LOGS sheet bootstrap + append helpers                    |
-| [Diagnostics.gs](Diagnostics.gs)                           | Connectivity tests, previews, row inspection             |
-| [SharedUtils.gs](SharedUtils.gs)                           | Cross-domain pure helpers (parsing, dates)               |
-| [UiPrompts.gs](UiPrompts.gs)                               | Multi-tab selection prompt helper                        |
-| [appsscript.json](appsscript.json)                         | Apps Script manifest                                     |
+| File                                       | Owns                                                                                                                                                                              |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Foundation.gs](Foundation.gs)             | Constants, enums, header aliases, column contract, pure helpers, properties access, configured-tab resolution, sheet/row I/O, ensure-column logic. Everything else builds on this. |
+| [Menu.gs](Menu.gs)                         | The `🔔 Expiry Notifications` menu (`onOpen`) and read-only info dialogs (status, docs, about, integration link).                                                                  |
+| [Setup.gs](Setup.gs)                       | Everything the user clicks while configuring a sheet: multi-tab picker, column mapping (detection + UI), dropdowns, user-column validation, and the guided setup wizard.          |
+| [Send.gs](Send.gs)                         | Outbound-email pipeline: send-mode rules → alias verification → AI body generation → attachments → subject/body composition → Gmail delivery + CC.                                |
+| [Tracking.gs](Tracking.gs)                 | Post-send observation: open-pixel handler (`doGet`) and reply-scan orchestration (`runReplyScan`).                                                                                |
+| [Orchestration.gs](Orchestration.gs)       | Runtime loop (`runDailyCheck`, `manualRunNow`), trigger install/remove, LOGS sheet bootstrap and append.                                                                          |
+| [Diagnostics.gs](Diagnostics.gs)           | Test/inspect utilities surfaced through the menu (preview, inspect row, send test, connectivity tests, system check).                                                             |
+| [appsscript.json](appsscript.json)         | Apps Script manifest.                                                                                                                                                             |
 
 ## Import into Google Sheet Apps Script
 
@@ -93,29 +75,29 @@ menu-exposed setup and diagnostics functions.
 
 ## Per-row sender
 
-[EmailDelivery.gs](EmailDelivery.gs) calls `GmailApp.sendEmail` with
+[Send.gs](Send.gs) calls `GmailApp.sendEmail` with
 `{ from: staffEmail, name: staffName }`. Gmail only accepts the `from`
 option when the address is a verified "Send mail as" alias on the
 script-runner's Gmail account.
 
-[AliasResolver.gs](AliasResolver.gs) checks `GmailApp.getAliases()` (cached
-per execution) and exposes `canSendAs(email)`. Daily-run skips any row
-whose staff email isn't verified, marks the row Status = `Error`, and
-writes a clear message to the LOGS sheet. The setup wizard runs the same
-check across every distinct staff email and warns the user before
-scheduling.
+The AliasResolver chapter inside `Send.gs` checks `GmailApp.getAliases()`
+(cached per execution) and exposes `canSendAs(email)`. The daily run
+(in `Orchestration.gs`) skips any row whose staff email isn't verified,
+marks the row Status = `Error`, and writes a clear message to the LOGS
+sheet. The setup wizard runs the same check across every distinct staff
+email and warns the user before scheduling.
 
 ## Multi-tab menu
 
 Every per-tab setup operation ("Map Tab Columns", "Setup Tab Dropdowns",
 "Set Tab Header Row", "Select Working Tab") accepts a comma-separated tab
-list (`1,3` or `1-3` or names) via the `promptSelectTabs` helper in
-[UiPrompts.gs](UiPrompts.gs). The selected tabs are processed in a loop
-and a per-tab result summary is shown at the end.
+list (`1,3` or `1-3` or names) via the `promptSelectTabs` helper inside
+the UiPrompts chapter of [Setup.gs](Setup.gs). The selected tabs are
+processed in a loop and a per-tab result summary is shown at the end.
 
 ## Main flows
 
-### Daily run ([DailyRun.gs](DailyRun.gs))
+### Daily run ([Orchestration.gs](Orchestration.gs))
 
 1. `runDailyCheck` resolves configured tabs and resets the alias cache.
 2. For each tab, ensure managed columns → validate Team A columns → load
@@ -125,20 +107,20 @@ and a per-tab result summary is shown at the end.
    → fallback template), inject the open-tracking pixel, send via Gmail with
    per-row `from`, write metadata, log.
 
-### Reply scan ([ReplyTracking.gs](ReplyTracking.gs))
+### Reply scan ([Tracking.gs](Tracking.gs))
 
 Triggered 9 AM and 3 PM Asia/Manila. For each row with a thread id, loads
-the Gmail thread and matches keyword regex. Self-message filter now
-covers ALL verified aliases (not just the runner) since outgoing mail can
-come from any staff alias.
+the Gmail thread and matches keyword regex. Self-message filter covers ALL
+verified aliases (not just the runner) since outgoing mail can come from
+any staff alias.
 
-### Open tracking ([OpenTracking.gs](OpenTracking.gs))
+### Open tracking ([Tracking.gs](Tracking.gs))
 
 `doGet(e)` handles `?mode=open&t=TOKEN`, finds the row across configured
 tabs, increments open count, writes timestamps, marks Reply Status as
 `Replied` with keyword `OPEN_TRACKED`.
 
-### Setup wizard ([SetupWizard.gs](SetupWizard.gs))
+### Setup wizard ([Setup.gs](Setup.gs))
 
 Tab pick/create → user-column validation (offer to auto-add missing) →
 ensure managed columns → dropdowns → staff alias pre-flight → schedule
