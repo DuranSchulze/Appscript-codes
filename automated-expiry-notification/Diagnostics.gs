@@ -648,6 +648,38 @@ function diagnosticInspectRow() {
   ui.alert("Row " + rowNum + " Inspection", msg, ui.ButtonSet.OK);
 }
 
+function buildRowListPreview(sheet, tabName, colMap, maxRows) {
+  var dataStartRow = getTabDataStartRow(tabName);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < dataStartRow) return "(no data rows found)";
+
+  maxRows = maxRows || 20;
+  var numRows = Math.min(lastRow - dataStartRow + 1, maxRows);
+  var numCols = sheet.getLastColumn();
+  var data = sheet.getRange(dataStartRow, 1, numRows, numCols).getValues();
+
+  var lines = [];
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    var rowNum = dataStartRow + i;
+    var noVal = colMap.NO ? String(row[colMap.NO - 1] || "").trim() : "";
+    var clientName = (
+      getCellStr(row, colMap.CLIENT_NAME) || "(no name)"
+    ).substring(0, 18);
+    var status = getCellStr(row, colMap.STATUS) || "(blank)";
+    var noStr = noVal ? "No." + noVal : "     ";
+    lines.push(
+      "Row " + rowNum + "  | " + noStr + " | " + clientName + " | " + status,
+    );
+  }
+
+  var totalRows = lastRow - dataStartRow + 1;
+  if (totalRows > maxRows) {
+    lines.push("... (" + (totalRows - maxRows) + " more rows not shown)");
+  }
+  return lines.join("\n");
+}
+
 function diagnosticSendTestRow() {
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -668,20 +700,6 @@ function diagnosticSendTestRow() {
     return;
   }
 
-  var response = ui.prompt(
-    "Send Test Email by No. — " + sheetConfig.sheetName,
-    'Enter the value from column "No." to test (e.g., 15):\n\n' +
-      "Note: Email will be sent regardless of Status or target date.",
-    ui.ButtonSet.OK_CANCEL,
-  );
-  if (response.getSelectedButton() !== ui.Button.OK) return;
-
-  var noValue = response.getResponseText().trim();
-  if (!noValue) {
-    ui.alert("Invalid No. value. Please enter a value from column No.");
-    return;
-  }
-
   var colMap = buildColumnMap(sheet, tabName);
   var tabHeaderRow = getTabHeaderRow(tabName);
   var tabDataStartRow = getTabDataStartRow(tabName);
@@ -691,20 +709,67 @@ function diagnosticSendTestRow() {
     return;
   }
 
-  var lookup = findRowNumberByNo(sheet, colMap, noValue, tabDataStartRow);
-  if (lookup.error) {
-    ui.alert(lookup.error);
-    return;
-  }
+  // Show row list and prompt for row number (or use active cell)
+  var rowPreview = buildRowListPreview(sheet, tabName, colMap, 20);
+  var suggestedRow = 0;
+  var activeRowSuggestion = "";
+  try {
+    var activeSheet = SpreadsheetApp.getActiveSheet();
+    if (activeSheet && activeSheet.getName() === tabName) {
+      var activeRow = activeSheet.getActiveCell().getRow();
+      if (activeRow >= tabDataStartRow && activeRow <= sheet.getLastRow()) {
+        suggestedRow = activeRow;
+        activeRowSuggestion =
+          "\n\nCurrently selected row: " +
+          activeRow +
+          " (leave blank to use it)";
+      }
+    }
+  } catch (e) {}
 
-  var rowNum = lookup.rowNum;
-  if (lookup.warning) {
-    ui.alert("No. Lookup Notice", lookup.warning, ui.ButtonSet.OK);
+  var response = ui.prompt(
+    "Send Test Email — " + tabName,
+    "Enter the row number to test:\n\n" +
+      rowPreview +
+      activeRowSuggestion +
+      "\n\n⚠ A [TEST] email will be sent. Row data will NOT be changed.",
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  var rowInput = response.getResponseText().trim();
+  var rowNum;
+
+  if (!rowInput) {
+    if (suggestedRow > 0) {
+      rowNum = suggestedRow;
+    } else {
+      ui.alert("No row number entered. Please try again.");
+      return;
+    }
+  } else {
+    rowNum = parseInt(rowInput, 10);
+    if (isNaN(rowNum) || rowNum < tabDataStartRow) {
+      ui.alert(
+        "Invalid row number. Data starts at row " + tabDataStartRow + ".",
+      );
+      return;
+    }
+    if (rowNum > sheet.getLastRow()) {
+      ui.alert(
+        "Row " +
+          rowNum +
+          " does not exist. Last row is " +
+          sheet.getLastRow() +
+          ".",
+      );
+      return;
+    }
   }
 
   var numCols = sheet.getLastColumn();
   var row = sheet.getRange(rowNum, 1, 1, numCols).getValues()[0];
-  var rowNo = getCellStr(row, colMap.NO) || noValue;
+  var rowNo = getCellStr(row, colMap.NO) || String(rowNum);
 
   var clientName = getCellStr(row, colMap.CLIENT_NAME);
   var clientEmailRaw = getCellStr(row, colMap.CLIENT_EMAIL);
@@ -713,13 +778,8 @@ function diagnosticSendTestRow() {
   var ccEmails = resolveCcEmails(clientEmailList, staffEmail);
   var docType = getCellStr(row, colMap.DOC_TYPE);
   var expiryRaw = colMap.EXPIRY_DATE ? row[colMap.EXPIRY_DATE - 1] : "";
-  var noticeStr = getCellStr(row, colMap.NOTICE_DATE);
   var remarks = getCellStr(row, colMap.REMARKS);
   var attachRaw = getCellStr(row, colMap.ATTACHMENTS);
-  var firstReminderSent = !!(colMap.SENT_AT && row[colMap.SENT_AT - 1]);
-  var finalReminderSent = !!(
-    colMap.FINAL_NOTICE_SENT_AT && row[colMap.FINAL_NOTICE_SENT_AT - 1]
-  );
 
   var missing = [];
   if (!clientName) missing.push("Client Name");
@@ -736,34 +796,26 @@ function diagnosticSendTestRow() {
     return;
   }
 
-  var subject = buildEmailSubject(docType, clientName, expiryDate);
+  var baseSubject = buildEmailSubject(docType, clientName, expiryDate);
+  var testSubject = "[TEST] " + baseSubject;
 
   var confirm = ui.alert(
     "Confirm Test Email",
-    "This will send a REAL email for No. " +
-      rowNo +
-      " (row " +
+    "This will send a [TEST] email for row " +
       rowNum +
+      " (No. " +
+      rowNo +
       "):\n\n" +
-      "Notice:  " +
-      (noticeStr || "(empty)") +
-      "\n" +
       "To:      " +
       clientEmailList.join(", ") +
       "\n" +
       "CC:      " +
       formatCcDisplay(ccEmails) +
       "\n" +
-      "First Sent: " +
-      (firstReminderSent ? "YES" : "No") +
-      "\n" +
-      "Final Sent: " +
-      (finalReminderSent ? "YES" : "No") +
-      "\n" +
       "Subject: " +
-      subject +
+      testSubject +
       "\n\n" +
-      "Proceed?",
+      "⚠ Row data will NOT be changed (test only).\n\nProceed?",
     ui.ButtonSet.YES_NO,
   );
   if (confirm !== ui.Button.YES) return;
@@ -786,98 +838,524 @@ function diagnosticSendTestRow() {
     if (warnConfirm !== ui.Button.YES) return;
   }
 
-  var trackingEnabled = !!getOpenTrackingBaseUrl();
-  if (trackingEnabled) {
-    colMap = ensureOpenTrackingColumns(sheet, tabName, colMap);
-  }
-  var openToken = trackingEnabled ? generateOpenTrackingToken() : "";
   var templateContext = buildRowTemplateContext(sheet, tabName, row);
+  // No open tracking token for test sends — keeps it clean and non-destructive
   var emailContent = buildEmailContent(
     remarks,
     clientName,
     expiryDate,
     docType,
-    openToken,
+    "",
     templateContext,
   );
 
   try {
     var senderEmail = getSenderAccountEmail();
     var displayName = getSenderDisplayName(senderEmail);
-    var testFallbackHtml = buildFallbackLinksHtml(attachResult.failedLinks);
-    var testHtmlBody = testFallbackHtml
-      ? emailContent.htmlBody + testFallbackHtml
+    var fallbackHtml = buildFallbackLinksHtml(attachResult.failedLinks);
+    var htmlBody = fallbackHtml
+      ? emailContent.htmlBody + fallbackHtml
       : emailContent.htmlBody;
-    var testSendResult = sendReminderEmails(
+    var sendResult = sendReminderEmails(
       clientEmailList,
       ccEmails,
-      subject,
-      testHtmlBody,
+      testSubject,
+      htmlBody,
       attachResult.blobs,
       displayName,
     );
-    var sentMeta = testSendResult.meta;
-    setStaffEmail(sheet, rowNum, colMap.STAFF_EMAIL, senderEmail);
-    colMap = ensureReplyStatusColumn(sheet, tabName, colMap);
-    writePostSendMetadata(sheet, rowNum, colMap, {
-      sentAt: new Date(),
-      senderEmail: senderEmail,
-      openToken: openToken,
-      threadId: sentMeta.threadId,
-      messageId: sentMeta.messageId,
-    });
-    if (isSameDay(expiryDate, getMidnight(new Date()))) {
-      colMap = ensureFinalNoticeColumns(sheet, tabName, colMap);
-      writeFinalNoticeMetadata(sheet, rowNum, colMap, {
-        sentAt: new Date(),
-        threadId: sentMeta.threadId,
-        messageId: sentMeta.messageId,
-      });
-      setResolvedStatus(sheet, rowNum, colMap, tabName, STATUS.SENT);
-    } else {
-      setResolvedStatus(sheet, rowNum, colMap, tabName, STATUS.ACTIVE);
-    }
+
     appendLog(
       ensureLogsSheet(ss),
       sheetConfig.sheetName,
       clientName,
-      "INFO",
-      "Test email sent by No. " +
+      "TEST_SEND",
+      "Test email sent for row " +
+        rowNum +
+        " (No. " +
         rowNo +
+        ")" +
         " | To: " +
-        testSendResult.success.join(", ") +
+        sendResult.success.join(", ") +
         (ccEmails.length > 0 ? " | CC: " + ccEmails.join(", ") : "") +
-        (testSendResult.failed.length > 0
-          ? " | Failed Recipients: " +
-            testSendResult.failed
-              .map(function (item) {
-                return item.email + " (" + item.error + ")";
+        (sendResult.failed.length > 0
+          ? " | Failed: " +
+            sendResult.failed
+              .map(function (f) {
+                return f.email + " (" + f.error + ")";
               })
               .join("; ")
           : "") +
         " | Body: " +
         emailContent.source,
     );
+
     ui.alert(
-      "Test email sent successfully to " +
-        testSendResult.success.join(", ") +
+      "Test Email Sent",
+      "Test email sent to " +
+        sendResult.success.join(", ") +
         "." +
-        (testSendResult.failed.length > 0
-          ? "\n\nFailed recipients:\n" +
-            testSendResult.failed
-              .map(function (item) {
-                return item.email + " - " + item.error;
+        (sendResult.failed.length > 0
+          ? "\n\nFailed:\n" +
+            sendResult.failed
+              .map(function (f) {
+                return f.email + " - " + f.error;
               })
               .join("\n")
           : "") +
         "\n\nBody source: " +
         emailContent.source +
-        (senderEmail
-          ? "\n\nStaff Email updated with sender account: " + senderEmail
-          : ""),
+        "\n\nRow data was not changed.",
+      ui.ButtonSet.OK,
     );
   } catch (e) {
     ui.alert("Failed to send: " + e.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Manual Send Row — force-send a specific row exactly as automation would
+// ═══════════════════════════════════════════════════════════════════════════
+
+function manualSendRow() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var logsSheet = ensureLogsSheet(ss);
+
+  var sheetConfig = promptSelectConfiguredSheet(
+    ss,
+    "Manual Send Row — Select Sheet",
+  );
+  if (!sheetConfig) return;
+
+  var sheet = sheetConfig.sheet;
+  var tabName = sheetConfig.sheetName;
+  if (!sheet) {
+    ui.alert(
+      'Sheet "' +
+        tabName +
+        '" not found. Use "Configure Automation Sheet(s)".',
+    );
+    return;
+  }
+
+  var colMap = buildColumnMap(sheet, tabName);
+  var tabHeaderRow = getTabHeaderRow(tabName);
+  var tabDataStartRow = getTabDataStartRow(tabName);
+  var mapError = validateColumnMap(colMap, tabHeaderRow);
+  if (mapError) {
+    ui.alert("Column map error: " + mapError);
+    return;
+  }
+
+  // Show row list and detect active row
+  var rowPreview = buildRowListPreview(sheet, tabName, colMap, 20);
+  var suggestedRow = 0;
+  var activeRowSuggestion = "";
+  try {
+    var activeSheet = SpreadsheetApp.getActiveSheet();
+    if (activeSheet && activeSheet.getName() === tabName) {
+      var activeRow = activeSheet.getActiveCell().getRow();
+      if (activeRow >= tabDataStartRow && activeRow <= sheet.getLastRow()) {
+        suggestedRow = activeRow;
+        activeRowSuggestion =
+          "\n\nCurrently selected row: " +
+          activeRow +
+          " (leave blank to use it)";
+      }
+    }
+  } catch (e) {}
+
+  var response = ui.prompt(
+    "Manual Send Row — " + tabName,
+    "Enter the row number to force-send:\n\n" +
+      rowPreview +
+      activeRowSuggestion +
+      "\n\n⚠ This WILL send the email and update the row (status, metadata) exactly as automation would.",
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  var rowInput = response.getResponseText().trim();
+  var rowNum;
+
+  if (!rowInput) {
+    if (suggestedRow > 0) {
+      rowNum = suggestedRow;
+    } else {
+      ui.alert("No row number entered. Please try again.");
+      return;
+    }
+  } else {
+    rowNum = parseInt(rowInput, 10);
+    if (isNaN(rowNum) || rowNum < tabDataStartRow) {
+      ui.alert(
+        "Invalid row number. Data starts at row " + tabDataStartRow + ".",
+      );
+      return;
+    }
+    if (rowNum > sheet.getLastRow()) {
+      ui.alert(
+        "Row " +
+          rowNum +
+          " does not exist. Last row is " +
+          sheet.getLastRow() +
+          ".",
+      );
+      return;
+    }
+  }
+
+  var numCols = sheet.getLastColumn();
+  var row = sheet.getRange(rowNum, 1, 1, numCols).getValues()[0];
+  var rowNo = getCellStr(row, colMap.NO) || String(rowNum);
+
+  var clientName = getCellStr(row, colMap.CLIENT_NAME);
+  var clientEmailRaw = getCellStr(row, colMap.CLIENT_EMAIL);
+  var clientEmailList = parseClientEmails(clientEmailRaw);
+  var staffEmail = getCellStr(row, colMap.STAFF_EMAIL);
+  var staffName = getCellStr(row, colMap.STAFF_NAME);
+  var docType = getCellStr(row, colMap.DOC_TYPE);
+  var expiryRaw = colMap.EXPIRY_DATE ? row[colMap.EXPIRY_DATE - 1] : "";
+  var remarks = getCellStr(row, colMap.REMARKS);
+  var attachRaw = getCellStr(row, colMap.ATTACHMENTS);
+  var status = getCellStr(row, colMap.STATUS);
+  var sendMode = getRowSendMode(row, colMap);
+
+  // Validate required fields
+  var missing = [];
+  if (!clientName) missing.push("Client Name");
+  if (clientEmailList.length === 0) missing.push("Client Email");
+  if (!expiryRaw) missing.push("Expiry Date");
+  if (!staffEmail) missing.push("Assigned Staff Email");
+  if (missing.length > 0) {
+    ui.alert("Cannot send — missing required field(s): " + missing.join(", "));
+    return;
+  }
+
+  var expiryDate = expiryRaw instanceof Date ? expiryRaw : new Date(expiryRaw);
+  if (isNaN(expiryDate.getTime())) {
+    ui.alert("Cannot send — invalid Expiry Date: " + expiryRaw);
+    return;
+  }
+
+  var today = getMidnight(new Date());
+  var isExpiryDay = isSameDay(expiryDate, today);
+
+  // Determine send stage based on current status
+  var sendStage; // "notice", "final", or "notice_and_final"
+  var stageLabel;
+  var statusIsActive = isStatusBlank(status) || isStatusActive(status);
+  var statusIsNoticeSent = isStatusNoticeSent(status);
+
+  if (!statusIsActive && !statusIsNoticeSent) {
+    // Status is Sent, Error, or something unrecognised — warn before proceeding
+    var override = ui.alert(
+      "Row Already Processed",
+      "Row " +
+        rowNum +
+        " has Status: " +
+        (status || "(empty)") +
+        "\n\n" +
+        "This row may have already been sent or errored.\n" +
+        "Force-sending will resend the notice email and reset the row.\n\n" +
+        "Continue anyway?",
+      ui.ButtonSet.YES_NO,
+    );
+    if (override !== ui.Button.YES) return;
+    statusIsActive = true;
+  }
+
+  if (statusIsActive) {
+    if (isExpiryDay) {
+      sendStage = "notice_and_final";
+      stageLabel = "Notice + Final (expiry day)";
+    } else {
+      sendStage = "notice";
+      stageLabel = "Notice";
+    }
+  } else {
+    // statusIsNoticeSent
+    if (isExpiryDay) {
+      sendStage = "final";
+      stageLabel = "Final (expiry day)";
+    } else {
+      var proceedEarly = ui.alert(
+        "Final Reminder Not Due Yet",
+        "Status is Notice Sent but today is not the expiry date (" +
+          formatDate(expiryDate) +
+          ").\n\n" +
+          "Force-send the final reminder now anyway?\n" +
+          "This will mark the row as Sent.",
+        ui.ButtonSet.YES_NO,
+      );
+      if (proceedEarly !== ui.Button.YES) return;
+      sendStage = "final";
+      stageLabel = "Final (forced early)";
+    }
+  }
+
+  // Warn if send mode would normally block this row
+  var modeSkipReason = getSendModeSkipReason(sendMode);
+  if (modeSkipReason) {
+    var modeOverride = ui.alert(
+      "Send Mode Override",
+      "Row " +
+        rowNum +
+        " has Send Mode: " +
+        sendMode +
+        "\n(" +
+        modeSkipReason +
+        ")\n\n" +
+        "Manual Send bypasses send mode restrictions.\nContinue?",
+      ui.ButtonSet.YES_NO,
+    );
+    if (modeOverride !== ui.Button.YES) return;
+  }
+
+  // Verify sender — use row's assigned staff email if it's a valid alias
+  var senderEmail = staffEmail;
+  var displayName = staffName || getSenderDisplayName(staffEmail);
+  resetVerifiedSenderAliasCache();
+  if (!canSendAs(staffEmail)) {
+    var runnerEmail = getSenderAccountEmail();
+    var aliasWarn = ui.alert(
+      "Staff Email Not a Verified Alias",
+      '"' +
+        staffEmail +
+        '" is not a verified Send-As alias on this script account.\n\n' +
+        "Send using the script runner account instead?\n" +
+        "From: " +
+        runnerEmail,
+      ui.ButtonSet.YES_NO,
+    );
+    if (aliasWarn !== ui.Button.YES) return;
+    senderEmail = runnerEmail;
+    displayName = getSenderDisplayName(runnerEmail);
+  }
+
+  var ccEmails = resolveCcEmails(clientEmailList, senderEmail);
+  var baseSubject = buildEmailSubject(docType, clientName, expiryDate);
+  var previewSubject = buildStageSubject(
+    baseSubject,
+    sendStage === "final" ? "final" : "notice",
+  );
+
+  // Final confirmation with full details
+  var confirm = ui.alert(
+    "Confirm Manual Send",
+    "Manual send for row " +
+      rowNum +
+      " (No. " +
+      rowNo +
+      "):\n\n" +
+      "Stage:   " +
+      stageLabel +
+      "\n" +
+      "From:    " +
+      senderEmail +
+      "\n" +
+      "To:      " +
+      clientEmailList.join(", ") +
+      "\n" +
+      "CC:      " +
+      formatCcDisplay(ccEmails) +
+      "\n" +
+      "Subject: " +
+      previewSubject +
+      "\n\n" +
+      "⚠ This will update the row status and metadata.\nProceed?",
+    ui.ButtonSet.YES_NO,
+  );
+  if (confirm !== ui.Button.YES) return;
+
+  // Resolve attachments
+  var attachResult = resolveAttachments(attachRaw);
+  if (attachResult.fatalError) {
+    ui.alert("Attachment error: " + attachResult.fatalError);
+    return;
+  }
+  if (attachResult.warnings && attachResult.warnings.length > 0) {
+    var warnConfirm2 = ui.alert(
+      "Attachment Warning(s)",
+      "Some files could not be loaded:\n\n" +
+        attachResult.warnings.join("\n") +
+        "\n\nContinue sending with " +
+        attachResult.blobs.length +
+        " valid file(s)?",
+      ui.ButtonSet.YES_NO,
+    );
+    if (warnConfirm2 !== ui.Button.YES) return;
+  }
+
+  var trackingEnabled = !!getOpenTrackingBaseUrl();
+  if (trackingEnabled) {
+    colMap = ensureOpenTrackingColumns(sheet, tabName, colMap);
+  }
+  colMap = ensureSetupAutomationColumns(sheet, tabName, colMap);
+
+  var templateContext = buildRowTemplateContext(sheet, tabName, row);
+  var fallbackHtml = buildFallbackLinksHtml(attachResult.failedLinks);
+
+  try {
+    var sentFinal = false;
+
+    if (sendStage === "notice" || sendStage === "notice_and_final") {
+      var noticeToken = trackingEnabled ? generateOpenTrackingToken() : "";
+      var noticeContent = buildStageEmailContent(
+        remarks,
+        clientName,
+        expiryDate,
+        docType,
+        noticeToken,
+        templateContext,
+        "notice",
+      );
+      var noticeSubject = buildStageSubject(baseSubject, "notice");
+      var noticeHtmlBody = fallbackHtml
+        ? noticeContent.htmlBody + fallbackHtml
+        : noticeContent.htmlBody;
+      var noticeSendResult = sendReminderEmails(
+        clientEmailList,
+        ccEmails,
+        noticeSubject,
+        noticeHtmlBody,
+        attachResult.blobs,
+        displayName,
+        senderEmail,
+      );
+      var noticeMeta = noticeSendResult.meta;
+
+      colMap = ensureReplyStatusColumn(sheet, tabName, colMap);
+      writePostSendMetadata(sheet, rowNum, colMap, {
+        sentAt: new Date(),
+        senderEmail: senderEmail,
+        openToken: noticeToken,
+        threadId: noticeMeta.threadId,
+        messageId: noticeMeta.messageId,
+      });
+
+      if (sendStage === "notice_and_final") {
+        colMap = ensureFinalNoticeColumns(sheet, tabName, colMap);
+        writeFinalNoticeMetadata(sheet, rowNum, colMap, {
+          sentAt: new Date(),
+          threadId: noticeMeta.threadId,
+          messageId: noticeMeta.messageId,
+        });
+        setResolvedStatus(sheet, rowNum, colMap, tabName, STATUS.SENT);
+        sentFinal = true;
+      } else {
+        setResolvedStatus(sheet, rowNum, colMap, tabName, STATUS.NOTICE_SENT);
+      }
+
+      appendLog(
+        logsSheet,
+        tabName,
+        clientName,
+        "MANUAL_SEND",
+        "Manual notice email sent | Row " +
+          rowNum +
+          " (No. " +
+          rowNo +
+          ")" +
+          " | To: " +
+          noticeSendResult.success.join(", ") +
+          (ccEmails.length > 0 ? " | CC: " + ccEmails.join(", ") : "") +
+          " | Stage: " +
+          stageLabel +
+          " | Body: " +
+          noticeContent.source +
+          (noticeSendResult.failed.length > 0
+            ? " | Failed: " +
+              noticeSendResult.failed
+                .map(function (f) {
+                  return f.email + " (" + f.error + ")";
+                })
+                .join("; ")
+            : ""),
+      );
+    }
+
+    if (sendStage === "final" && !sentFinal) {
+      var finalToken = trackingEnabled ? generateOpenTrackingToken() : "";
+      var finalContent = buildStageEmailContent(
+        remarks,
+        clientName,
+        expiryDate,
+        docType,
+        finalToken,
+        templateContext,
+        "final",
+      );
+      var finalSubject = buildStageSubject(baseSubject, "final");
+      var finalHtmlBody = fallbackHtml
+        ? finalContent.htmlBody + fallbackHtml
+        : finalContent.htmlBody;
+      var finalSendResult = sendReminderEmails(
+        clientEmailList,
+        ccEmails,
+        finalSubject,
+        finalHtmlBody,
+        attachResult.blobs,
+        displayName,
+        senderEmail,
+      );
+      var finalMeta = finalSendResult.meta;
+
+      colMap = ensureFinalNoticeColumns(sheet, tabName, colMap);
+      writeFinalNoticeMetadata(sheet, rowNum, colMap, {
+        sentAt: new Date(),
+        threadId: finalMeta.threadId,
+        messageId: finalMeta.messageId,
+      });
+      setResolvedStatus(sheet, rowNum, colMap, tabName, STATUS.SENT);
+      sentFinal = true;
+
+      appendLog(
+        logsSheet,
+        tabName,
+        clientName,
+        "MANUAL_SEND",
+        "Manual final email sent | Row " +
+          rowNum +
+          " (No. " +
+          rowNo +
+          ")" +
+          " | To: " +
+          finalSendResult.success.join(", ") +
+          (ccEmails.length > 0 ? " | CC: " + ccEmails.join(", ") : "") +
+          " | Stage: " +
+          stageLabel +
+          " | Body: " +
+          finalContent.source +
+          (finalSendResult.failed.length > 0
+            ? " | Failed: " +
+              finalSendResult.failed
+                .map(function (f) {
+                  return f.email + " (" + f.error + ")";
+                })
+                .join("; ")
+            : ""),
+      );
+    }
+
+    var resultLines = [
+      "Manual send complete for row " + rowNum + " (No. " + rowNo + ").",
+    ];
+    if (sendStage === "notice") {
+      resultLines.push("Status updated to: Notice Sent");
+    } else {
+      resultLines.push("Status updated to: Sent");
+    }
+    resultLines.push("\nCheck the LOGS sheet for full details.");
+
+    ui.alert("Manual Send Complete", resultLines.join("\n"), ui.ButtonSet.OK);
+  } catch (e) {
+    ui.alert(
+      "Manual Send Failed",
+      "Error sending row " + rowNum + ": " + e.message,
+      ui.ButtonSet.OK,
+    );
   }
 }
 

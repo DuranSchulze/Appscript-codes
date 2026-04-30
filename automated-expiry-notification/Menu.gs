@@ -97,8 +97,13 @@ var ROOT_MENU_SPEC = [
       { type: "item", label: "Inspect Row...", fn: "diagnosticInspectRow" },
       {
         type: "item",
-        label: "Send Test Email by No....",
+        label: "Send Test Email (row, no data change)...",
         fn: "diagnosticSendTestRow",
+      },
+      {
+        type: "item",
+        label: "Manual Send Row (force-send + update row)...",
+        fn: "manualSendRow",
       },
       { type: "separator" },
       { type: "item", label: "Test Gmail Send", fn: "testGmailSend" },
