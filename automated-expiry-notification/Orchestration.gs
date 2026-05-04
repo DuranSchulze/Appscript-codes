@@ -1,8 +1,6 @@
-
 // ═══════════════════════════════════════════════════════════════════════════
 // ORCHESTRATION — runtime loop, scheduling, log sheet
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Logs — LOGS sheet bootstrap and append helpers
@@ -60,7 +58,6 @@ function initializeLogsSheetLayout(sheet) {
   sheet.setColumnWidth(LOG_COL.DETAIL, 450);
 }
 
-
 function ensureLogsSheet(ss) {
   var sheet = ss.getSheetByName(CONFIG.LOGS_SHEET_NAME);
   if (!sheet) {
@@ -99,7 +96,6 @@ function ensureLogsSheet(ss) {
 
   return sheet;
 }
-
 
 function appendLog(logsSheet, tabName, clientName, action, detail) {
   logsSheet.appendRow([
@@ -149,13 +145,11 @@ function getDailyTriggerHour() {
     : CONFIG.TRIGGER_HOUR;
 }
 
-
 function getDailyTriggerMinute() {
   var stored = getPropString(PROP_KEYS.DAILY_TRIGGER_MINUTE, "");
   var parsed = parseInt(stored, 10);
   return !isNaN(parsed) && parsed >= 0 && parsed <= 59 ? parsed : 0;
 }
-
 
 function formatTwoDigits(value) {
   var num = parseInt(value, 10);
@@ -163,11 +157,9 @@ function formatTwoDigits(value) {
   return num < 10 ? "0" + num : String(num);
 }
 
-
 function formatDailyTriggerTime(hour, minute) {
   return hour + ":" + formatTwoDigits(minute);
 }
-
 
 function parseDailyTriggerTimeInput(rawText) {
   var text = String(rawText || "").trim();
@@ -219,7 +211,6 @@ function setDailyTriggerHourDialog() {
     ui.ButtonSet.OK,
   );
 }
-
 
 function installTrigger() {
   rememberSpreadsheetId(SpreadsheetApp.getActiveSpreadsheet());
@@ -352,6 +343,21 @@ function manualRunNow() {
 }
 
 function runDailyCheck() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    Logger.log(
+      "runDailyCheck skipped because another automation run is still active.",
+    );
+    return;
+  }
+  try {
+    return runDailyCheckLocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function runDailyCheckLocked_() {
   var ss = getAutomationSpreadsheet();
   var logsSheet = ensureLogsSheet(ss);
   var sheetConfigs = resolveAutomationSheets(ss);

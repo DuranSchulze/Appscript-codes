@@ -1,8 +1,6 @@
-
 // ═══════════════════════════════════════════════════════════════════════════
 // TRACKING — post-send observation (open pixel + reply scan)
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OpenTracking — tracking URL config, doGet, token lookup, open writes
@@ -67,7 +65,7 @@ function doGet(e) {
   if (mode === "click") {
     var url = String(params.u || "").trim();
     return HtmlService.createHtmlOutput(
-      url
+      isSafeTrackingRedirectUrl(url)
         ? '<meta http-equiv="refresh" content="0;url=' +
             sanitizeHtmlAttribute(url) +
             '">'
@@ -87,9 +85,17 @@ function sanitizeHtmlContent(value) {
     .replace(/>/g, "&gt;");
 }
 
-
 function sanitizeHtmlAttribute(value) {
-  return String(value || "").replace(/["<>]/g, "");
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function isSafeTrackingRedirectUrl(value) {
+  var text = String(value || "").trim();
+  return /^https?:\/\/[^\s"<>]+$/i.test(text);
 }
 
 function recordOpenTrackingEvent(token, mode) {
@@ -124,24 +130,6 @@ function recordOpenTrackingEvent(token, mode) {
         countCell.setValue(isNaN(current) ? 1 : current + 1);
       }
 
-      colMap = ensureReplyMetadataColumns(sheet, tabName, colMap);
-      setCellValueIfColumn(
-        sheet,
-        rowNum,
-        colMap.REPLY_STATUS,
-        REPLY_STATUS.REPLIED,
-      );
-      if (colMap.REPLIED_AT) {
-        var repliedAtCell = sheet.getRange(rowNum, colMap.REPLIED_AT);
-        if (!repliedAtCell.getValue()) repliedAtCell.setValue(now);
-      }
-      setCellValueIfColumn(
-        sheet,
-        rowNum,
-        colMap.REPLY_KEYWORD,
-        mode === "click" ? "CLICK_TRACKED" : "OPEN_TRACKED",
-      );
-
       var logsSheet = ensureLogsSheet(ss);
       var clientName = colMap.CLIENT_NAME
         ? getCellStr(
@@ -154,15 +142,13 @@ function recordOpenTrackingEvent(token, mode) {
         tabName,
         clientName,
         "INFO",
-        "Tracking event recorded: " +
-          (mode || "open") +
-          " | token=" +
-          token +
-          " | Reply Status set to Replied",
+        "Tracking event recorded: " + (mode || "open") + " | token=" + token,
       );
       break; // Found and recorded, no need to check other tabs
     }
-  } catch (e) {}
+  } catch (e) {
+    Logger.log("Tracking event failed: " + (e && e.message ? e.message : e));
+  }
 }
 
 function findRowNumberByToken(sheet, colMap, token, dataStartRow) {
@@ -231,6 +217,21 @@ function runReplyScanNow() {
 }
 
 function runReplyScan() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    Logger.log(
+      "runReplyScan skipped because another automation run is still active.",
+    );
+    return "Reply scan skipped because another automation run is still active.";
+  }
+  try {
+    return runReplyScanLocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function runReplyScanLocked_() {
   var ss = getAutomationSpreadsheet();
   var logsSheet = ensureLogsSheet(ss);
   var sheetConfigs = resolveAutomationSheets(ss);
@@ -460,7 +461,9 @@ function findReplyMatchForRow(threadId, clientEmail, keywords, sentAt) {
         from: msg.getFrom(),
       };
     }
-  } catch (e) {}
+  } catch (e) {
+    Logger.log("Reply scan lookup failed: " + (e && e.message ? e.message : e));
+  }
 
   return null;
 }
