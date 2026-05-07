@@ -120,6 +120,47 @@ function appendLog(logsSheet, tabName, clientName, action, detail) {
   }
 }
 
+// Batched log writer — accumulates entries in memory and writes them to the
+// LOGS sheet in a single setValues call, then applies action-column colours
+// in one batch. Use flush() at the end of each tab's processing block to
+// commit. This replaces N individual appendRow calls with 2 API calls per tab.
+function createLogBuffer(logsSheet) {
+  var pending = [];
+
+  function actionStyle(action) {
+    if (action === "SENT" || action === "SENT_NOTICE" ||
+        action === "SENT_FINAL" || action === "SENT_NOTICE_FINAL") {
+      return { bg: "#d9ead3", fg: "#274e13" };
+    }
+    if (action === "ERROR")   return { bg: "#fce8e6", fg: "#a61c00" };
+    if (action === "SKIPPED") return { bg: "#fff2cc", fg: "#7f6000" };
+    if (action === "SUMMARY") return { bg: "#e8eaf6", fg: "#1a237e" };
+    return { bg: null, fg: null };
+  }
+
+  return {
+    add: function (tabName, clientName, action, detail) {
+      pending.push([new Date(), tabName || "", clientName || "", action, detail]);
+    },
+    flush: function () {
+      if (pending.length === 0) return;
+      var startRow = logsSheet.getLastRow() + 1;
+      logsSheet.getRange(startRow, 1, pending.length, 5).setValues(pending);
+      var bgs = [], fgs = [];
+      for (var i = 0; i < pending.length; i++) {
+        var s = actionStyle(pending[i][3]);
+        bgs.push([s.bg]);
+        fgs.push([s.fg]);
+      }
+      logsSheet
+        .getRange(startRow, LOG_COL.ACTION, pending.length, 1)
+        .setBackgrounds(bgs)
+        .setFontColors(fgs);
+      pending = [];
+    },
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Triggers — trigger install/remove and schedule parsing
 // ═══════════════════════════════════════════════════════════════════════════
@@ -364,8 +405,13 @@ function runDailyCheckLocked_() {
   var trackingEnabled = !!getOpenTrackingBaseUrl();
   var today = getMidnight(new Date());
 
-  // Reset alias cache so each run reflects current "Send mail as" config.
-  resetVerifiedSenderAliasCache();
+  // Emails are always sent FROM the automation runner's account.
+  // Staff emails are CC'd — no "Send mail as" alias needed.
+  var senderEmail = getSenderAccountEmail();
+  var displayName = CONFIG.SENDER_NAME;
+
+  // Buffered log writer — one setValues flush per tab instead of N appendRow calls.
+  var logBuffer = createLogBuffer(logsSheet);
 
   var totalAllTabs = 0,
     sentAllTabs = 0,
@@ -377,62 +423,41 @@ function runDailyCheckLocked_() {
     var visaSheet = sheetConfig.sheet;
 
     if (!visaSheet) {
-      appendLog(
-        logsSheet,
-        tabName,
-        "",
-        "ERROR",
-        'Sheet "' +
-          tabName +
-          '" not found. Use "Configure Automation Sheet(s)" to fix.',
+      logBuffer.add(
+        tabName, "", "ERROR",
+        'Sheet "' + tabName + '" not found. Use "Configure Automation Sheet(s)" to fix.',
       );
+      logBuffer.flush();
       continue;
     }
 
-    // Get per-tab configuration
     var headerRow = getTabHeaderRow(tabName);
     var dataStartRow = getTabDataStartRow(tabName);
 
     var colMap = buildColumnMap(visaSheet, tabName);
-    // Auto-create any missing managed (Team V) columns before validating
-    // user-input (Team A) columns.
     colMap = ensureSetupAutomationColumns(visaSheet, tabName, colMap);
     var mapError = validateColumnMap(colMap, headerRow);
     if (mapError) {
-      appendLog(
-        logsSheet,
-        tabName,
-        "",
-        "ERROR",
-        "[" + tabName + "] " + mapError,
-      );
+      logBuffer.add(tabName, "", "ERROR", "[" + tabName + "] " + mapError);
+      logBuffer.flush();
       continue;
     }
 
     var lastRow = visaSheet.getLastRow();
     if (lastRow < dataStartRow) {
-      appendLog(
-        logsSheet,
-        tabName,
-        "",
-        "INFO",
-        "[" + tabName + "] No data rows found. Skipping.",
-      );
+      logBuffer.add(tabName, "", "INFO", "[" + tabName + "] No data rows found. Skipping.");
+      logBuffer.flush();
       continue;
     }
 
     var numDataRows = lastRow - dataStartRow + 1;
     var numCols = visaSheet.getLastColumn();
     if (numCols === 0) {
-      appendLog(
-        logsSheet,
-        tabName,
-        "",
-        "INFO",
-        "[" + tabName + "] Tab has no columns. Skipping.",
-      );
+      logBuffer.add(tabName, "", "INFO", "[" + tabName + "] Tab has no columns. Skipping.");
+      logBuffer.flush();
       continue;
     }
+
     var data = visaSheet
       .getRange(dataStartRow, 1, numDataRows, numCols)
       .getValues();
@@ -448,46 +473,28 @@ function runDailyCheckLocked_() {
       var row = data[i];
       var rowIndex = dataStartRow + i;
 
-      var clientName = getCellStr(row, colMap.CLIENT_NAME);
+      var clientName    = getCellStr(row, colMap.CLIENT_NAME);
       var clientEmailRaw = getCellStr(row, colMap.CLIENT_EMAIL);
       var clientEmailList = parseClientEmails(clientEmailRaw);
-      var staffEmail = getCellStr(row, colMap.STAFF_EMAIL);
-      var staffName = getCellStr(row, colMap.STAFF_NAME);
-      var docType = getCellStr(row, colMap.DOC_TYPE);
-      var expiryRaw = colMap.EXPIRY_DATE ? row[colMap.EXPIRY_DATE - 1] : "";
-      var noticeStr = getCellStr(row, colMap.NOTICE_DATE);
-      var remarks = getCellStr(row, colMap.REMARKS);
-      var attachRaw = getCellStr(row, colMap.ATTACHMENTS);
-      var status = getCellStr(row, colMap.STATUS);
-      var replyStatus = getCellStr(row, colMap.REPLY_STATUS);
-      var sendMode = getRowSendMode(row, colMap);
+      var staffEmail    = getCellStr(row, colMap.STAFF_EMAIL);
+      var docType       = getCellStr(row, colMap.DOC_TYPE);
+      var expiryRaw     = colMap.EXPIRY_DATE ? row[colMap.EXPIRY_DATE - 1] : "";
+      var noticeStr     = getCellStr(row, colMap.NOTICE_DATE);
+      var remarks       = getCellStr(row, colMap.REMARKS);
+      var attachRaw     = getCellStr(row, colMap.ATTACHMENTS);
+      var status        = getCellStr(row, colMap.STATUS);
+      var replyStatus   = getCellStr(row, colMap.REPLY_STATUS);
+      var sendMode      = getRowSendMode(row, colMap);
       var templateContext = buildRowTemplateContext(visaSheet, tabName, row);
 
       if (!isProcessableStatus(status)) continue;
 
       if (isStatusBlank(status)) {
         if (colMap.STATUS) {
-          setResolvedStatus(
-            visaSheet,
-            rowIndex,
-            colMap,
-            tabName,
-            STATUS.ACTIVE,
-          );
-          status = resolveStatusValueForTab(
-            visaSheet,
-            tabName,
-            colMap,
-            STATUS.ACTIVE,
-          );
+          setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.ACTIVE);
+          status = resolveStatusValueForTab(visaSheet, tabName, colMap, STATUS.ACTIVE);
           autoActivated++;
-          appendLog(
-            logsSheet,
-            tabName,
-            clientName,
-            "INFO",
-            "Blank Status auto-set to Active for processing.",
-          );
+          logBuffer.add(tabName, clientName, "INFO", "Blank Status auto-set to Active for processing.");
         } else {
           status = STATUS.ACTIVE;
         }
@@ -495,39 +502,32 @@ function runDailyCheckLocked_() {
 
       var modeSkipReason = getSendModeSkipReason(sendMode);
       if (modeSkipReason) {
-        appendLog(logsSheet, tabName, clientName, "SKIPPED", modeSkipReason);
+        logBuffer.add(tabName, clientName, "SKIPPED", modeSkipReason);
         skippedMode++;
         continue;
       }
 
       processed++;
 
+      // Only client name, email, expiry date, and notice date are required.
+      // Staff name/email are optional — staffEmail is CC'd when present.
       var missing = [];
-      if (!clientName) missing.push("Client Name");
+      if (!clientName)              missing.push("Client Name");
       if (clientEmailList.length === 0) missing.push("Client Email");
-      if (!expiryRaw) missing.push("Expiry Date");
-      if (!noticeStr) missing.push("Notice Date");
-      if (!staffName) missing.push("Name of Staff");
-      if (!staffEmail) missing.push("Assigned Staff Email");
+      if (!expiryRaw)               missing.push("Expiry Date");
+      if (!noticeStr)               missing.push("Notice Date");
       if (missing.length > 0) {
         var errMsg = "Missing required field(s): " + missing.join(", ");
         setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.ERROR);
-        appendLog(logsSheet, tabName, clientName, "ERROR", errMsg);
+        logBuffer.add(tabName, clientName, "ERROR", errMsg);
         errors++;
         continue;
       }
 
-      var expiryDate =
-        expiryRaw instanceof Date ? expiryRaw : new Date(expiryRaw);
+      var expiryDate = expiryRaw instanceof Date ? expiryRaw : new Date(expiryRaw);
       if (isNaN(expiryDate.getTime())) {
         setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.ERROR);
-        appendLog(
-          logsSheet,
-          tabName,
-          clientName,
-          "ERROR",
-          "Invalid Expiry Date: " + expiryRaw,
-        );
+        logBuffer.add(tabName, clientName, "ERROR", "Invalid Expiry Date: " + expiryRaw);
         errors++;
         continue;
       }
@@ -535,52 +535,35 @@ function runDailyCheckLocked_() {
       var offset = parseNoticeOffset(noticeStr);
       if (offset === null) {
         setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.ERROR);
-        appendLog(
-          logsSheet,
-          tabName,
-          clientName,
-          "ERROR",
-          'Cannot parse Notice Date: "' +
-            noticeStr +
-            '". ' +
-            getSupportedNoticeDateHint(),
+        logBuffer.add(
+          tabName, clientName, "ERROR",
+          'Cannot parse Notice Date: "' + noticeStr + '". ' + getSupportedNoticeDateHint(),
         );
         errors++;
         continue;
       }
 
-      var targetDate = computeTargetDate(expiryDate, offset);
-      var isNoticeDue = isTargetDateDue(targetDate, today);
-      var isExpiryDay = isSameDay(expiryDate, today);
-      var isPastExpiry =
-        getMidnight(today).getTime() > getMidnight(expiryDate).getTime();
-      var sameDayFinal = isSameDay(targetDate, expiryDate);
+      var targetDate    = computeTargetDate(expiryDate, offset);
+      var isNoticeDue   = isTargetDateDue(targetDate, today);
+      var isExpiryDay   = isSameDay(expiryDate, today);
+      var isPastExpiry  = getMidnight(today).getTime() > getMidnight(expiryDate).getTime();
+      var sameDayFinal  = isSameDay(targetDate, expiryDate);
       var statusAllowsNotice = isStatusBlank(status) || isStatusActive(status);
-      var statusAllowsFinal = statusAllowsNotice || isStatusNoticeSent(status);
+      var statusAllowsFinal  = statusAllowsNotice || isStatusNoticeSent(status);
 
       var shouldSendNotice = isNoticeDue && statusAllowsNotice && !isPastExpiry;
-      var shouldSendFinal = isExpiryDay && statusAllowsFinal && !isPastExpiry;
+      var shouldSendFinal  = isExpiryDay && statusAllowsFinal  && !isPastExpiry;
 
       if (isPastExpiry) {
-        appendLog(
-          logsSheet,
-          tabName,
-          clientName,
-          "SKIPPED",
-          "Expiry date has already passed. No further reminder emails will be sent for this row.",
-        );
+        logBuffer.add(tabName, clientName, "SKIPPED",
+          "Expiry date has already passed. No further reminder emails will be sent for this row.");
       }
 
       if (isReplyStatusReplied(replyStatus)) {
         shouldSendNotice = false;
         if (!shouldSendFinal) {
-          appendLog(
-            logsSheet,
-            tabName,
-            clientName,
-            "SKIPPED",
-            "Reply keyword already received. Future reminder emails are suppressed for this row until the final expiry-day email.",
-          );
+          logBuffer.add(tabName, clientName, "SKIPPED",
+            "Reply keyword already received. Future reminder emails are suppressed for this row until the final expiry-day email.");
         }
       }
 
@@ -592,149 +575,81 @@ function runDailyCheckLocked_() {
       var attachResult = resolveAttachments(attachRaw);
       if (attachResult.fatalError) {
         setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.ERROR);
-        appendLog(
-          logsSheet,
-          tabName,
-          clientName,
-          "ERROR",
-          attachResult.fatalError,
-        );
+        logBuffer.add(tabName, clientName, "ERROR", attachResult.fatalError);
         errors++;
         continue;
       }
       if (attachResult.warnings && attachResult.warnings.length > 0) {
-        appendLog(
-          logsSheet,
-          tabName,
-          clientName,
-          "INFO",
-          "Attachment warning(s): " + attachResult.warnings.join("; "),
-        );
+        logBuffer.add(tabName, clientName, "INFO",
+          "Attachment warning(s): " + attachResult.warnings.join("; "));
       }
+
+      // Sender is the automation runner. staffEmail (if any) is merged into CC
+      // alongside any configured Default CC emails.
       var ccEmails = resolveCcEmails(clientEmailList, staffEmail);
       if (trackingEnabled) {
         colMap = ensureOpenTrackingColumns(visaSheet, tabName, colMap);
       }
       var baseSubject = buildEmailSubject(docType, clientName, expiryDate);
-      var clientEmailDisplay = clientEmailList.join(", ");
 
-      // Per-row sender = Assigned Staff Email. Skip the row entirely if the
-      // address isn't a verified Gmail "Send mail as" alias of the runner —
-      // sending anyway would mis-attribute the email to the wrong account.
-      if (!canSendAs(staffEmail)) {
-        setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.ERROR);
-        appendLog(
-          logsSheet,
-          tabName,
-          clientName,
-          "ERROR",
-          'Assigned Staff Email "' +
-            staffEmail +
-            '" is not a verified Gmail "Send mail as" alias on the script-runner account. ' +
-            "Add it under Gmail Settings → Accounts → Send mail as, then retry.",
+      function buildLogDetail(sendResult, stage, token, contentSource) {
+        return (
+          "To: " + sendResult.success.join(", ") +
+          (ccEmails.length > 0 ? " | CC: " + ccEmails.join(", ") : "") +
+          " | From: " + senderEmail +
+          " | Stage: " + stage +
+          " | Mode: " + sendMode +
+          " | Body: " + contentSource +
+          (attachResult.blobs.length > 0 ? " | Attachments: " + attachResult.blobs.length : "") +
+          (token ? " | Tracking: enabled" : "") +
+          (sendResult.failed.length > 0
+            ? " | Failed: " + sendResult.failed.map(function (f) {
+                return f.email + " (" + f.error + ")";
+              }).join("; ")
+            : "")
         );
-        errors++;
-        continue;
       }
 
       try {
         var sentThisRow = false;
-        var displayName = staffName || CONFIG.SENDER_NAME;
-        var senderEmail = staffEmail;
 
         if (shouldSendNotice) {
           var noticeToken = trackingEnabled ? generateOpenTrackingToken() : "";
           var noticeContent = buildStageEmailContent(
-            remarks,
-            clientName,
-            expiryDate,
-            docType,
-            noticeToken,
-            templateContext,
-            "notice",
-          );
+            remarks, clientName, expiryDate, docType, noticeToken, templateContext, "notice");
           var noticeSubject = buildStageSubject(baseSubject, "notice");
-          var noticeFallbackHtml = buildFallbackLinksHtml(
-            attachResult.failedLinks,
-          );
+          var noticeFallbackHtml = buildFallbackLinksHtml(attachResult.failedLinks);
           var noticeHtmlBody = noticeFallbackHtml
             ? noticeContent.htmlBody + noticeFallbackHtml
             : noticeContent.htmlBody;
+
           var noticeSendResult = sendReminderEmails(
-            clientEmailList,
-            ccEmails,
-            noticeSubject,
-            noticeHtmlBody,
-            attachResult.blobs,
-            displayName,
-            senderEmail,
-          );
+            clientEmailList, ccEmails, noticeSubject, noticeHtmlBody,
+            attachResult.blobs, displayName, senderEmail);
+          Utilities.sleep(200);
           var noticeMeta = noticeSendResult.meta;
 
           colMap = ensureReplyStatusColumn(visaSheet, tabName, colMap);
           writePostSendMetadata(visaSheet, rowIndex, colMap, {
-            sentAt: new Date(),
-            senderEmail: senderEmail,
-            openToken: noticeToken,
-            threadId: noticeMeta.threadId,
-            messageId: noticeMeta.messageId,
+            sentAt: new Date(), senderEmail: senderEmail,
+            openToken: noticeToken, threadId: noticeMeta.threadId, messageId: noticeMeta.messageId,
           });
 
           if (sameDayFinal && shouldSendFinal) {
             colMap = ensureFinalNoticeColumns(visaSheet, tabName, colMap);
             writeFinalNoticeMetadata(visaSheet, rowIndex, colMap, {
-              sentAt: new Date(),
-              threadId: noticeMeta.threadId,
-              messageId: noticeMeta.messageId,
+              sentAt: new Date(), threadId: noticeMeta.threadId, messageId: noticeMeta.messageId,
             });
             shouldSendFinal = false;
-            setResolvedStatus(
-              visaSheet,
-              rowIndex,
-              colMap,
-              tabName,
-              STATUS.SENT,
-            );
+            setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.SENT);
           } else {
-            setResolvedStatus(
-              visaSheet,
-              rowIndex,
-              colMap,
-              tabName,
-              STATUS.NOTICE_SENT,
-            );
+            setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.NOTICE_SENT);
           }
 
-          appendLog(
-            logsSheet,
-            tabName,
-            clientName,
+          logBuffer.add(tabName, clientName,
             sameDayFinal ? "SENT_NOTICE_FINAL" : "SENT_NOTICE",
-            "Email sent to " +
-              noticeSendResult.success.join(", ") +
-              (ccEmails.length > 0
-                ? " (CC: " + ccEmails.join(", ") + ")"
-                : "") +
-              " | Stage: " +
-              (sameDayFinal ? "notice+final" : "notice") +
-              " | Mode: " +
-              sendMode +
-              " | Body: " +
-              noticeContent.source +
-              (attachResult.blobs.length > 0
-                ? " | Attachments: " + attachResult.blobs.length
-                : "") +
-              (noticeToken ? " | Tracking: enabled" : "") +
-              (noticeSendResult.failed.length > 0
-                ? " | Failed Recipients: " +
-                  noticeSendResult.failed
-                    .map(function (item) {
-                      return item.email + " (" + item.error + ")";
-                    })
-                    .join("; ")
-                : "") +
-              (senderEmail ? " | Sender: " + senderEmail : ""),
-          );
+            buildLogDetail(noticeSendResult, sameDayFinal ? "notice+final" : "notice",
+              noticeToken, noticeContent.source));
           sent++;
           sentThisRow = true;
         }
@@ -743,148 +658,70 @@ function runDailyCheckLocked_() {
           colMap = ensureFinalNoticeColumns(visaSheet, tabName, colMap);
           var finalToken = trackingEnabled ? generateOpenTrackingToken() : "";
           var finalContent = buildStageEmailContent(
-            remarks,
-            clientName,
-            expiryDate,
-            docType,
-            finalToken,
-            templateContext,
-            "final",
-          );
+            remarks, clientName, expiryDate, docType, finalToken, templateContext, "final");
           var finalSubject = buildStageSubject(baseSubject, "final");
-          var finalFallbackHtml = buildFallbackLinksHtml(
-            attachResult.failedLinks,
-          );
+          var finalFallbackHtml = buildFallbackLinksHtml(attachResult.failedLinks);
           var finalHtmlBody = finalFallbackHtml
             ? finalContent.htmlBody + finalFallbackHtml
             : finalContent.htmlBody;
+
           var finalSendResult = sendReminderEmails(
-            clientEmailList,
-            ccEmails,
-            finalSubject,
-            finalHtmlBody,
-            attachResult.blobs,
-            displayName,
-            senderEmail,
-          );
+            clientEmailList, ccEmails, finalSubject, finalHtmlBody,
+            attachResult.blobs, displayName, senderEmail);
+          Utilities.sleep(200);
           var finalMeta = finalSendResult.meta;
 
           writeFinalNoticeMetadata(visaSheet, rowIndex, colMap, {
-            sentAt: new Date(),
-            threadId: finalMeta.threadId,
-            messageId: finalMeta.messageId,
+            sentAt: new Date(), threadId: finalMeta.threadId, messageId: finalMeta.messageId,
           });
 
           if (!isStatusNoticeSent(status) && !shouldSendNotice) {
             colMap = ensureReplyStatusColumn(visaSheet, tabName, colMap);
             writePostSendMetadata(visaSheet, rowIndex, colMap, {
-              sentAt: new Date(),
-              senderEmail: senderEmail,
-              openToken: finalToken,
-              threadId: finalMeta.threadId,
-              messageId: finalMeta.messageId,
+              sentAt: new Date(), senderEmail: senderEmail,
+              openToken: finalToken, threadId: finalMeta.threadId, messageId: finalMeta.messageId,
             });
           } else if (finalToken) {
-            setCellValueIfColumn(
-              visaSheet,
-              rowIndex,
-              colMap.OPEN_TOKEN,
-              finalToken,
-            );
+            setCellValueIfColumn(visaSheet, rowIndex, colMap.OPEN_TOKEN, finalToken);
           }
 
           setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.SENT);
-          appendLog(
-            logsSheet,
-            tabName,
-            clientName,
-            "SENT_FINAL",
-            "Email sent to " +
-              finalSendResult.success.join(", ") +
-              (ccEmails.length > 0
-                ? " (CC: " + ccEmails.join(", ") + ")"
-                : "") +
-              " | Stage: final" +
-              " | Mode: " +
-              sendMode +
-              " | Body: " +
-              finalContent.source +
-              (attachResult.blobs.length > 0
-                ? " | Attachments: " + attachResult.blobs.length
-                : "") +
-              (finalToken ? " | Tracking: enabled" : "") +
-              (finalSendResult.failed.length > 0
-                ? " | Failed Recipients: " +
-                  finalSendResult.failed
-                    .map(function (item) {
-                      return item.email + " (" + item.error + ")";
-                    })
-                    .join("; ")
-                : "") +
-              (senderEmail ? " | Sender: " + senderEmail : ""),
-          );
+          logBuffer.add(tabName, clientName, "SENT_FINAL",
+            buildLogDetail(finalSendResult, "final", finalToken, finalContent.source));
           sent++;
           sentThisRow = true;
         }
 
-        if (!sentThisRow) {
-          skippedFuture++;
-        }
+        if (!sentThisRow) skippedFuture++;
+
       } catch (e) {
         setResolvedStatus(visaSheet, rowIndex, colMap, tabName, STATUS.ERROR);
-        appendLog(
-          logsSheet,
-          tabName,
-          clientName,
-          "ERROR",
-          "Send failed: " + e.message,
-        );
+        logBuffer.add(tabName, clientName, "ERROR", "Send failed: " + e.message);
         errors++;
       }
     }
 
-    appendLog(
-      logsSheet,
-      tabName,
-      "",
-      "SUMMARY",
-      "[" +
-        tabName +
-        "] Total: " +
-        totalRows +
-        " | Eligible: " +
-        processed +
-        " | Auto-Activated: " +
-        autoActivated +
-        " | Skipped (Mode): " +
-        skippedMode +
-        " | Skipped (Future): " +
-        skippedFuture +
-        " | Sent: " +
-        sent +
-        " | Errors: " +
-        errors,
-    );
+    logBuffer.add(tabName, "", "SUMMARY",
+      "[" + tabName + "] Total: " + totalRows +
+      " | Eligible: " + processed +
+      " | Auto-Activated: " + autoActivated +
+      " | Skipped (Mode): " + skippedMode +
+      " | Skipped (Future): " + skippedFuture +
+      " | Sent: " + sent +
+      " | Errors: " + errors);
+    logBuffer.flush();
 
     totalAllTabs += totalRows;
-    sentAllTabs += sent;
+    sentAllTabs  += sent;
     errorsAllTabs += errors;
   }
 
   if (sheetConfigs.length > 1) {
-    appendLog(
-      logsSheet,
-      "",
-      "",
-      "SUMMARY",
-      "All tabs complete. Tabs processed: " +
-        sheetConfigs.length +
-        " | Total Rows: " +
-        totalAllTabs +
-        " | Total Sent: " +
-        sentAllTabs +
-        " | Total Errors: " +
-        errorsAllTabs,
-    );
+    logBuffer.add("", "", "SUMMARY",
+      "All tabs complete. Tabs processed: " + sheetConfigs.length +
+      " | Total Rows: " + totalAllTabs +
+      " | Total Sent: " + sentAllTabs +
+      " | Total Errors: " + errorsAllTabs);
+    logBuffer.flush();
   }
 }

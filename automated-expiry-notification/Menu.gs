@@ -105,53 +105,6 @@ var ROOT_MENU_SPEC = [
         label: "Manual Send Row (force-send + update row)...",
         fn: "manualSendRow",
       },
-      { type: "separator" },
-      { type: "item", label: "Test Gmail Send", fn: "testGmailSend" },
-      { type: "item", label: "Test Drive Access", fn: "testDriveAccess" },
-      { type: "item", label: "Test All Connections", fn: "testAllConnections" },
-      { type: "separator" },
-      {
-        type: "item",
-        label: "Check Column Mappings",
-        fn: "checkColumnMappings",
-      },
-      {
-        type: "item",
-        label: "Validate Tab Structure",
-        fn: "validateActiveTabStructure",
-      },
-      {
-        type: "item",
-        label: "View Tab Configuration",
-        fn: "viewTabConfiguration",
-      },
-      {
-        type: "item",
-        label: "Check Reply Tracking Setup",
-        fn: "checkReplyTrackingSetup",
-      },
-      {
-        type: "item",
-        label: "Preview Fallback Template",
-        fn: "previewFallbackTemplateBody",
-      },
-      { type: "separator" },
-      { type: "item", label: "System Diagnostics", fn: "runSystemDiagnostics" },
-    ],
-  },
-  { type: "separator" },
-  {
-    type: "submenu",
-    label: "Help",
-    items: [
-      {
-        type: "item",
-        label: "Want to integrate this to another google sheet?",
-        fn: "showIntegrationLinkDialog",
-      },
-      { type: "separator" },
-      { type: "item", label: "View Documentation", fn: "viewDocumentation" },
-      { type: "item", label: "About", fn: "showAbout" },
     ],
   },
 ];

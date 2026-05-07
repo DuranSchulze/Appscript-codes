@@ -1599,7 +1599,14 @@ function runSetupWizard() {
 
   ui.alert(
     "🚀 Setup This Sheet for Automation",
-    "Welcome! This wizard will guide you through setting up a sheet tab for the Expiry Notification automation.\n\nYou will:\n  Step 1 — Select or create a sheet tab\n  Step 2 — Verify column headers and create automation-managed columns\n  Step 3 — Apply dropdowns\n  Step 4 — Activate the daily schedule\n\nClick OK to begin.",
+    "Welcome! This wizard will guide you through setting up a sheet tab for the Expiry Notification automation.\n\n" +
+    "Steps overview:\n" +
+    "  Step 1 — Select or create a sheet tab   [YOU CHOOSE]\n" +
+    "  Step 2 — Verify & create data columns   [AUTO with your input]\n" +
+    "  Step 3 — Apply dropdown options         [AUTO]\n" +
+    "  Step 4 — Verify sender email aliases    [MANUAL — requires Gmail action]\n" +
+    "  Step 5 — Activate daily schedule        [YOUR CHOICE]\n\n" +
+    "Click OK to begin.",
     ui.ButtonSet.OK,
   );
 
@@ -1615,13 +1622,36 @@ function runSetupWizard() {
   context = wizardStep1Tab(ss, ui, context);
   if (!context) return;
 
-  context = wizardStep2Columns(ss, ui, context);
-  if (!context) return;
+  var step2Done = false;
+  while (!step2Done) {
+    context = wizardStep2Columns(ss, ui, context);
+    if (!context) return;
+    var step2Cont = ui.alert(
+      "Step 2 Result",
+      "Columns were verified and automation columns created.\n\n" +
+      "Are you happy with this?\n" +
+      "YES = Continue to Step 3\nNO = Redo Step 2",
+      ui.ButtonSet.YES_NO,
+    );
+    if (step2Cont === ui.Button.YES) step2Done = true;
+  }
 
-  context = wizardStep3Dropdowns(ss, ui, context);
-  if (!context) return;
+  var step3Done = false;
+  while (!step3Done) {
+    context = wizardStep3Dropdowns(ss, ui, context);
+    if (!context) return;
+    var step3Cont = ui.alert(
+      "Step 3 Result",
+      "Dropdowns were applied to Status, Send Mode, and Notice Date.\n\n" +
+      "Are you happy with this?\n" +
+      "YES = Continue to Step 4\nNO = Redo Step 3",
+      ui.ButtonSet.YES_NO,
+    );
+    if (step3Cont === ui.Button.YES) step3Done = true;
+  }
 
-  wizardStepStaffAliasCheck(ss, ui, context);
+  context = wizardStepStaffAliasCheck(ss, ui, context);
+  if (!context) return;
 
   context = wizardStep4Schedule(ui, context);
   if (!context) return;
@@ -1640,30 +1670,39 @@ function wizardStepStaffAliasCheck(ss, ui, context) {
     : [context.tabName];
 
   var staffEmails = listDistinctStaffEmailsForTabs(ss, tabNames);
+
   if (staffEmails.length === 0) {
+    ui.alert(
+      "Step 4 of 5 — Staff Email CC",
+      "No Assigned Staff Email values were found in your data yet.\n\n" +
+      "When you add staff emails to rows later, those addresses will be\n" +
+      "automatically CC'd on each notification email.\n\n" +
+      "No Gmail alias setup is required — emails are always sent from\n" +
+      "the automation runner's account.\n\n" +
+      "Proceeding to Step 5.",
+      ui.ButtonSet.OK,
+    );
     context.aliasCheckPassed = true;
     return context;
   }
 
-  var classified = classifyStaffEmailsByAliasVerification(staffEmails);
-  context.aliasCheckPassed = classified.unverified.length === 0;
-
-  if (context.aliasCheckPassed) return context;
-
   ui.alert(
-    "Sender Alias Check ⚠",
-    "Outgoing emails are sent FROM the row's Assigned Staff Email. The following addresses are NOT registered as Gmail \"Send mail as\" aliases on this script's account, so rows using them will be marked Error at send time:\n\n  • " +
-      classified.unverified.join("\n  • ") +
-      "\n\nFix it in Gmail → Settings → Accounts and Import → Send mail as → Add another email address. Then re-run this wizard.",
+    "Step 4 of 5 — Staff Email CC ✓",
+    "Staff emails found across your tabs:\n  • " + staffEmails.join("\n  • ") +
+    "\n\nThese addresses will be automatically CC'd on every notification\n" +
+    "email so staff can see what was sent to each client.\n\n" +
+    "No Gmail alias setup is required — all emails are sent FROM the\n" +
+    "automation runner's account.\n\n" +
+    "Proceeding to Step 5.",
     ui.ButtonSet.OK,
   );
-
+  context.aliasCheckPassed = true;
   return context;
 }
 
 function wizardStep1Tab(ss, ui, context) {
   var choice = ui.prompt(
-    "Step 1 of 4 — Sheet Tab",
+    "Step 1 of 5 — Sheet Tab",
     "Which tab should be used for automation?\n\n  1. Use an existing tab\n  2. Create a new tab\n\nEnter 1 or 2:",
     ui.ButtonSet.OK_CANCEL,
   );
@@ -1674,7 +1713,7 @@ function wizardStep1Tab(ss, ui, context) {
   if (input === "2") {
     // ── Create new tab ──
     var nameResp = ui.prompt(
-      "Step 1 of 4 — Create New Tab",
+      "Step 1 of 5 — Create New Tab",
       "Enter a name for the new sheet tab:",
       ui.ButtonSet.OK_CANCEL,
     );
@@ -1738,8 +1777,10 @@ function wizardStep1Tab(ss, ui, context) {
     context.sheet = newSheet;
 
     ui.alert(
-      "Step 1 Complete ✓",
-      'Tab "' + newName + '" created with headers.\n\nProceeding to Step 2.',
+      "Step 1 of 5 Complete ✓",
+      'Tab "' + newName + '" created with ' + requiredHeaders.length + ' columns.\n\n' +
+      "Headers: " + requiredHeaders.join(", ") + "\n\n" +
+      "Proceeding to Step 2.",
       ui.ButtonSet.OK,
     );
     return context;
@@ -1770,7 +1811,7 @@ function wizardStep1Tab(ss, ui, context) {
     }
 
     var pickResp = ui.prompt(
-      "Step 1 of 4 — Select Existing Tab(s)",
+      "Step 1 of 5 — Select Existing Tab(s)",
       "Available tabs:\n\n" +
         options.join("\n") +
         "\n\nEnter ONE OR MORE tab numbers, separated by commas (e.g. 1,2,3,4) " +
@@ -1829,8 +1870,12 @@ function wizardStep1Tab(ss, ui, context) {
       : "";
 
     ui.alert(
-      "Step 1 Complete ✓",
+      "Step 1 of 5 Complete ✓",
       "Selected " + context.allTabNames.length + " tab(s): " + allLabel +
+        (context.allTabNames.length === 1
+          ? "\n\nRows in tab: " + Math.max(primarySheet.getLastRow() - 1, 0) +
+            "  |  Columns: " + primarySheet.getLastColumn()
+          : "") +
         "\n\nProceeding to Step 2 (will run per tab)." +
         skippedNote,
       ui.ButtonSet.OK,
@@ -1872,7 +1917,7 @@ function wizardStep2Columns(ss, ui, context) {
 
   if (tabNames.length > 1) {
     ui.alert(
-      "Step 2 Summary (" + tabNames.length + " tabs)",
+      "Step 2 of 5 Summary (" + tabNames.length + " tabs)",
       perTabSummary.join("\n") + "\n\nProceeding to Step 3.",
       ui.ButtonSet.OK,
     );
@@ -1889,10 +1934,13 @@ function wizardStep2ColumnsForTab(ui, sheet, tabName, ordinal, total) {
   if (missing.length === 0) {
     ensureSetupAutomationColumns(sheet, tabName, buildColumnMap(sheet, tabName));
     if (total === 1) {
+      var confirmedLabels = REQUIRED_USER_COLUMNS.map(function(k) { return HEADERS[k]; }).join(", ");
       ui.alert(
-        "Step 2 Complete ✓",
+        "Step 2 of 5 Complete ✓",
         "All " + REQUIRED_USER_COLUMNS.length +
-          " required user-input columns are present.\n\nCode-managed columns were created/verified for this tab.\n\nProceeding to Step 3.",
+          " required user-input columns are present.\n\n" +
+          "Confirmed: " + confirmedLabels + "\n\n" +
+          "Automation-managed columns were created/verified for this tab.",
         ui.ButtonSet.OK,
       );
     }
@@ -1937,7 +1985,7 @@ function wizardStep3Dropdowns(ss, ui, context) {
                                     : tabNames.length + " selected tabs";
 
   var apply = ui.alert(
-    "Step 3 of 4 — Dropdowns",
+    "Step 3 of 5 — Dropdowns",
     "Apply dropdown options to the Status, Send Mode, and Notice Date columns in " +
       label + "?\n\nThis makes data entry easier. Default values will be used.",
     ui.ButtonSet.YES_NO,
@@ -1945,7 +1993,7 @@ function wizardStep3Dropdowns(ss, ui, context) {
 
   if (apply !== ui.Button.YES) {
     ui.alert(
-      "Step 3 Skipped",
+      "Step 3 of 5 Skipped",
       "Dropdowns skipped. You can apply them later via Tab Management → Setup Tab Dropdowns.",
       ui.ButtonSet.OK,
     );
@@ -1972,8 +2020,12 @@ function wizardStep3Dropdowns(ss, ui, context) {
   }
   context.dropsApplied = anyApplied;
 
-  ui.alert("Step 3 Complete",
-    perTabSummary.join("\n") + "\n\nProceeding to Step 4.", ui.ButtonSet.OK);
+  ui.alert(
+    "Step 3 of 5 Complete",
+    perTabSummary.join("\n") +
+    "\n\nDropdowns applied to: Status, Send Mode, Notice Date.",
+    ui.ButtonSet.OK,
+  );
   return context;
 }
 
@@ -2026,7 +2078,7 @@ function wizardStep4Schedule(ui, context) {
       : "INACTIVE";
 
   var activate = ui.alert(
-    "Step 4 of 4 — Daily Schedule",
+    "Step 5 of 5 — Daily Schedule",
     "Current daily schedule status: " +
       currentStatus +
       "\n\nActivate the daily " +
@@ -2043,7 +2095,7 @@ function wizardStep4Schedule(ui, context) {
   } else {
     context.scheduleActive = triggerCount > 0;
     ui.alert(
-      "Step 4 Skipped",
+      "Step 5 Skipped",
       "Schedule not changed. You can activate it later via Automation Settings → Activate Daily Schedule.",
       ui.ButtonSet.OK,
     );
@@ -2053,30 +2105,37 @@ function wizardStep4Schedule(ui, context) {
 }
 
 function wizardStep5Summary(ui, context) {
+  var tabLabel = (context.allTabNames && context.allTabNames.length > 1)
+    ? context.allTabNames.length + " tabs: " + context.allTabNames.join(", ")
+    : context.tabName;
+
   var lines = [
     "✅ Setup Complete!",
     "",
-    "Tab(s):          " + ((context.allTabNames && context.allTabNames.length > 1) ? (context.allTabNames.length + " tabs: " + context.allTabNames.join(", ")) : context.tabName),
-    "Columns:         " +
-      (context.columnsOk
-        ? "✓ All required columns OK"
-        : "⚠ Some columns missing — map them via Tab Management"),
-    "Automation Cols: " +
-      (context.setupColumnsApplied
-        ? "✓ Created/verified"
-        : "— Not fully applied"),
+    "Tab(s):          " + tabLabel,
+    "Columns:         " + (context.columnsOk
+      ? "✓ All required columns OK"
+      : "⚠ Some columns missing — map them via Tab Management"),
+    "Automation Cols: " + (context.setupColumnsApplied
+      ? "✓ Created/verified"
+      : "— Not fully applied"),
     "Dropdowns:       " + (context.dropsApplied ? "✓ Applied" : "— Skipped"),
-    "Sender Aliases:  " +
-      (context.aliasCheckPassed === false
-        ? "⚠ Some staff emails not verified — fix in Gmail Send-As"
-        : "✓ All staff emails verified"),
-    "Daily Schedule:  " +
-      (context.scheduleActive ? "✓ Active" : "— Not activated"),
+    "Staff CC Emails: ✓ Staff emails are CC'd automatically (no alias setup needed)",
+    "Daily Schedule:  " + (context.scheduleActive ? "✓ Active" : "— Not activated"),
     "",
-    "You're ready to go!",
-    'Add your client data to the "' +
-      context.tabName +
-      '" tab and the automation will handle the rest.',
+    "=== What happens next: ===",
+    "",
+    "Each day at the configured time, the automation will:",
+    "  1. Scan every registered tab for rows with Status = Active",
+    "  2. For rows where today matches the Notice Date target,",
+    "     send the first reminder and set Status → Notice Sent",
+    "  3. For rows where today is the Expiry Date,",
+    "     send the final reminder and set Status → Sent",
+    "  4. Rows past expiry or already Sent are skipped automatically",
+    "",
+    'Add your client data to the "' + context.tabName + '" tab.',
+    "Set each row's Status to Active and fill in the Notice Date column.",
+    "The automation handles the rest.",
   ];
 
   ui.alert("🚀 Setup Complete", lines.join("\n"), ui.ButtonSet.OK);
