@@ -796,7 +796,7 @@ function diagnosticSendTestRow() {
     return;
   }
 
-  var baseSubject = buildEmailSubject(docType, clientName, expiryDate);
+  var baseSubject = buildEmailSubject(docType, clientName, expiryDate, tabName);
   var testSubject = "[TEST] " + baseSubject;
 
   var confirm = ui.alert(
@@ -847,6 +847,7 @@ function diagnosticSendTestRow() {
     docType,
     "",
     templateContext,
+    tabName,
   );
 
   try {
@@ -1135,7 +1136,7 @@ function manualSendRow() {
   }
 
   var ccEmails = resolveCcEmails(clientEmailList, senderEmail);
-  var baseSubject = buildEmailSubject(docType, clientName, expiryDate);
+  var baseSubject = buildEmailSubject(docType, clientName, expiryDate, tabName);
   var previewSubject = buildStageSubject(
     baseSubject,
     sendStage === "final" ? "final" : "notice",
@@ -1210,6 +1211,7 @@ function manualSendRow() {
         noticeToken,
         templateContext,
         "notice",
+        tabName,
       );
       var noticeSubject = buildStageSubject(baseSubject, "notice");
       var noticeHtmlBody = fallbackHtml
@@ -1286,6 +1288,7 @@ function manualSendRow() {
         finalToken,
         templateContext,
         "final",
+        tabName,
       );
       var finalSubject = buildStageSubject(baseSubject, "final");
       var finalHtmlBody = fallbackHtml

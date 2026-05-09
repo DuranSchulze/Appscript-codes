@@ -526,6 +526,7 @@ function buildEmailContent(
   docType,
   openToken,
   templateContext,
+  tabTitle,
 ) {
   var expiryStr = formatDate(expiryDate);
   var docTypeText = docType ? docType : "Visa/Permit";
@@ -554,6 +555,14 @@ function buildEmailContent(
   }
 
   var htmlBody = String(bodyText || "").replace(/\n/g, "<br>");
+
+  // If a tabTitle is provided, replace the email header with the tab title.
+  if (typeof tabTitle !== 'undefined' && tabTitle && String(tabTitle).trim()) {
+    var safeTitle = sanitizeHtmlContent(tabTitle);
+    var headerHtml = '<h2 style="margin:0 0 12px 0;font-size:18px;color:#1a237e;">' + safeTitle + '</h2>';
+    htmlBody = headerHtml + htmlBody;
+  }
+
   htmlBody = injectOpenTrackingPixel(htmlBody, openToken);
 
   // Neutral-gray card wrapper. Inline styles only (Gmail/Outlook safe).
@@ -576,8 +585,8 @@ function buildEmailContent(
   };
 }
 
-function buildEmailBody(remarks, clientName, expiryDate, docType) {
-  return buildEmailContent(remarks, clientName, expiryDate, docType, "", null)
+function buildEmailBody(remarks, clientName, expiryDate, docType, tabTitle) {
+  return buildEmailContent(remarks, clientName, expiryDate, docType, "", null, tabTitle)
     .htmlBody;
 }
 
@@ -596,6 +605,7 @@ function buildStageEmailContent(
   openToken,
   templateContext,
   stage,
+  tabTitle,
 ) {
   var content = buildEmailContent(
     remarks,
@@ -604,6 +614,7 @@ function buildStageEmailContent(
     docType,
     openToken,
     templateContext,
+    tabTitle,
   );
 
   if (stage === "final") {
@@ -679,7 +690,11 @@ function replaceGenericTemplateTokens(templateText, templateContext) {
   );
 }
 
-function buildEmailSubject(docType, clientName, expiryDate) {
+function buildEmailSubject(docType, clientName, expiryDate, tabTitle) {
+  if (typeof tabTitle !== 'undefined' && tabTitle && String(tabTitle).trim()) {
+    return "Reminder: " + String(tabTitle).trim();
+  }
+
   var docLabel = docType ? docType : "Visa/Permit";
   return (
     "Reminder: " +

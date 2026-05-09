@@ -590,7 +590,7 @@ function runDailyCheckLocked_() {
       if (trackingEnabled) {
         colMap = ensureOpenTrackingColumns(visaSheet, tabName, colMap);
       }
-      var baseSubject = buildEmailSubject(docType, clientName, expiryDate);
+      var baseSubject = buildEmailSubject(docType, clientName, expiryDate, tabName);
 
       function buildLogDetail(sendResult, stage, token, contentSource) {
         return (
@@ -616,7 +616,7 @@ function runDailyCheckLocked_() {
         if (shouldSendNotice) {
           var noticeToken = trackingEnabled ? generateOpenTrackingToken() : "";
           var noticeContent = buildStageEmailContent(
-            remarks, clientName, expiryDate, docType, noticeToken, templateContext, "notice");
+            remarks, clientName, expiryDate, docType, noticeToken, templateContext, "notice", tabName);
           var noticeSubject = buildStageSubject(baseSubject, "notice");
           var noticeFallbackHtml = buildFallbackLinksHtml(attachResult.failedLinks);
           var noticeHtmlBody = noticeFallbackHtml
@@ -658,7 +658,7 @@ function runDailyCheckLocked_() {
           colMap = ensureFinalNoticeColumns(visaSheet, tabName, colMap);
           var finalToken = trackingEnabled ? generateOpenTrackingToken() : "";
           var finalContent = buildStageEmailContent(
-            remarks, clientName, expiryDate, docType, finalToken, templateContext, "final");
+            remarks, clientName, expiryDate, docType, finalToken, templateContext, "final", tabName);
           var finalSubject = buildStageSubject(baseSubject, "final");
           var finalFallbackHtml = buildFallbackLinksHtml(attachResult.failedLinks);
           var finalHtmlBody = finalFallbackHtml
