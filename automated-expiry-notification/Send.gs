@@ -557,9 +557,12 @@ function buildEmailContent(
   var htmlBody = String(bodyText || "").replace(/\n/g, "<br>");
 
   // If a tabTitle is provided, replace the email header with the tab title.
-  if (typeof tabTitle !== 'undefined' && tabTitle && String(tabTitle).trim()) {
+  if (typeof tabTitle !== "undefined" && tabTitle && String(tabTitle).trim()) {
     var safeTitle = sanitizeHtmlContent(tabTitle);
-    var headerHtml = '<h2 style="margin:0 0 12px 0;font-size:18px;color:#1a237e;">' + safeTitle + '</h2>';
+    var headerHtml =
+      '<h2 style="margin:0 0 12px 0;font-size:18px;color:#1a237e;">' +
+      safeTitle +
+      "</h2>";
     htmlBody = headerHtml + htmlBody;
   }
 
@@ -586,8 +589,15 @@ function buildEmailContent(
 }
 
 function buildEmailBody(remarks, clientName, expiryDate, docType, tabTitle) {
-  return buildEmailContent(remarks, clientName, expiryDate, docType, "", null, tabTitle)
-    .htmlBody;
+  return buildEmailContent(
+    remarks,
+    clientName,
+    expiryDate,
+    docType,
+    "",
+    null,
+    tabTitle,
+  ).htmlBody;
 }
 
 function buildStageSubject(baseSubject, stage) {
@@ -691,7 +701,7 @@ function replaceGenericTemplateTokens(templateText, templateContext) {
 }
 
 function buildEmailSubject(docType, clientName, expiryDate, tabTitle) {
-  if (typeof tabTitle !== 'undefined' && tabTitle && String(tabTitle).trim()) {
+  if (typeof tabTitle !== "undefined" && tabTitle && String(tabTitle).trim()) {
     return "Reminder: " + String(tabTitle).trim();
   }
 
@@ -822,7 +832,10 @@ function getSenderDisplayName(email) {
   var atIndex = raw.indexOf("@");
   if (atIndex < 0) return CONFIG.SENDER_NAME;
 
-  var domain = raw.slice(atIndex + 1);
+  var domain = raw.slice(atIndex + 1).toLowerCase();
+  if (domain === "filepino.com") return "FILEPINO";
+  if (domain === "duranschulze.com") return "DuranSchulze";
+
   var domainBase = domain.split(".")[0];
   if (!domainBase) return CONFIG.SENDER_NAME;
 
