@@ -820,7 +820,14 @@ function diagnosticSendTestRow() {
   );
   if (confirm !== ui.Button.YES) return;
 
-  var attachResult = resolveAttachments(attachRaw);
+  // Always extract actual URLs first so links are shown regardless of attachment success
+  var attachmentUrls = colMap.ATTACHMENTS
+    ? extractAttachmentUrls(sheet, rowNum, colMap.ATTACHMENTS)
+    : [];
+  var attachResult =
+    attachmentUrls.length > 0
+      ? resolveAttachments(attachmentUrls.join(","))
+      : resolveAttachments(attachRaw);
   if (attachResult.fatalError) {
     ui.alert("Attachment error: " + attachResult.fatalError);
     return;
@@ -853,9 +860,12 @@ function diagnosticSendTestRow() {
   try {
     var senderEmail = getSenderAccountEmail();
     var displayName = getSenderDisplayName(senderEmail);
-    var fallbackHtml = buildFallbackLinksHtml(attachResult.failedLinks);
-    var htmlBody = fallbackHtml
-      ? emailContent.htmlBody + fallbackHtml
+    var linksHtml = buildAttachmentLinksHtml(
+      attachResult.successLinks,
+      attachResult.failedLinks,
+    );
+    var htmlBody = linksHtml
+      ? emailContent.htmlBody + linksHtml
       : emailContent.htmlBody;
     var sendResult = sendReminderEmails(
       clientEmailList,
@@ -933,9 +943,7 @@ function manualSendRow() {
   var tabName = sheetConfig.sheetName;
   if (!sheet) {
     ui.alert(
-      'Sheet "' +
-        tabName +
-        '" not found. Use "Configure Automation Sheet(s)".',
+      'Sheet "' + tabName + '" not found. Use "Configure Automation Sheet(s)".',
     );
     return;
   }
@@ -1171,7 +1179,14 @@ function manualSendRow() {
   if (confirm !== ui.Button.YES) return;
 
   // Resolve attachments
-  var attachResult = resolveAttachments(attachRaw);
+  // Always extract actual URLs first so links are shown regardless of attachment success
+  var attachmentUrls = colMap.ATTACHMENTS
+    ? extractAttachmentUrls(sheet, rowNum, colMap.ATTACHMENTS)
+    : [];
+  var attachResult =
+    attachmentUrls.length > 0
+      ? resolveAttachments(attachmentUrls.join(","))
+      : resolveAttachments(attachRaw);
   if (attachResult.fatalError) {
     ui.alert("Attachment error: " + attachResult.fatalError);
     return;
@@ -1196,7 +1211,10 @@ function manualSendRow() {
   colMap = ensureSetupAutomationColumns(sheet, tabName, colMap);
 
   var templateContext = buildRowTemplateContext(sheet, tabName, row);
-  var fallbackHtml = buildFallbackLinksHtml(attachResult.failedLinks);
+  var linksHtml = buildAttachmentLinksHtml(
+    attachResult.successLinks,
+    attachResult.failedLinks,
+  );
 
   try {
     var sentFinal = false;
@@ -1214,8 +1232,8 @@ function manualSendRow() {
         tabName,
       );
       var noticeSubject = buildStageSubject(baseSubject, "notice");
-      var noticeHtmlBody = fallbackHtml
-        ? noticeContent.htmlBody + fallbackHtml
+      var noticeHtmlBody = linksHtml
+        ? noticeContent.htmlBody + linksHtml
         : noticeContent.htmlBody;
       var noticeSendResult = sendReminderEmails(
         clientEmailList,
@@ -1291,8 +1309,8 @@ function manualSendRow() {
         tabName,
       );
       var finalSubject = buildStageSubject(baseSubject, "final");
-      var finalHtmlBody = fallbackHtml
-        ? finalContent.htmlBody + fallbackHtml
+      var finalHtmlBody = linksHtml
+        ? finalContent.htmlBody + linksHtml
         : finalContent.htmlBody;
       var finalSendResult = sendReminderEmails(
         clientEmailList,

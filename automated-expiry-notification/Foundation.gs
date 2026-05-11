@@ -1,8 +1,6 @@
-
 // ═══════════════════════════════════════════════════════════════════════════
 // FOUNDATION — config constants, pure utilities, properties access, sheet/row I/O
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ConfigConstants — HEADERS, STATUS, SEND_MODE, header aliases, column contract
@@ -382,11 +380,9 @@ var FLEXIBLE_HEADER_ALIASES = {
 
 // 90 Shared Utils
 
-
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 }
-
 
 function normalizeEmailAddress(value) {
   var email = String(value || "").trim();
@@ -399,7 +395,6 @@ function normalizeEmailAddress(value) {
 
   return email.replace(/^[\s"'`<]+|[\s"'`>]+$/g, "").trim();
 }
-
 
 function normalizeEmailList(value) {
   var rawValues = [];
@@ -428,12 +423,10 @@ function normalizeEmailList(value) {
   return result;
 }
 
-
 function parseClientEmails(rawValue) {
   var list = normalizeEmailList(rawValue);
   return list.length > 0 ? list : [];
 }
-
 
 function validateEmailList(emails) {
   var invalid = [];
@@ -442,7 +435,6 @@ function validateEmailList(emails) {
   }
   return invalid;
 }
-
 
 function mergeUniqueEmails() {
   var merged = [];
@@ -484,7 +476,6 @@ function isTargetDateDue(targetDate, referenceDate) {
   );
 }
 
-
 function getSupportedNoticeDateHint() {
   return (
     'Supported formats: "N days/weeks/months/years before", ' +
@@ -492,7 +483,6 @@ function getSupportedNoticeDateHint() {
     '"On expiry date", or an explicit date (e.g. "2026-12-31").'
   );
 }
-
 
 function parseIsoDateString(value) {
   var text = String(value || "").trim();
@@ -851,6 +841,84 @@ function getCellStr(row, colIndex) {
   return String(row[colIndex - 1] || "").trim();
 }
 
+function extractUrlsFromHyperlinkFormula(formula) {
+  if (!formula) return [];
+  var f = String(formula).trim();
+  if (f.indexOf("=") !== 0) return [];
+
+  var urls = [];
+  // Match HYPERLINK("url","label") or HYPERLINK('url','label') or HYPERLINK("url";
+  // Also handles ; separator for non-US locales
+  var re =
+    /HYPERLINK\s*\(\s*["']([^"']+)["']\s*(?:[,;])?\s*(?:["']([^"']*)["'])?\s*\)/gi;
+  var m;
+  while ((m = re.exec(f)) !== null) {
+    urls.push(m[1]);
+  }
+  return urls;
+}
+
+function getCellFormulaOrValue(sheet, rowIndex, colIndex) {
+  if (!sheet || !rowIndex || !colIndex) return "";
+  try {
+    var cell = sheet.getRange(rowIndex, colIndex);
+    var formula = cell.getFormula();
+    if (formula && formula.trim().indexOf("=") === 0) {
+      return formula;
+    }
+  } catch (e) {}
+  try {
+    return String(sheet.getRange(rowIndex, colIndex).getValue() || "").trim();
+  } catch (e) {}
+  return "";
+}
+
+function extractAttachmentUrls(sheet, rowIndex, colIndex) {
+  if (!sheet || !rowIndex || !colIndex) return [];
+  var urls = [];
+  try {
+    var cell = sheet.getRange(rowIndex, colIndex);
+
+    // 1. HYPERLINK formula
+    var formula = cell.getFormula();
+    if (formula && formula.trim().indexOf("=") === 0) {
+      var formulaUrls = extractUrlsFromHyperlinkFormula(formula);
+      if (formulaUrls.length > 0) return formulaUrls;
+    }
+
+    // 2. RichTextValue auto-links (copy-paste URLs that Sheets auto-formats)
+    var richValue = cell.getRichTextValue();
+    if (richValue) {
+      var runs = richValue.getRuns();
+      var found = false;
+      for (var i = 0; i < runs.length; i++) {
+        var linkUrl = runs[i].getLinkUrl();
+        if (linkUrl) {
+          urls.push(linkUrl);
+          found = true;
+        }
+      }
+      if (found) return urls;
+
+      // No explicit link runs — try scanning the text for URLs
+      var text = String(richValue.getText() || "");
+      var urlMatches = text.match(/https?:\/\/[^\s,]+/g);
+      if (urlMatches && urlMatches.length > 0) return urlMatches;
+    }
+
+    // 3. Plain text fallback (comma/newline separated)
+    var plainValue = String(cell.getValue() || "").trim();
+    if (plainValue) {
+      var entries = plainValue.split(/[,\n\r]+/);
+      for (var j = 0; j < entries.length; j++) {
+        var entry = entries[j].trim();
+        if (entry) urls.push(entry);
+      }
+    }
+  } catch (e) {}
+  return urls;
+}
+
 function isStatusActive(statusValue) {
   return (
     String(statusValue || "")
@@ -858,7 +926,6 @@ function isStatusActive(statusValue) {
       .toLowerCase() === STATUS.ACTIVE.toLowerCase()
   );
 }
-
 
 function isStatusNoticeSent(statusValue) {
   return (
@@ -879,7 +946,6 @@ function isProcessableStatus(statusValue) {
     isStatusBlank(statusValue)
   );
 }
-
 
 function isReplyStatusReplied(replyStatusValue) {
   return (
@@ -963,7 +1029,6 @@ function setStatus(sheet, rowIndex, statusColIndex, statusValue) {
   sheet.getRange(rowIndex, statusColIndex).setValue(statusValue);
 }
 
-
 function getDefaultStatusOptions() {
   return [
     STATUS.ACTIVE,
@@ -973,7 +1038,6 @@ function getDefaultStatusOptions() {
     STATUS.SKIPPED,
   ];
 }
-
 
 function getStatusOptionsForTab(sheet, tabName, colMap) {
   if (!sheet || !colMap || !colMap.STATUS) return getDefaultStatusOptions();
@@ -1009,7 +1073,6 @@ function getStatusOptionsForTab(sheet, tabName, colMap) {
   }
 }
 
-
 function resolveStatusValueForTab(sheet, tabName, colMap, desiredStatus) {
   var target = String(desiredStatus || "").trim();
   if (!target) return target;
@@ -1029,7 +1092,6 @@ function resolveStatusValueForTab(sheet, tabName, colMap, desiredStatus) {
 
   return target;
 }
-
 
 function setResolvedStatus(sheet, rowIndex, colMap, tabName, desiredStatus) {
   if (!colMap || !colMap.STATUS) return;
@@ -1079,7 +1141,6 @@ function writePostSendMetadata(sheet, rowIndex, colMap, meta) {
   clearCellValueIfColumn(sheet, rowIndex, colMap.REPLY_KEYWORD);
 }
 
-
 function applyReplyStatusValidation(sheet, tabName, colMap) {
   if (!sheet || !colMap || !colMap.REPLY_STATUS) return;
 
@@ -1101,7 +1162,6 @@ function applyReplyStatusValidation(sheet, tabName, colMap) {
     .setDataValidation(replyRule);
 }
 
-
 function ensureReplyStatusColumn(sheet, tabName, colMap) {
   if (!sheet || !colMap || !colMap.STATUS) return colMap || {};
   if (colMap.REPLY_STATUS) {
@@ -1118,7 +1178,6 @@ function ensureReplyStatusColumn(sheet, tabName, colMap) {
   return updatedMap;
 }
 
-
 function ensureColumnExists(sheet, tabName, logicalKey) {
   if (logicalKey && buildColumnMap(sheet, tabName)[logicalKey]) {
     return buildColumnMap(sheet, tabName)[logicalKey];
@@ -1129,7 +1188,6 @@ function ensureColumnExists(sheet, tabName, logicalKey) {
   sheet.getRange(headerRow, colIndex).setValue(HEADERS[logicalKey]);
   return buildColumnMap(sheet, tabName)[logicalKey] || colIndex;
 }
-
 
 function ensureReplyMetadataColumns(sheet, tabName, colMap) {
   var updatedMap = colMap || {};
@@ -1142,7 +1200,6 @@ function ensureReplyMetadataColumns(sheet, tabName, colMap) {
 
   return buildColumnMap(sheet, tabName);
 }
-
 
 function ensureFinalNoticeColumns(sheet, tabName, colMap) {
   var keys = [
@@ -1161,7 +1218,6 @@ function ensureFinalNoticeColumns(sheet, tabName, colMap) {
   return colMap;
 }
 
-
 function ensureOpenTrackingColumns(sheet, tabName, colMap) {
   var keys = ["OPEN_TOKEN", "FIRST_OPENED_AT", "LAST_OPENED_AT", "OPEN_COUNT"];
   var updatedMap = colMap || {};
@@ -1175,7 +1231,6 @@ function ensureOpenTrackingColumns(sheet, tabName, colMap) {
 
   return buildColumnMap(sheet, tabName);
 }
-
 
 function ensureSetupAutomationColumns(sheet, tabName, colMap) {
   var updatedMap = colMap || buildColumnMap(sheet, tabName);
@@ -1212,7 +1267,6 @@ function ensureUserInputColumns(sheet, tabName, colMap) {
 
   return buildColumnMap(sheet, tabName);
 }
-
 
 function writeFinalNoticeMetadata(sheet, rowIndex, colMap, meta) {
   var finalAt = meta && meta.sentAt ? meta.sentAt : new Date();

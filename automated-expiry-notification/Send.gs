@@ -386,12 +386,20 @@ function extractDriveFileId(urlOrId) {
   if (!urlOrId) return null;
   var s = urlOrId.trim();
 
-  // /file/d/FILE_ID/
-  var m = s.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  // /file/d/FILE_ID/ or /file/d/FILE_ID/edit etc.
+  var m = s.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (m) return m[1];
 
-  // ?id=FILE_ID or &id=FILE_ID
+  // /d/FILE_ID/ (older shorter pattern)
+  m = s.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+
+  // ?id=FILE_ID or &id=FILE_ID (uc, open, etc.)
   m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+
+  // docs.google.com/spreadsheet/ccc?key=FILE_ID (legacy Sheets)
+  m = s.match(/[?&]key=([a-zA-Z0-9_-]+)/);
   if (m) return m[1];
 
   // Assume raw ID if it looks like one (alphanumeric + _ -)
@@ -414,19 +422,78 @@ function splitAttachmentEntries(rawField) {
     });
 }
 
+function isGoogleWorkspaceFile(file) {
+  var mime = String(file.getMimeType() || "");
+  return mime.indexOf("application/vnd.google-apps.") === 0;
+}
+
+function exportWorkspaceFileBlob(file) {
+  var mime = String(file.getMimeType() || "");
+  var name = String(file.getName() || "document");
+  var exportBlob = null;
+
+  try {
+    if (mime === "application/vnd.google-apps.document") {
+      exportBlob = file.getAs("application/pdf");
+    } else if (mime === "application/vnd.google-apps.spreadsheet") {
+      exportBlob = file.getAs("application/pdf");
+    } else if (mime === "application/vnd.google-apps.presentation") {
+      exportBlob = file.getAs("application/pdf");
+    } else if (mime === "application/vnd.google-apps.drawing") {
+      exportBlob = file.getAs("image/png");
+    } else if (mime === "application/vnd.google-apps.form") {
+      // Forms have no meaningful binary export; skip
+      return null;
+    } else {
+      // Try generic PDF export for other Workspace types
+      exportBlob = file.getAs("application/pdf");
+    }
+  } catch (e) {
+    return null;
+  }
+
+  if (!exportBlob) return null;
+
+  // Ensure exported blob has a sensible name
+  var ext = "";
+  if (mime === "application/vnd.google-apps.drawing") {
+    ext = ".png";
+  } else {
+    ext = ".pdf";
+  }
+  var baseName = name;
+  var lastDot = baseName.lastIndexOf(".");
+  if (lastDot > 0) baseName = baseName.substring(0, lastDot);
+  exportBlob.setName(baseName + ext);
+  return exportBlob;
+}
+
 function resolveAttachments(rawField) {
   if (!rawField || rawField.trim() === "") {
-    return { blobs: [], warnings: [], failedLinks: [], fatalError: null };
+    return {
+      blobs: [],
+      warnings: [],
+      failedLinks: [],
+      successLinks: [],
+      fatalError: null,
+    };
   }
 
   var entries = splitAttachmentEntries(rawField);
   if (entries.length === 0) {
-    return { blobs: [], warnings: [], failedLinks: [], fatalError: null };
+    return {
+      blobs: [],
+      warnings: [],
+      failedLinks: [],
+      successLinks: [],
+      fatalError: null,
+    };
   }
 
   var blobs = [];
   var warnings = [];
   var failedLinks = [];
+  var successLinks = [];
 
   for (var i = 0; i < entries.length; i++) {
     var entry = entries[i];
@@ -438,22 +505,61 @@ function resolveAttachments(rawField) {
       continue;
     }
 
+    var originalUrl =
+      entry.indexOf("drive.google.com") >= 0 ||
+      entry.indexOf("docs.google.com") >= 0
+        ? entry
+        : "https://drive.google.com/file/d/" + fileId + "/view";
+
+    var fileName = null;
     try {
       var file = DriveApp.getFileById(fileId);
+      var blob = null;
+      fileName = String(file.getName() || "attachment");
+
+      if (isGoogleWorkspaceFile(file)) {
+        blob = exportWorkspaceFileBlob(file);
+        if (!blob) {
+          warnings.push(
+            'Google Workspace file "' +
+              fileName +
+              '" could not be exported (ID: ' +
+              fileId +
+              ")",
+          );
+          failedLinks.push({ label: fileName, url: originalUrl });
+          continue;
+        }
+      } else {
+        blob = file.getBlob();
+      }
+
+      if (!blob || blob.getBytes().length === 0) {
+        warnings.push(
+          'File "' +
+            fileName +
+            '" has zero bytes and cannot be attached (ID: ' +
+            fileId +
+            ")",
+        );
+        failedLinks.push({ label: fileName, url: originalUrl });
+        continue;
+      }
+
       blobs.push({
-        blob: file.getBlob(),
-        name: file.getName(),
+        blob: blob,
+        name: blob.getName() || fileName,
         fileId: fileId,
       });
+      successLinks.push({ label: fileName, url: originalUrl });
     } catch (e) {
       warnings.push(
-        "File not found or inaccessible (ID: " + fileId + "): " + e.message,
+        "File not found or inaccessible (ID: " +
+          fileId +
+          "): " +
+          (e && e.message ? e.message : String(e)),
       );
-      var originalUrl =
-        entry.indexOf("drive.google.com") >= 0
-          ? entry
-          : "https://drive.google.com/file/d/" + fileId + "/view";
-      failedLinks.push({ label: fileId, url: originalUrl });
+      failedLinks.push({ label: fileName || fileId, url: originalUrl });
     }
   }
 
@@ -461,32 +567,60 @@ function resolveAttachments(rawField) {
     blobs: blobs,
     warnings: warnings,
     failedLinks: failedLinks,
+    successLinks: successLinks,
     fatalError: null,
   };
 }
 
-function buildFallbackLinksHtml(failedLinks) {
-  if (!failedLinks || failedLinks.length === 0) return "";
+function buildAttachmentLinksHtml(successLinks, failedLinks) {
+  var all = (successLinks || []).concat(failedLinks || []);
+  if (all.length === 0) return "";
 
   var items = [];
-  for (var i = 0; i < failedLinks.length; i++) {
-    var fl = failedLinks[i];
+  var successLabels = {};
+  for (var s = 0; s < (successLinks || []).length; s++) {
+    successLabels[successLinks[s].label] = true;
+  }
+
+  var linkStyle =
+    'style="color:#1976d2;text-decoration:underline;word-break:break-all;"';
+
+  for (var i = 0; i < all.length; i++) {
+    var fl = all[i];
+    var isSuccess = !!successLabels[fl.label];
+    var statusBadge = isSuccess
+      ? '<span style="color:#2e7d32;font-size:11px;margin-left:6px;">(attached)</span>'
+      : '<span style="color:#d32f2f;font-size:11px;margin-left:6px;">(link only)</span>';
+
     if (fl.url) {
+      // Always show the file name as a clickable link
       items.push(
-        '<li><a href="' +
+        "<li style=" +
+          '"margin-bottom:6px;list-style-type:disc;">' +
+          '<a href="' +
           sanitizeHtmlAttribute(fl.url) +
-          '" target="_blank" rel="noopener noreferrer">' +
-          sanitizeHtmlContent(fl.label) +
-          "</a></li>",
+          '" ' +
+          linkStyle +
+          ' target="_blank" rel="noopener noreferrer">' +
+          sanitizeHtmlContent(fl.label || fl.url) +
+          "</a>" +
+          statusBadge +
+          "</li>",
       );
     } else {
-      items.push("<li>" + sanitizeHtmlContent(fl.label) + "</li>");
+      // No URL available
+      items.push(
+        '<li style="margin-bottom:6px;list-style-type:disc;">' +
+          sanitizeHtmlContent(fl.label) +
+          '<span style="color:#d32f2f;font-size:11px;margin-left:6px;">(link unavailable)</span>' +
+          "</li>",
+      );
     }
   }
 
   return (
-    '<div style="margin-top:16px;padding:12px;background:#fff8e1;border-left:3px solid #f9a825;font-size:13px;">' +
-    '<p style="margin:0 0 8px 0;font-weight:bold;color:#7a5c00;">Some files could not be attached. You can access them via the links below:</p>' +
+    '<div style="margin-top:16px;padding:12px;background:#f5f5f5;border-left:3px solid #1976d2;font-size:13px;">' +
+    '<p style="margin:0 0 8px 0;font-weight:bold;color:#1a237e;">Attached Files</p>' +
     '<ul style="margin:0;padding-left:20px;">' +
     items.join("") +
     "</ul></div>"
