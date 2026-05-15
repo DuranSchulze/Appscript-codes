@@ -191,17 +191,20 @@ function onOpen() {
         .addSeparator()
         .addItem("🔄 Scan Both Drives", "scanBothDrives")
         .addSeparator()
+        .addItem("🧹 Fix Existing Pleading Names", "cleanExistingPleadingNames")
         .addItem(
-          "🧹 Fix Existing Pleading Names",
-          "cleanExistingPleadingNames",
-        ),
+          "⚡ Fix Filenames (No AI, Background)",
+          "cleanExistingPleadingNamesNoAi",
+        )
+        .addItem("🔁 Quick Clean Filenames (No AI)", "quickCleanPleadingFileNames")
+        .addItem("🛑 Stop Background Cleanup", "stopPleadingNameCleanupNoAi"),
     )
     .addSeparator()
     .addItem("⏰ Setup Daily Schedule", "setupDailySchedule")
     .addItem("🛑 Remove Daily Schedule", "removeDailySchedule")
     .addItem(
-      "📌 Implement to Other Google Sheet",
-      "showImplementationGuideModal",
+      "📤 Copy to Another Case / Spreadsheet",
+      "showDeployToSpreadsheetDialog",
     )
     .addSeparator()
     .addSubMenu(
@@ -221,77 +224,113 @@ function onOpen() {
     .addToUi();
 }
 
-function showImplementationGuideModal() {
+/**
+ * Shows a dialog where the user can enter a target Spreadsheet ID.
+ * On submit, the current script is automatically copied to a new bound
+ * Apps Script project on that spreadsheet via the Apps Script REST API.
+ */
+/**
+ * Shows a dialog to create a full copy of this spreadsheet (with its bound
+ * script) in Google Drive. No API setup required — DriveApp.makeCopy() carries
+ * the bound script automatically.
+ */
+function showDeployToSpreadsheetDialog() {
   const html = HtmlService.createHtmlOutput(
-    `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <base target="_top" />
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            color: #202124;
-          }
-          .container {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-          }
-          .message {
-            font-size: 16px;
-            line-height: 1.4;
-          }
-          .actions {
-            display: flex;
-            gap: 10px;
-          }
-          button {
-            border: 0;
-            border-radius: 6px;
-            padding: 10px 14px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 600;
-          }
-          .primary {
-            background: #1a73e8;
-            color: #fff;
-          }
-          .secondary {
-            background: #f1f3f4;
-            color: #202124;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="message">Want to implement this to other google sheet?</div>
-          <div class="actions">
-            <button class="primary" onclick="openGuide()">Open Pastebin Guide</button>
-            <button class="secondary" onclick="google.script.host.close()">Close</button>
-          </div>
-        </div>
+    `<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top" />
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;padding:20px;color:#202124;font-size:13px}
+    h3{font-size:15px;font-weight:600;margin-bottom:10px}
+    p{color:#5f6368;line-height:1.5;margin-bottom:12px}
+    label{display:block;font-weight:600;margin-bottom:6px}
+    input{width:100%;border:1px solid #dadce0;border-radius:4px;padding:8px 10px;font-size:13px;outline:none}
+    input:focus{border-color:#1a73e8}
+    .row{display:flex;gap:10px;margin-top:14px}
+    button{border:0;border-radius:6px;padding:9px 16px;cursor:pointer;font-size:13px;font-weight:600;flex:1}
+    .primary{background:#1a73e8;color:#fff}
+    .primary:disabled{background:#a8c7fa;cursor:not-allowed}
+    .secondary{background:#f1f3f4;color:#202124}
+    #status{margin-top:12px;padding:10px 12px;border-radius:6px;display:none;font-size:13px;line-height:1.6}
+    .ok{background:#e6f4ea;color:#137333;border:1px solid #a8d5b5}
+    .err{background:#fce8e6;color:#c5221f;border:1px solid #f5c6c4}
+    .info{background:#e8f0fe;color:#1a73e8;border:1px solid #b3c8f5}
+    a{color:#1a73e8;font-weight:600}
+  </style>
+</head>
+<body>
+  <h3>📤 Copy to Another Case / Spreadsheet</h3>
+  <p>This creates a <strong>full copy</strong> of this spreadsheet in your Google Drive — the script comes along automatically. No setup required.</p>
+  <label for="cname">Name for the new spreadsheet</label>
+  <input id="cname" type="text" placeholder="e.g. Client Document Monitor — Santos Case" />
+  <div class="row">
+    <button class="primary" id="copyBtn" onclick="doCopy()">Create Copy</button>
+    <button class="secondary" onclick="google.script.host.close()">Cancel</button>
+  </div>
+  <div id="status"></div>
+  <script>
+    function setStatus(msg, type) {
+      var el = document.getElementById('status');
+      el.innerHTML = msg;
+      el.className = type;
+      el.style.display = 'block';
+    }
+    function doCopy() {
+      var name = document.getElementById('cname').value.trim();
+      if (!name) { setStatus('Please enter a name for the new spreadsheet.', 'err'); return; }
+      var btn = document.getElementById('copyBtn');
+      btn.disabled = true;
+      btn.textContent = 'Creating copy…';
+      setStatus('⏳ Copying — this may take a few seconds…', 'info');
+      google.script.run
+        .withSuccessHandler(function(result) {
+          btn.disabled = false;
+          btn.textContent = 'Create Copy';
+          setStatus(
+            '✅ <strong>Copy created!</strong><br>' +
+            '<a href="' + result.url + '" target="_blank">Open "' + result.name + '" ↗</a><br><br>' +
+            '<em>Next: open the copy, click the menu → 🔧 Initial Setup, then configure the Drive IDs for the new case.</em>',
+            'ok'
+          );
+        })
+        .withFailureHandler(function(err) {
+          btn.disabled = false;
+          btn.textContent = 'Create Copy';
+          setStatus('❌ <strong>Failed:</strong> ' + err.message, 'err');
+        })
+        .copySpreadsheetWithScript(name);
+    }
+  </script>
+</body>
+</html>`
+  ).setWidth(480).setHeight(320);
 
-        <script>
-          function openGuide() {
-            window.open("https://pastebin.com/edit/aawyCS7c", "_blank");
-            google.script.host.close();
-          }
-        </script>
-      </body>
-    </html>
-  `,
-  )
-    .setWidth(430)
-    .setHeight(200);
+  SpreadsheetApp.getUi().showModalDialog(html, "Copy to Another Case / Spreadsheet");
+}
 
-  SpreadsheetApp.getUi().showModalDialog(
-    html,
-    "Implement to Other Google Sheet",
-  );
+/**
+ * Creates a copy of the active spreadsheet in the same Drive folder.
+ * The bound Apps Script project is carried over automatically by Drive —
+ * no Apps Script API or Google Cloud setup needed.
+ */
+function copySpreadsheetWithScript(name) {
+  if (!name) throw new Error("No name provided.");
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sourceFile = DriveApp.getFileById(ss.getId());
+
+  // Place the copy in the same parent folder as the source
+  const parents = sourceFile.getParents();
+  const copy = parents.hasNext()
+    ? sourceFile.makeCopy(name, parents.next())
+    : sourceFile.makeCopy(name);
+
+  return {
+    name: copy.getName(),
+    url: `https://docs.google.com/spreadsheets/d/${copy.getId()}/edit`,
+  };
 }
 
 /**
@@ -487,11 +526,12 @@ function sanitizePleadingTitle(rawTitle) {
   // Remove wrapping quotes
   cleanedTitle = cleanedTitle.replace(/^[`"'“”‘’\s]+|[`"'“”‘’\s]+$/g, "");
 
-  // Remove leading date patterns (repeat-safe)
+  // Remove ALL date tokens anywhere in the string (not just leading)
   cleanedTitle = cleanedTitle.replace(
-    /^(\s*(?:\d{4}[-/\s]\d{1,2}[-/\s]\d{1,2}|\d{1,2}[-/\s]\d{1,2}[-/\s]\d{4})\s*)+/i,
-    "",
+    /\b(?:\d{4}[-/\s]\d{1,2}[-/\s]\d{1,2}|\d{1,2}[-/\s]\d{1,2}[-/\s]\d{4})\b/gi,
+    " ",
   );
+  cleanedTitle = cleanedTitle.replace(/\s+/g, " ").trim();
 
   // Remove illegal filename characters and common separators
   cleanedTitle = cleanedTitle.replace(/[\\/:*?"<>|]+/g, " ");
@@ -559,8 +599,12 @@ function generatePleadingName(originalName, dateCreated) {
   // Format: YYYY-MM-DD
   const dateStr = dateCreated.toISOString().split("T")[0];
 
-  // Get file extension
-  const extensionMatch = originalName.match(/\.([^.]+)$/);
+  // Get file extension. IMPORTANT: only match a SHORT, alphanumeric trailing
+  // extension. Some pleading filenames legitimately contain dots in their
+  // descriptive text (e.g., "... 2025 06 10 OPPOSITION ONLY"), and a greedy
+  // /\.([^.]+)$/ would capture that tail as the "extension", causing
+  // duplicate-date residue to be preserved in the renamed file.
+  const extensionMatch = originalName.match(/\.([A-Za-z0-9]{1,8})$/);
   const extension = extensionMatch ? extensionMatch[1] : "";
   const extensionSuffix = extension ? `.${extension}` : "";
 
@@ -587,6 +631,34 @@ function generatePleadingName(originalName, dateCreated) {
 
   // New format: YYYY-MM-DD Descriptive Title.extension (NO folder name)
   return `${dateStr} ${descriptiveTitle}${extensionSuffix}`;
+}
+
+/**
+ * Deterministic (NO AI) version of generatePleadingName.
+ * Used by the background "Fix Filenames (No AI)" cleanup so that scans cannot
+ * stall on Gemini quota / 503s and so filenames are predictable.
+ *
+ * Output format: "YYYY-MM-DD <sanitized title><.ext>"
+ *   - YYYY-MM-DD: derived from dateCreated
+ *   - sanitized title: sanitizePleadingTitle() strips ALL leading date tokens,
+ *     duplicate spaces, and illegal filename characters from the original name
+ *   - extension: only kept if it is a short alphanumeric suffix (avoids
+ *     mistaking trailing dotted descriptive text for an extension)
+ */
+function generatePleadingNameDeterministic(originalName, dateCreated) {
+  const dateObj =
+    dateCreated instanceof Date ? dateCreated : new Date(dateCreated);
+  const dateStr = (isNaN(dateObj.getTime()) ? new Date() : dateObj)
+    .toISOString()
+    .split("T")[0];
+
+  const extensionMatch = originalName.match(/\.([A-Za-z0-9]{1,8})$/);
+  const extensionSuffix = extensionMatch ? `.${extensionMatch[1]}` : "";
+
+  let title = sanitizePleadingTitle(originalName);
+  if (!title) title = "Untitled Document";
+
+  return `${dateStr} ${title}${extensionSuffix}`;
 }
 
 function applyPleadingSuggestedName(fileInfo, suggestedName) {
@@ -2103,6 +2175,411 @@ function cleanExistingPleadingNames() {
 }
 
 /**
+ * Background, AI-free filename cleanup for the Scanned Pleadings drive.
+ *
+ * Runs in time-triggered batches so it survives the 6-minute Apps Script
+ * execution limit AND keeps running after the user closes the spreadsheet.
+ * Uses the deterministic generatePleadingNameDeterministic() so it never
+ * stalls on Gemini quota / 503 responses.
+ *
+ * State is persisted in ScriptProperties under NOAI_CLEANUP_STATE_KEY:
+ *   {
+ *     driveId, folderStack: [folderId,...],
+ *     folderTokens: { folderId: continuationToken },
+ *     processed, renamed, skipped, errors, started
+ *   }
+ */
+const NOAI_CLEANUP_STATE_KEY = "PLEADING_NOAI_CLEANUP_STATE";
+const NOAI_CLEANUP_HANDLER = "continuePleadingNameCleanupNoAi_";
+const NOAI_CLEANUP_BUDGET_MS = 4 * 60 * 1000; // 4 minutes per batch
+
+function cleanExistingPleadingNamesNoAi() {
+  const ui = SpreadsheetApp.getUi();
+  const driveId = getConfigValue("SCANNED_PLEADINGS_DRIVE_ID");
+  if (!driveId) {
+    ui.alert(
+      "❌ Scanned Pleadings Drive ID is not configured.\n\nPlease set it first via: 📂 Configure Drives → ⚖️ Set Scanned Pleadings Drive ID",
+    );
+    return;
+  }
+
+  if (getNoAiCleanupState_()) {
+    const cont = ui.alert(
+      "Background cleanup already running",
+      "A background filename cleanup is already in progress.\n\n• Click YES to restart it from the beginning.\n• Click NO to let it keep running.",
+      ui.ButtonSet.YES_NO,
+    );
+    if (cont !== ui.Button.YES) return;
+  }
+
+  const response = ui.alert(
+    "🧹 Fix Filenames (No AI, Background)",
+    "Cleans up duplicate-date filenames in the Scanned Pleadings drive using deterministic rules only (no AI calls).\n\n• Runs in background batches via time-based triggers\n• Safe to close this sheet — it will keep running until finished\n• Skips files whose names are already clean\n\nProceed?",
+    ui.ButtonSet.YES_NO,
+  );
+  if (response !== ui.Button.YES) return;
+
+  removeNoAiCleanupTriggers_();
+  setNoAiCleanupState_({
+    driveId: driveId,
+    folderStack: [driveId],
+    folderTokens: {},
+    processed: 0,
+    renamed: 0,
+    skipped: 0,
+    errors: 0,
+    started: new Date().toISOString(),
+  });
+  scheduleNoAiCleanupContinuation_();
+
+  ui.alert(
+    "🚀 Background cleanup started",
+    "The cleanup is now running in the background and will continue even if you close this sheet.\n\nYou can check progress later via:\n📊 View System Status (LAST_NAME_CLEANUP_NOAI)\n\nTo stop it early, use:\n🧹 Full Scanning → 🛑 Stop Background Cleanup",
+    ui.ButtonSet.OK,
+  );
+}
+
+function stopPleadingNameCleanupNoAi() {
+  const ui = SpreadsheetApp.getUi();
+  removeNoAiCleanupTriggers_();
+  PropertiesService.getScriptProperties().deleteProperty(
+    NOAI_CLEANUP_STATE_KEY,
+  );
+  ui.alert("🛑 Background filename cleanup stopped.");
+}
+
+/**
+ * Synchronous, no-API quick cleanup for the Scanned Pleadings drive.
+ * Processes up to 300 files immediately and shows a result summary dialog.
+ * For larger drives use the background "Fix Filenames (No AI, Background)" instead.
+ */
+function quickCleanPleadingFileNames() {
+  const ui = SpreadsheetApp.getUi();
+  const driveId = getConfigValue("SCANNED_PLEADINGS_DRIVE_ID");
+  if (!driveId) {
+    ui.alert(
+      "❌ Scanned Pleadings Drive ID is not configured.\n\nPlease set it via: 📂 Configure Drives → ⚖️ Set Scanned Pleadings Drive ID",
+    );
+    return;
+  }
+
+  const confirm = ui.alert(
+    "🔁 Quick Clean Filenames (No AI)",
+    "Scans the Scanned Pleadings drive and fixes any filenames that contain duplicate or misplaced dates.\n\n• No AI / API calls — fully deterministic\n• Processes up to 300 files per run\n• Results shown immediately when done\n\nProceed?",
+    ui.ButtonSet.YES_NO,
+  );
+  if (confirm !== ui.Button.YES) return;
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(
+    CONFIG.SHEETS.SUMMARY_PLEADINGS,
+  );
+
+  const MAX_FILES = 300;
+  let processed = 0;
+  let renamed = 0;
+  let skipped = 0;
+  let errors = 0;
+  let hitLimit = false;
+
+  function processFolder(folder) {
+    if (processed >= MAX_FILES) { hitLimit = true; return; }
+
+    // Process files in this folder
+    const fileIter = folder.getFiles();
+    while (fileIter.hasNext()) {
+      if (processed >= MAX_FILES) { hitLimit = true; return; }
+      const file = fileIter.next();
+      processed++;
+      try {
+        const currentName = file.getName();
+        if (isSystemOrTempFile(currentName)) { skipped++; continue; }
+        const newName = generatePleadingNameDeterministic(currentName, file.getDateCreated());
+        if (newName && newName !== currentName) {
+          file.setName(newName);
+          renamed++;
+          if (sheet) {
+            try {
+              const match = findRowByFileId(sheet, file.getId());
+              if (match) updateExistingPleadingName(sheet, match.rowIndex, newName, file.getId());
+            } catch (e) {
+              // Non-fatal — rename already applied to Drive
+            }
+          }
+          logEvent("RENAME", CONFIG.DRIVE_TYPES.PLEADINGS, file.getId(), newName, "", `Quick clean: "${currentName}" → "${newName}"`, "SUCCESS", "");
+        } else {
+          skipped++;
+        }
+      } catch (fileErr) {
+        errors++;
+        console.log("quickCleanPleadingFileNames error: " + fileErr.message);
+      }
+    }
+
+    // Recurse into sub-folders
+    const subIter = folder.getFolders();
+    while (subIter.hasNext()) {
+      if (processed >= MAX_FILES) { hitLimit = true; return; }
+      processFolder(subIter.next());
+    }
+  }
+
+  try {
+    const rootFolder = DriveApp.getFolderById(driveId);
+    processFolder(rootFolder);
+  } catch (e) {
+    ui.alert("❌ Error accessing drive: " + e.message);
+    return;
+  }
+
+  setConfigValue("LAST_NAME_CLEANUP_QUICK", new Date().toISOString());
+
+  let msg = `✅ Quick clean complete!\n\nProcessed: ${processed}\nRenamed:   ${renamed}\nSkipped:   ${skipped}\nErrors:    ${errors}`;
+  if (hitLimit) {
+    msg += `\n\n⚠️ Stopped at ${MAX_FILES}-file limit. Run again or use "⚡ Fix Filenames (No AI, Background)" to process the rest.`;
+  }
+  ui.alert("🔁 Quick Clean Results", msg, ui.ButtonSet.OK);
+}
+
+/**
+ * Trigger handler. Picks up where the previous batch left off using the
+ * persisted folder stack + per-folder continuation tokens.
+ */
+function continuePleadingNameCleanupNoAi_() {
+  const state = getNoAiCleanupState_();
+  if (!state) {
+    removeNoAiCleanupTriggers_();
+    return;
+  }
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet
+    ? SpreadsheetApp.getActiveSpreadsheet().getSheetByName(
+        CONFIG.SHEETS.SUMMARY_PLEADINGS,
+      )
+    : null;
+
+  const startMs = Date.now();
+  let outOfTime = false;
+
+  try {
+    while (
+      !outOfTime &&
+      state.folderStack.length > 0 &&
+      Date.now() - startMs < NOAI_CLEANUP_BUDGET_MS
+    ) {
+      const folderId = state.folderStack[state.folderStack.length - 1];
+      let folder;
+      try {
+        folder = DriveApp.getFolderById(folderId);
+      } catch (folderErr) {
+        // Folder no longer accessible — skip it.
+        state.errors++;
+        logEvent(
+          "ERROR",
+          CONFIG.DRIVE_TYPES.PLEADINGS,
+          folderId,
+          "",
+          "",
+          `NoAI cleanup: cannot open folder ${folderId}: ${folderErr.message}`,
+          "ERROR",
+          folderErr.message,
+        );
+        delete state.folderTokens[folderId];
+        state.folderStack.pop();
+        continue;
+      }
+
+      const fileIter = state.folderTokens[folderId]
+        ? DriveApp.continueFileIterator(state.folderTokens[folderId])
+        : folder.getFiles();
+
+      while (
+        fileIter.hasNext() &&
+        Date.now() - startMs < NOAI_CLEANUP_BUDGET_MS
+      ) {
+        let file;
+        try {
+          file = fileIter.next();
+        } catch (iterErr) {
+          state.errors++;
+          logEvent(
+            "ERROR",
+            CONFIG.DRIVE_TYPES.PLEADINGS,
+            "",
+            "",
+            "",
+            `NoAI cleanup iterator error: ${iterErr.message}`,
+            "ERROR",
+            iterErr.message,
+          );
+          break;
+        }
+
+        try {
+          const currentName = file.getName();
+          if (isSystemOrTempFile(currentName)) {
+            state.skipped++;
+            state.processed++;
+            continue;
+          }
+          const newName = generatePleadingNameDeterministic(
+            currentName,
+            file.getDateCreated(),
+          );
+          if (newName && newName !== currentName) {
+            file.setName(newName);
+            state.renamed++;
+            if (sheet) {
+              try {
+                const match = findRowByFileId(sheet, file.getId());
+                if (match) {
+                  updateExistingPleadingName(
+                    sheet,
+                    match.rowIndex,
+                    newName,
+                    file.getId(),
+                  );
+                }
+              } catch (sheetErr) {
+                // Non-fatal — the rename itself succeeded.
+                console.log(
+                  `NoAI cleanup: sheet update failed for ${file.getId()}: ${sheetErr.message}`,
+                );
+              }
+            }
+            logEvent(
+              "NAME_CLEANED_NOAI",
+              CONFIG.DRIVE_TYPES.PLEADINGS,
+              file.getId(),
+              newName,
+              "",
+              `Deterministic rename: "${currentName}" → "${newName}"`,
+              "SUCCESS",
+            );
+          } else {
+            state.skipped++;
+          }
+          state.processed++;
+        } catch (fileErr) {
+          state.errors++;
+          logEvent(
+            "ERROR",
+            CONFIG.DRIVE_TYPES.PLEADINGS,
+            file ? file.getId() : "",
+            file ? file.getName() : "",
+            "",
+            `NoAI cleanup failed for file: ${fileErr.message}`,
+            "ERROR",
+            fileErr.message,
+          );
+        }
+      }
+
+      if (fileIter.hasNext()) {
+        // Ran out of time mid-folder — checkpoint and resume next batch.
+        state.folderTokens[folderId] = fileIter.getContinuationToken();
+        outOfTime = true;
+        break;
+      }
+
+      // Finished this folder's files — enqueue subfolders, then pop.
+      delete state.folderTokens[folderId];
+      try {
+        const subIter = folder.getFolders();
+        const subIds = [];
+        while (subIter.hasNext()) subIds.push(subIter.next().getId());
+        state.folderStack.pop();
+        // Push in reverse so traversal order is stable.
+        for (let i = subIds.length - 1; i >= 0; i--) {
+          state.folderStack.push(subIds[i]);
+        }
+      } catch (subErr) {
+        state.errors++;
+        state.folderStack.pop();
+        logEvent(
+          "ERROR",
+          CONFIG.DRIVE_TYPES.PLEADINGS,
+          folderId,
+          "",
+          "",
+          `NoAI cleanup: subfolder enumeration failed: ${subErr.message}`,
+          "ERROR",
+          subErr.message,
+        );
+      }
+    }
+  } catch (err) {
+    state.errors++;
+    logEvent(
+      "ERROR",
+      CONFIG.DRIVE_TYPES.PLEADINGS,
+      "",
+      "",
+      "",
+      `NoAI cleanup batch crashed: ${err.message}`,
+      "ERROR",
+      err.message,
+    );
+  }
+
+  setNoAiCleanupState_(state);
+
+  if (state.folderStack.length === 0) {
+    setConfigValue("LAST_NAME_CLEANUP_NOAI", new Date().toISOString());
+    logEvent(
+      "SYSTEM",
+      CONFIG.DRIVE_TYPES.PLEADINGS,
+      "",
+      "",
+      "",
+      `NoAI filename cleanup complete. processed=${state.processed} renamed=${state.renamed} skipped=${state.skipped} errors=${state.errors}`,
+      "SUCCESS",
+    );
+    removeNoAiCleanupTriggers_();
+    PropertiesService.getScriptProperties().deleteProperty(
+      NOAI_CLEANUP_STATE_KEY,
+    );
+  } else {
+    scheduleNoAiCleanupContinuation_();
+  }
+}
+
+function scheduleNoAiCleanupContinuation_() {
+  // Apps Script minimum is 1 minute for time-based "after" triggers.
+  ScriptApp.newTrigger(NOAI_CLEANUP_HANDLER)
+    .timeBased()
+    .after(60 * 1000)
+    .create();
+}
+
+function removeNoAiCleanupTriggers_() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function (t) {
+    if (t.getHandlerFunction() === NOAI_CLEANUP_HANDLER) {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+}
+
+function getNoAiCleanupState_() {
+  const raw = PropertiesService.getScriptProperties().getProperty(
+    NOAI_CLEANUP_STATE_KEY,
+  );
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+function setNoAiCleanupState_(state) {
+  PropertiesService.getScriptProperties().setProperty(
+    NOAI_CLEANUP_STATE_KEY,
+    JSON.stringify(state),
+  );
+}
+
+/**
  * Robust helper to locate a sheet row by Drive file ID.
  * Searches all columns (including HYPERLINK formulas) so it works
  * regardless of whether column 2 or 3 holds the file URL.
@@ -2134,6 +2611,13 @@ function generateAiPleadingTitle(fileName) {
     return null;
   }
   try {
+    // Strip date tokens from the filename before sending to AI so the model
+    // cannot echo them back into its output — the date is prepended by code, not AI.
+    const cleanedFileName = fileName
+      .replace(/(\d{4}[-/\s]\d{1,2}[-/\s]\d{1,2}|\d{1,2}[-/\s]\d{1,2}[-/\s]\d{4})/g, " ")
+      .replace(/\.[^/.]+$/, "")
+      .replace(/\s+/g, " ")
+      .trim();
     const prompt =
       `You are a legal document classifier. Given the raw filename of a scanned legal pleading, ` +
       `produce a clean, formal, complete human-readable descriptive title.\n` +
@@ -2143,7 +2627,7 @@ function generateAiPleadingTitle(fileName) {
       `3) Do NOT include any file extension.\n` +
       `4) Do NOT truncate the title; avoid ending in dangling words like "of", "for", or "to".\n` +
       `5) Use proper title case.\n\n` +
-      `Filename: ${fileName}`;
+      `Filename: ${cleanedFileName}`;
     const payload = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
