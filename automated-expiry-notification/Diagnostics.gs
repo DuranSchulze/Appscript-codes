@@ -41,10 +41,9 @@ function testGmailSend() {
     "</p></div>";
 
   try {
-    GmailApp.sendEmail(recipient, subject, "", {
-      htmlBody: htmlBody,
-      name: senderName || CONFIG.SENDER_NAME,
-    });
+    var options = { htmlBody: htmlBody };
+    if (senderName) options.name = senderName;
+    GmailApp.sendEmail(recipient, subject, "", options);
     ui.alert(
       "Test Gmail Send",
       "✓ Test email sent successfully!\n\nFrom: " +
@@ -83,6 +82,66 @@ function testDriveAccess() {
       ui.ButtonSet.OK,
     );
   }
+}
+
+function testDriveAttachmentConnection() {
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.prompt(
+    "Test Drive File Connection",
+    "Enter a Google Drive URL, file ID, or exact file name to test attachment extraction:",
+    ui.ButtonSet.OK_CANCEL,
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  var input = response.getResponseText().trim();
+  if (!input) {
+    ui.alert("Test Aborted", "No input provided.", ui.ButtonSet.OK);
+    return;
+  }
+
+  var result = resolveAttachments(input);
+
+  var lines = [];
+  lines.push("Testing Input: " + input);
+  lines.push("----------------------------------------");
+
+  if (result.fatalError) {
+    lines.push("FATAL ERROR: " + result.fatalError);
+  } else {
+    lines.push("Attachments successfully resolved: " + result.blobs.length);
+    for (var i = 0; i < result.blobs.length; i++) {
+      var blobInfo = result.blobs[i];
+      var sizeKb = Math.round(blobInfo.blob.getBytes().length / 1024);
+      lines.push("  - " + blobInfo.name + " (" + sizeKb + " KB)");
+    }
+
+    if (result.warnings.length > 0) {
+      lines.push("");
+      lines.push("Warnings / Skipped (" + result.warnings.length + "):");
+      for (var w = 0; w < result.warnings.length; w++) {
+        lines.push("  ! " + result.warnings[w]);
+      }
+    }
+
+    if (result.successLinks.length > 0) {
+      lines.push("");
+      lines.push("Success Links generated:");
+      for (var s = 0; s < result.successLinks.length; s++) {
+        lines.push("  - " + result.successLinks[s].label);
+      }
+    }
+
+    if (result.failedLinks.length > 0) {
+      lines.push("");
+      lines.push("Failed/Fallback Links generated:");
+      for (var f = 0; f < result.failedLinks.length; f++) {
+        lines.push("  - " + result.failedLinks[f].label);
+      }
+    }
+  }
+
+  ui.alert("Attachment Diagnostic Result", lines.join("\n"), ui.ButtonSet.OK);
 }
 
 function testAllConnections() {

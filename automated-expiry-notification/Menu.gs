@@ -107,6 +107,11 @@ var ROOT_MENU_SPEC = [
       },
       {
         type: "item",
+        label: "Test Drive Attachment URL...",
+        fn: "testDriveAttachmentConnection",
+      },
+      {
+        type: "item",
         label: "Manual Send Row (force-send + update row)...",
         fn: "manualSendRow",
       },

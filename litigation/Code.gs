@@ -189,7 +189,12 @@ function onOpen() {
         .addItem("📄 Full Scan - Client Documents", "manualFullScanClientDocs")
         .addItem("⚖️ Full Scan - Scanned Pleadings", "manualFullScanPleadings")
         .addSeparator()
-        .addItem("🔄 Scan Both Drives", "scanBothDrives"),
+        .addItem("🔄 Scan Both Drives", "scanBothDrives")
+        .addSeparator()
+        .addItem(
+          "🧹 Fix Existing Pleading Names",
+          "cleanExistingPleadingNames",
+        ),
     )
     .addSeparator()
     .addItem("⏰ Setup Daily Schedule", "setupDailySchedule")
@@ -584,6 +589,12 @@ function generatePleadingName(originalName, dateCreated) {
   return `${dateStr} ${descriptiveTitle}${extensionSuffix}`;
 }
 
+function applyPleadingSuggestedName(fileInfo, suggestedName) {
+  fileInfo.suggestedName = suggestedName;
+  fileInfo.name = suggestedName;
+  return fileInfo;
+}
+
 /**
  * Enhanced file info gathering with updated pleading naming convention
  */
@@ -721,10 +732,12 @@ function addFileToPleadingsSheet(fileInfo) {
     // If we have a suggested name that's different from original, rename the actual Drive file
     if (fileInfo.suggestedName && fileInfo.suggestedName !== fileInfo.name) {
       try {
+        const originalFileName = fileInfo.name;
         const driveFile = DriveApp.getFileById(fileInfo.id);
         driveFile.setName(fileInfo.suggestedName);
         finalDisplayName = fileInfo.suggestedName;
         actualFileName = fileInfo.suggestedName;
+        applyPleadingSuggestedName(fileInfo, fileInfo.suggestedName);
 
         logEvent(
           "FILE_RENAMED",
@@ -732,12 +745,12 @@ function addFileToPleadingsSheet(fileInfo) {
           fileInfo.id,
           fileInfo.name,
           fileInfo.uploadedByEmail,
-          `File renamed from "${fileInfo.name}" to "${fileInfo.suggestedName}"`,
+          `File renamed from "${originalFileName}" to "${fileInfo.suggestedName}"`,
           "SUCCESS",
         );
 
         console.log(
-          `Successfully renamed file in Drive: ${fileInfo.name} → ${fileInfo.suggestedName}`,
+          `Successfully renamed file in Drive: ${originalFileName} → ${fileInfo.suggestedName}`,
         );
       } catch (renameError) {
         console.log(`Failed to rename file in Drive: ${renameError.message}`);
@@ -881,9 +894,11 @@ function detectChangesEnhanced(driveId, driveType, sheetName, indexKey) {
           newFileInfo.suggestedName !== newFileInfo.name
         ) {
           try {
+            const originalFileName = newFileInfo.name;
             // Rename the actual Drive file
             const driveFile = DriveApp.getFileById(fileId);
             driveFile.setName(newFileInfo.suggestedName);
+            applyPleadingSuggestedName(newFileInfo, newFileInfo.suggestedName);
 
             // Update the sheet display name
             updateExistingPleadingName(
@@ -897,12 +912,12 @@ function detectChangesEnhanced(driveId, driveType, sheetName, indexKey) {
               type: "NAME_UPDATED",
               fileId: fileId,
               fileInfo: newFileInfo,
-              details: `Pleading name updated: "${newFileInfo.name}" → "${newFileInfo.suggestedName}"`,
+              details: `Pleading name updated: "${originalFileName}" → "${newFileInfo.suggestedName}"`,
               userEmail: "SYSTEM",
             });
 
             console.log(
-              `Updated existing pleading name: ${newFileInfo.name} → ${newFileInfo.suggestedName}`,
+              `Updated existing pleading name: ${originalFileName} → ${newFileInfo.suggestedName}`,
             );
           } catch (renameError) {
             console.log(
@@ -1241,7 +1256,6 @@ function scanSharedDriveEnhanced(
               driveType,
               rootFolderName,
             );
-            fileIndex[fileInfo.id] = fileInfo;
             processedFiles++;
 
             if (isFullScan) {
@@ -1251,6 +1265,8 @@ function scanSharedDriveEnhanced(
                 addFileToPleadingsSheet(fileInfo); // Automatically renames files
               }
             }
+
+            fileIndex[fileInfo.id] = fileInfo;
 
             if (processedFiles % 10 === 0) {
               Utilities.sleep(CONFIG.API_DELAY_MS);
@@ -1931,6 +1947,178 @@ function scanBothDrives() {
     );
     ui.alert(`❌ Dual scan failed: ${error.message}`);
   }
+}
+
+/**
+ * Force-sanitizes every existing file in the Scanned Pleadings drive.
+ * Useful when filenames already contain duplicate dates or other formatting
+ * errors that the normal daily scan may not catch.
+ */
+function cleanExistingPleadingNames() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    "🧹 Fix Existing Pleading Names",
+    "This will scan ALL existing files in the Scanned Pleadings drive and re-sanitize any filenames that contain duplicate dates or other formatting issues.\n\n• It uses the same AI + fallback logic as normal scans\n• Only files whose names would actually change are renamed\n• The spreadsheet and stored index are updated automatically\n\nProceed?",
+    ui.ButtonSet.YES_NO,
+  );
+  if (response !== ui.Button.YES) return;
+
+  const driveId = getConfigValue("SCANNED_PLEADINGS_DRIVE_ID");
+  if (!driveId) {
+    ui.alert(
+      "❌ Scanned Pleadings Drive ID is not configured.\n\nPlease set it first via: 📂 Configure Drives → ⚖️ Set Scanned Pleadings Drive ID",
+    );
+    return;
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEETS.SUMMARY_PLEADINGS);
+  let renamedCount = 0;
+  let skippedCount = 0;
+  let errorCount = 0;
+  const fileIndex = {};
+
+  try {
+    const rootFolder = retryDriveOperation(() =>
+      DriveApp.getFolderById(driveId),
+    );
+    const rootFolderName = rootFolder.getName();
+    const foldersToScan = [{ folder: rootFolder, path: "/" + rootFolderName }];
+
+    while (foldersToScan.length > 0) {
+      const { folder, path } = foldersToScan.pop();
+
+      try {
+        const files = retryDriveOperation(() => folder.getFiles());
+        while (files.hasNext()) {
+          const file = files.next();
+          if (isSystemOrTempFile(file.getName())) continue;
+
+          try {
+            const fileInfo = getFileInfoEnhanced(
+              file,
+              path,
+              CONFIG.DRIVE_TYPES.PLEADINGS,
+              rootFolderName,
+            );
+            fileIndex[fileInfo.id] = fileInfo;
+
+            const currentName = file.getName();
+            const cleanName = fileInfo.suggestedName || currentName;
+
+            if (cleanName && cleanName !== currentName) {
+              file.setName(cleanName);
+              applyPleadingSuggestedName(fileInfo, cleanName);
+
+              const existingMatch = findRowByFileId(sheet, fileInfo.id);
+              if (existingMatch) {
+                updateExistingPleadingName(
+                  sheet,
+                  existingMatch.rowIndex,
+                  cleanName,
+                  fileInfo.id,
+                );
+              } else {
+                addFileToPleadingsSheet(fileInfo);
+              }
+
+              logEvent(
+                "NAME_CLEANED",
+                CONFIG.DRIVE_TYPES.PLEADINGS,
+                fileInfo.id,
+                cleanName,
+                fileInfo.lastModifiedByEmail || "",
+                `Cleaned pleading name: "${currentName}" → "${cleanName}"`,
+                "SUCCESS",
+              );
+              renamedCount++;
+            } else {
+              skippedCount++;
+            }
+
+            if ((renamedCount + skippedCount) % 10 === 0) {
+              Utilities.sleep(CONFIG.API_DELAY_MS);
+            }
+          } catch (fileError) {
+            errorCount++;
+            logEvent(
+              "ERROR",
+              CONFIG.DRIVE_TYPES.PLEADINGS,
+              file.getId(),
+              file.getName(),
+              "",
+              `Clean failed: ${fileError.message}`,
+              "ERROR",
+              fileError.message,
+            );
+          }
+        }
+
+        const subfolders = retryDriveOperation(() => folder.getFolders());
+        while (subfolders.hasNext()) {
+          const subfolder = subfolders.next();
+          foldersToScan.push({
+            folder: subfolder,
+            path: path + "/" + subfolder.getName(),
+          });
+        }
+      } catch (folderError) {
+        errorCount++;
+        logEvent(
+          "ERROR",
+          CONFIG.DRIVE_TYPES.PLEADINGS,
+          "",
+          "",
+          "",
+          `Folder error: ${folderError.message}`,
+          "ERROR",
+          folderError.message,
+        );
+      }
+    }
+
+    setConfigValue("PLEADINGS_FILE_INDEX", JSON.stringify(fileIndex));
+    setConfigValue("LAST_NAME_CLEANUP", new Date().toISOString());
+
+    ui.alert(
+      `🧹 Name Cleanup Complete!\n\n` +
+        `• Renamed: ${renamedCount}\n` +
+        `• Already clean: ${skippedCount}\n` +
+        `• Errors: ${errorCount}\n\n` +
+        `The stored file index has been refreshed. Future daily scans will use these updated names as the baseline.`,
+    );
+  } catch (error) {
+    logEvent(
+      "ERROR",
+      CONFIG.DRIVE_TYPES.PLEADINGS,
+      "",
+      "",
+      "",
+      `Name cleanup failed: ${error.message}`,
+      "ERROR",
+      error.message,
+    );
+    ui.alert(`❌ Name cleanup failed: ${error.message}`);
+  }
+}
+
+/**
+ * Robust helper to locate a sheet row by Drive file ID.
+ * Searches all columns (including HYPERLINK formulas) so it works
+ * regardless of whether column 2 or 3 holds the file URL.
+ */
+function findRowByFileId(sheet, fileId) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const matches = sheet.createTextFinder(fileId).findAll();
+  if (matches.length > 0) {
+    const row = matches[0].getRow();
+    const data = sheet
+      .getRange(row, 1, 1, PLEADINGS_HEADERS.length)
+      .getValues()[0];
+    return { rowIndex: row, data: data };
+  }
+  return null;
 }
 
 /**

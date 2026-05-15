@@ -16,7 +16,7 @@ var CONFIG = {
   DATA_START_ROW: 3,
   TRIGGER_HOUR: 8,
   REPLY_SCAN_TRIGGER_HOUR: 9,
-  SENDER_NAME: "Office",
+  SENDER_NAME: "",
   STATIC_REDIRECT_URL: "https://pastebin.com/8n85J6k6",
 };
 

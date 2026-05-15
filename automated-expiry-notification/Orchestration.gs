@@ -419,7 +419,7 @@ function runDailyCheckLocked_() {
   // Emails are always sent FROM the automation runner's account.
   // Staff emails are CC'd — no "Send mail as" alias needed.
   var senderEmail = getSenderAccountEmail();
-  var displayName = CONFIG.SENDER_NAME;
+  var displayName = getSenderDisplayName(senderEmail);
 
   // Buffered log writer — one setValues flush per tab instead of N appendRow calls.
   var logBuffer = createLogBuffer(logsSheet);

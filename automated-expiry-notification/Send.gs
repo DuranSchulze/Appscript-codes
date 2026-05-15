@@ -403,7 +403,12 @@ function extractDriveFileId(urlOrId) {
   if (m) return m[1];
 
   // Assume raw ID if it looks like one (alphanumeric + _ -)
-  if (/^[a-zA-Z0-9_-]{20,}$/.test(s)) return s;
+  m = s.match(/^[a-zA-Z0-9_-]{20,}$/);
+  if (m) return m[0];
+
+  // sometimes it's just the ID buried in other text
+  m = s.match(/([a-zA-Z0-9_-]{20,})/);
+  if (m) return m[1];
 
   return null;
 }
@@ -434,19 +439,19 @@ function exportWorkspaceFileBlob(file) {
 
   try {
     if (mime === "application/vnd.google-apps.document") {
-      exportBlob = file.getAs("application/pdf");
+      exportBlob = file.getAs(MimeType.PDF);
     } else if (mime === "application/vnd.google-apps.spreadsheet") {
-      exportBlob = file.getAs("application/pdf");
+      exportBlob = file.getAs(MimeType.PDF);
     } else if (mime === "application/vnd.google-apps.presentation") {
-      exportBlob = file.getAs("application/pdf");
+      exportBlob = file.getAs(MimeType.PDF);
     } else if (mime === "application/vnd.google-apps.drawing") {
-      exportBlob = file.getAs("image/png");
+      exportBlob = file.getAs(MimeType.PNG);
     } else if (mime === "application/vnd.google-apps.form") {
       // Forms have no meaningful binary export; skip
       return null;
     } else {
       // Try generic PDF export for other Workspace types
-      exportBlob = file.getAs("application/pdf");
+      exportBlob = file.getAs(MimeType.PDF);
     }
   } catch (e) {
     return null;
@@ -494,13 +499,29 @@ function resolveAttachments(rawField) {
   var warnings = [];
   var failedLinks = [];
   var successLinks = [];
+  var totalAttachmentSize = 0;
+  var MAX_TOTAL_SIZE = 25 * 1024 * 1024; // 25 MB
 
   for (var i = 0; i < entries.length; i++) {
     var entry = entries[i];
     var fileId = extractDriveFileId(entry);
 
     if (!fileId) {
-      warnings.push('Cannot parse Drive file ID from: "' + entry + '"');
+      // Fallback: Try to search Drive for the file by exact name
+      try {
+        var files = DriveApp.getFilesByName(entry);
+        if (files.hasNext()) {
+          fileId = files.next().getId();
+        }
+      } catch (e) {
+        // Ignore search errors and let it fail below
+      }
+    }
+
+    if (!fileId) {
+      warnings.push(
+        'Cannot parse Drive file ID or find file by name for: "' + entry + '"',
+      );
       failedLinks.push({ label: entry, url: null });
       continue;
     }
@@ -516,6 +537,7 @@ function resolveAttachments(rawField) {
       var file = DriveApp.getFileById(fileId);
       var blob = null;
       fileName = String(file.getName() || "attachment");
+      originalUrl = file.getUrl() || originalUrl;
 
       if (isGoogleWorkspaceFile(file)) {
         blob = exportWorkspaceFileBlob(file);
@@ -534,7 +556,8 @@ function resolveAttachments(rawField) {
         blob = file.getBlob();
       }
 
-      if (!blob || blob.getBytes().length === 0) {
+      var bytes = blob ? blob.getBytes() : null;
+      if (!bytes || bytes.length === 0) {
         warnings.push(
           'File "' +
             fileName +
@@ -545,6 +568,20 @@ function resolveAttachments(rawField) {
         failedLinks.push({ label: fileName, url: originalUrl });
         continue;
       }
+
+      if (totalAttachmentSize + bytes.length > MAX_TOTAL_SIZE) {
+        warnings.push(
+          'File "' +
+            fileName +
+            '" exceeds the 25MB total attachment limit and will only be included as a link (ID: ' +
+            fileId +
+            ")",
+        );
+        failedLinks.push({ label: fileName, url: originalUrl });
+        continue;
+      }
+
+      totalAttachmentSize += bytes.length;
 
       blobs.push({
         blob: blob,
@@ -965,14 +1002,14 @@ function getSenderAccountEmail() {
 function getSenderDisplayName(email) {
   var raw = String(email || "").trim();
   var atIndex = raw.indexOf("@");
-  if (atIndex < 0) return CONFIG.SENDER_NAME;
+  if (atIndex < 0) return "";
 
   var domain = raw.slice(atIndex + 1).toLowerCase();
-  if (domain === "filepino.com") return "FILEPINO";
-  if (domain === "duranschulze.com") return "DuranSchulze";
+  if (domain === "filepino.com") return "FilePino, Inc.";
+  if (domain === "duranschulze.com") return "Duran & Duran-Schulze Law";
 
   var domainBase = domain.split(".")[0];
-  if (!domainBase) return CONFIG.SENDER_NAME;
+  if (!domainBase) return "";
 
   return domainBase.charAt(0).toUpperCase() + domainBase.slice(1).toLowerCase();
 }
@@ -988,8 +1025,8 @@ function sendReminderEmail(
 ) {
   var options = {
     htmlBody: htmlBody,
-    name: senderName || CONFIG.SENDER_NAME,
   };
+  if (senderName) options.name = senderName;
 
   // From-address must be a verified Gmail alias of the script runner.
   // Caller is responsible for that check; we just pass it through.
