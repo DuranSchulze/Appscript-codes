@@ -424,6 +424,15 @@ function runDailyCheckLocked_() {
   // Buffered log writer — one setValues flush per tab instead of N appendRow calls.
   var logBuffer = createLogBuffer(logsSheet);
 
+  logBuffer.add(
+    "",
+    "",
+    "INFO",
+    "Automation run started by: " + (senderEmail || "(unknown)") +
+      " | Tabs queued: " + sheetConfigs.length,
+  );
+  logBuffer.flush();
+
   var totalAllTabs = 0,
     sentAllTabs = 0,
     errorsAllTabs = 0;
@@ -741,6 +750,7 @@ function runDailyCheckLocked_() {
             threadId: noticeMeta.threadId,
             messageId: noticeMeta.messageId,
           });
+          applyGmailLabelToThread(tabName, noticeMeta.threadId);
 
           if (sameDayFinal && shouldSendFinal) {
             colMap = ensureFinalNoticeColumns(visaSheet, tabName, colMap);
@@ -821,6 +831,7 @@ function runDailyCheckLocked_() {
             threadId: finalMeta.threadId,
             messageId: finalMeta.messageId,
           });
+          applyGmailLabelToThread(tabName, finalMeta.threadId);
 
           if (!isStatusNoticeSent(status) && !shouldSendNotice) {
             colMap = ensureReplyStatusColumn(visaSheet, tabName, colMap);

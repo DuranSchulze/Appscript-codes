@@ -1381,6 +1381,56 @@ function manualSendRow() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AutomationRunner — show who owns and runs this automation
+// ═══════════════════════════════════════════════════════════════════════════
+
+function showAutomationRunner() {
+  var ui = SpreadsheetApp.getUi();
+  var runnerEmail = getSenderAccountEmail();
+  var displayName = getSenderDisplayName(runnerEmail || "");
+
+  resetVerifiedSenderAliasCache();
+  var aliases = listVerifiedSenderAliases();
+
+  var dailyTriggers = getTriggersByHandler("runDailyCheck");
+  var replyTriggers = getTriggersByHandler("runReplyScan");
+
+  var lines = [
+    "=== Automation Runner ===",
+    "",
+    "Runner Account : " + (runnerEmail || "(unknown)"),
+    "Display Name   : " + (displayName || CONFIG.SENDER_NAME),
+    "",
+    "Daily Trigger  : " +
+      (dailyTriggers.length > 0
+        ? "ACTIVE — fires at " +
+          formatDailyTriggerTime(getDailyTriggerHour(), getDailyTriggerMinute()) +
+          " PHT"
+        : "INACTIVE (no trigger installed)"),
+    "Reply Scan     : " +
+      (replyTriggers.length > 0
+        ? "ACTIVE (" + replyTriggers.length + " trigger(s))"
+        : "INACTIVE"),
+    "",
+    "=== Verified Send-As Aliases ===",
+  ];
+
+  if (aliases.length === 0) {
+    lines.push("(none found)");
+  } else {
+    for (var i = 0; i < aliases.length; i++) {
+      lines.push("  • " + aliases[i]);
+    }
+  }
+
+  lines.push("");
+  lines.push("All automated emails are sent FROM the runner account above.");
+  lines.push("Assigned Staff Email on each row is included as CC only.");
+
+  ui.alert("Automation Runner", lines.join("\n"), ui.ButtonSet.OK);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // HealthCheck — verify daily trigger + staff Send-As alias coverage
 // ═══════════════════════════════════════════════════════════════════════════
 

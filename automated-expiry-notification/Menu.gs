@@ -26,6 +26,11 @@ var ROOT_MENU_SPEC = [
         fn: "checkScheduleStatus",
       },
       { type: "item", label: "Show All Tabs Info", fn: "showAllTabsInfo" },
+      {
+        type: "item",
+        label: "Who Runs This Automation?",
+        fn: "showAutomationRunner",
+      },
     ],
   },
   { type: "separator" },

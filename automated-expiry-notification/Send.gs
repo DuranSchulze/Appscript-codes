@@ -836,7 +836,8 @@ function replaceGenericTemplateTokens(templateText, templateContext) {
 
 function buildEmailSubject(docType, clientName, expiryDate, tabTitle) {
   if (typeof tabTitle !== "undefined" && tabTitle && String(tabTitle).trim()) {
-    return "Reminder: " + String(tabTitle).trim();
+    var namePrefix = clientName ? clientName + " \u2013 " : "";
+    return "Reminder: " + namePrefix + "reminder for " + String(tabTitle).trim();
   }
 
   var docLabel = docType ? docType : "Visa/Permit";
@@ -1098,4 +1099,33 @@ function lookupRecentSentMessageMeta(clientEmail, subject) {
 
 function escapeForQuotedPrintable(value) {
   return String(value || "").replace(/"/g, '\\"');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GmailLabels — auto-label sent threads with the sheet tab name
+// ═══════════════════════════════════════════════════════════════════════════
+
+function getOrCreateGmailLabel_(name) {
+  if (!name) return null;
+  try {
+    var existing = GmailApp.getUserLabelByName(name);
+    if (existing) return existing;
+    return GmailApp.createLabel(name);
+  } catch (e) {
+    Logger.log("getOrCreateGmailLabel_ failed for '" + name + "': " + e.message);
+    return null;
+  }
+}
+
+function applyGmailLabelToThread(labelName, threadId) {
+  if (!labelName || !threadId) return;
+  try {
+    var label = getOrCreateGmailLabel_(labelName);
+    if (!label) return;
+    var thread = GmailApp.getThreadById(threadId);
+    if (!thread) return;
+    label.addToThread(thread);
+  } catch (e) {
+    Logger.log("applyGmailLabelToThread failed: " + e.message);
+  }
 }
