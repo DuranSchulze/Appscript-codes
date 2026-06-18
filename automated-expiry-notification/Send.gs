@@ -773,7 +773,9 @@ function buildEmailBody(remarks, clientName, expiryDate, docType, tabTitle) {
 
 function buildStageSubject(baseSubject, stage) {
   if (stage === "final") {
-    return "Final Reminder: " + baseSubject + " (Expires Today)";
+    // Strip leading "Reminder:" from baseSubject to avoid duplication
+    var cleanSubject = baseSubject.replace(/^Reminder:\s*/i, "");
+    return "Final Reminder: " + cleanSubject;
   }
   return baseSubject;
 }
@@ -874,7 +876,7 @@ function replaceGenericTemplateTokens(templateText, templateContext) {
 function buildEmailSubject(docType, clientName, expiryDate, tabTitle) {
   if (typeof tabTitle !== "undefined" && tabTitle && String(tabTitle).trim()) {
     var namePrefix = clientName ? clientName + " \u2013 " : "";
-    return "Reminder: " + namePrefix + "reminder for " + String(tabTitle).trim();
+    return "Reminder: " + namePrefix + String(tabTitle).trim();
   }
 
   var docLabel = docType ? docType : "Visa/Permit";

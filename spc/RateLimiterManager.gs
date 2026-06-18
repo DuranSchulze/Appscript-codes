@@ -26,11 +26,16 @@ const RateLimiterManager = {
     if (!state || !state.lastResetDate) {
       state = {
         requestTimes: [],
+        tokenEvents: [],
         tokenCount: 0,
         dailyRequestCount: 0,
         lastResetDate: new Date().toDateString(),
         lastRequestTime: 0,
       };
+    }
+
+    if (!state.tokenEvents) {
+      state.tokenEvents = [];
     }
 
     // Reset daily counter if new day
@@ -45,6 +50,13 @@ const RateLimiterManager = {
     const oneMinuteAgo = now - 60000;
     state.requestTimes = state.requestTimes.filter(
       (time) => time > oneMinuteAgo,
+    );
+    state.tokenEvents = state.tokenEvents.filter(
+      (event) => event.time > oneMinuteAgo,
+    );
+    state.tokenCount = state.tokenEvents.reduce(
+      (total, event) => total + (event.tokens || 0),
+      0,
     );
 
     return state;
@@ -124,6 +136,7 @@ const RateLimiterManager = {
     const now = Date.now();
 
     state.requestTimes.push(now);
+    state.tokenEvents.push({ time: now, tokens: tokensUsed });
     state.tokenCount += tokensUsed;
     state.dailyRequestCount++;
     state.lastRequestTime = now;
