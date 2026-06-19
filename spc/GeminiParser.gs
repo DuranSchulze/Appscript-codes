@@ -57,47 +57,57 @@ var GeminiParser = {
     });
   },
 
-  getVoucherResponseSchema() {
-    const voucherProperties = {
-      voucherNo: {
-        type: "string",
+  getExtractionFields() {
+    return [
+      {
+        key: "voucherNo",
         description:
-          "Voucher reference number. Use an empty string if not visible.",
+          "voucher reference number from the top-right voucher header; keep partial values exactly as shown",
       },
-      company: {
+      {
+        key: "company",
+        description: "text after COMPANY",
+      },
+      {
+        key: "errandDate",
+        description: "date after ERRAND DATE; return YYYY-MM-DD",
+      },
+      {
+        key: "errandBy",
+        description: "person in the ERRAND BY column",
+      },
+      {
+        key: "service",
+        description: "SERVICE column value",
+      },
+      {
+        key: "details",
+        description: "DETAILS column value; keep concise",
+      },
+      {
+        key: "mainLocation",
+        description: "text after Main Location of Errand",
+      },
+      {
+        key: "total",
+        description: "AMOUNT column value only; no currency symbol or comma",
+      },
+      {
+        key: "expenseClassification",
+        description: "EXPENSE CLASSIFICATION field value",
+      },
+    ];
+  },
+
+  getVoucherResponseSchema() {
+    const voucherProperties = {};
+    const fields = this.getExtractionFields();
+    fields.forEach((field) => {
+      voucherProperties[field.key] = {
         type: "string",
-        description: "Client or company from the COMPANY field.",
-      },
-      errandDate: {
-        type: "string",
-        format: "date",
-        description: "Errand date in YYYY-MM-DD format.",
-      },
-      errandBy: {
-        type: "string",
-        description: "Person named in the ERRAND BY column.",
-      },
-      service: {
-        type: "string",
-        description: "Service value from the voucher table.",
-      },
-      details: {
-        type: "string",
-        description: "Transaction or errand details.",
-      },
-      mainLocation: {
-        type: "string",
-        description: "Main Location of Errand value.",
-      },
-      total: {
-        type: "string",
-        description: "Amount only, without currency symbols or commas.",
-      },
-      expenseClassification: {
-        type: "string",
-        description: "Expense classification field value.",
-      },
-    };
+        description: field.description,
+      };
+    });
 
     return {
       type: "array",
@@ -105,11 +115,60 @@ var GeminiParser = {
       items: {
         type: "object",
         properties: voucherProperties,
-        required: Object.keys(voucherProperties),
-        propertyOrdering: Object.keys(voucherProperties),
+        required: fields.map((field) => field.key),
+        propertyOrdering: fields.map((field) => field.key),
         additionalProperties: false,
       },
     };
+  },
+
+  buildTargetedExtractionPrompt() {
+    const fieldList = this.getExtractionFields()
+      .map((field) => `- ${field.key}: ${field.description}`)
+      .join("\n");
+
+    return `Extract petty cash voucher rows only.
+
+Target fields:
+${fieldList}
+
+Rules:
+- Search only for the target fields above.
+- Do not transcribe, summarize, or describe unrelated page content.
+- If a page has a summary/list and no actual voucher form rows, ignore that page.
+- Return one JSON object per voucher row.
+- Use empty strings for missing fields.
+- Return an empty JSON array if no voucher rows are found.`;
+  },
+
+  logFileSizeGuidance(file, fileContent) {
+    const sizeMb = (fileContent.sizeBytes || 0) / (1024 * 1024);
+    if (!sizeMb) return;
+
+    if (fileContent.type === "image" && sizeMb > 18) {
+      Logger.log(
+        `Large image detected (${sizeMb.toFixed(1)} MB): ${file.getName()}. Compress or split this file if Gemini returns size or quota errors.`,
+        "WARNING",
+      );
+      showToast(
+        `${file.getName()} is a large image. Compress/split if parsing fails.`,
+        "Large File Warning",
+        8,
+      );
+      return;
+    }
+
+    if (fileContent.type === "pdf" && sizeMb > 25) {
+      Logger.log(
+        `Large PDF detected (${sizeMb.toFixed(1)} MB): ${file.getName()}. Multi-page PDFs use document tokens per page; split very large batches for faster processing.`,
+        "WARNING",
+      );
+      showToast(
+        `${file.getName()} is a large PDF. Split huge batches for faster parsing.`,
+        "Large File Warning",
+        8,
+      );
+    }
   },
 
   maskApiKeyInText(text) {
@@ -132,54 +191,10 @@ var GeminiParser = {
    */
   parseMultipleVouchers(file, apiKey) {
     const fileContent = DriveManager.getFileContent(file);
+    this.logFileSizeGuidance(file, fileContent);
     const modelSequence = this.getModelSequence();
     const errors = [];
-
-    const prompt = `You are analyzing a PETTY CASH VOUCHER LIQUIDATION FORM v10.2024.
-
-Extract the following information for EACH voucher entry in this document. Each voucher is a separate row in the table.
-
-CRITICAL FIELD MAPPING:
-1. voucherNo: The voucher reference number in top-right (format: YYYY-###-X or partial like "OO1" which means "001")
-2. company: The text after "COMPANY:" field
-3. errandDate: The date after "ERRAND DATE:" field (format MM/DD/YYYY or M/D/YYYY)
-4. errandBy: The text in "ERRAND BY" column (person's name)
-5. service: The text in "SERVICE" column
-6. details: The text in "DETAILS" column (description of transaction)
-7. mainLocation: The text after "Main Location of Errand:" label at bottom (usually highlighted in yellow)
-8. total: The amount in "AMOUNT" column on the right (numeric value only, no currency symbol)
-9. expenseClassification: The text in "EXPENSE CLASSIFICATION" field at bottom-left (often highlighted in red box)
-
-IMPORTANT EXTRACTION RULES:
-- If voucherNo is partial like "OO1" or "001-C", extract as shown
-- errandDate must be in YYYY-MM-DD format (convert from MM/DD/YYYY)
-- mainLocation is found AFTER the text "Main Location of Errand:" (check yellow highlighted areas)
-- expenseClassification is found in the box labeled "EXPENSE CLASSIFICATION" (check red boxed areas)
-- total should be numeric only (remove "P" or peso signs)
-- Extract ALL vouchers in the document (multiple rows if present)
-
-If a document contains a summary section or list of vouchers at the top:
-- DO NOT extract the summary/list as individual vouchers
-- Only extract data from the actual voucher forms with the table structure
-- If you detect a summary section without actual voucher forms, return an empty JSON array.
-- Return only voucher form rows, never summary rows.
-
-Return a JSON array shaped like this:
-[
-  {
-    "voucherNo": "2025-001-C",
-    "company": "DDS",
-    "errandDate": "2025-08-17",
-    "errandBy": "shaira",
-    "service": "Admin",
-    "details": "Transmit letter to RTC re change of filed notary documents",
-    "mainLocation": "Taguig",
-    "total": "100",
-    "expenseClassification": "Gas-allowance"
-  }
-]
-
-Now extract from this document:`;
+    const prompt = this.buildTargetedExtractionPrompt();
 
     for (const modelName of modelSequence) {
       try {
@@ -189,6 +204,7 @@ Now extract from this document:`;
           apiKey,
           0,
           modelName,
+          true,
           true,
         );
 
@@ -250,6 +266,7 @@ Now extract from this document:`;
     retryCount = 0,
     modelNameOverride = null,
     useStructuredOutput = true,
+    useMediaResolution = true,
   ) {
     const modelName = modelNameOverride || this.getModelName();
 
@@ -285,8 +302,12 @@ Now extract from this document:`;
         temperature: 0,
         topK: 16,
         topP: 0.8,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 2048,
       };
+
+      if (useMediaResolution) {
+        generationConfig.mediaResolution = "MEDIA_RESOLUTION_MEDIUM";
+      }
 
       if (useStructuredOutput) {
         generationConfig.responseFormat = {
@@ -421,6 +442,7 @@ Now extract from this document:`;
           retryCount + 1,
           modelName,
           useStructuredOutput,
+          useMediaResolution,
         );
       }
 
@@ -441,6 +463,30 @@ Now extract from this document:`;
             apiKey,
             retryCount,
             modelName,
+            false,
+            useMediaResolution,
+          );
+        }
+      }
+
+      if (responseCode === 400 && useMediaResolution) {
+        const errorMessage = errorResponse.error?.message || responseText;
+        if (
+          errorMessage.includes("mediaResolution") ||
+          errorMessage.includes("media_resolution") ||
+          errorMessage.includes("MediaResolution")
+        ) {
+          Logger.log(
+            `Media resolution setting unavailable for ${modelName}; retrying without it`,
+            "WARNING",
+          );
+          return this.callGeminiVision(
+            fileContent,
+            prompt,
+            apiKey,
+            retryCount,
+            modelName,
+            useStructuredOutput,
             false,
           );
         }
@@ -477,6 +523,7 @@ Now extract from this document:`;
           retryCount + 1,
           modelName,
           useStructuredOutput,
+          useMediaResolution,
         );
       }
 
@@ -527,6 +574,7 @@ Now extract from this document:`;
           retryCount + 1,
           modelName,
           useStructuredOutput,
+          useMediaResolution,
         );
       }
 

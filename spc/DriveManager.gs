@@ -21,6 +21,8 @@ const DriveManager = {
         "xls",
         "xlsx",
       ],
+      MAX_PDF_SIZE_BYTES: 50 * 1024 * 1024,
+      MAX_PDF_PAGES: 1000,
     };
   },
   createOrGetDateSubfolder(processedDate) {
@@ -150,6 +152,99 @@ const DriveManager = {
       throw new Error(`Failed to get unprocessed files: ${error.message}`);
     }
   },
+  getFileExtension(file) {
+    const fileName = file.getName().toLowerCase();
+    const parts = fileName.split(".");
+    return parts.length > 1 ? parts.pop() : "";
+  },
+  isPdfFile(file) {
+    return (
+      this.getFileExtension(file) === "pdf" ||
+      file.getMimeType() === MimeType.PDF ||
+      file.getMimeType() === "application/pdf"
+    );
+  },
+  countPdfPages(file) {
+    try {
+      if (!this.isPdfFile(file)) {
+        return null;
+      }
+
+      const pdfText = file.getBlob().getDataAsString("ISO-8859-1");
+      const matches = pdfText.match(/\/Type\s*\/Page\b/g);
+      return matches ? matches.length : null;
+    } catch (error) {
+      console.warn(`Failed to count PDF pages for ${file.getName()}:`, error);
+      return null;
+    }
+  },
+  getFileAuditInfo(file, includePageCount = true) {
+    const CONFIG = this.getConfig();
+    const sizeBytes = file.getSize();
+    const isPdf = this.isPdfFile(file);
+    const pageCount =
+      isPdf && includePageCount && sizeBytes <= CONFIG.MAX_PDF_SIZE_BYTES
+        ? this.countPdfPages(file)
+        : null;
+    const issues = [];
+
+    if (isPdf && sizeBytes > CONFIG.MAX_PDF_SIZE_BYTES) {
+      issues.push(
+        `PDF is ${(sizeBytes / (1024 * 1024)).toFixed(1)} MB; Gemini PDF limit is 50 MB`,
+      );
+    }
+
+    if (isPdf && pageCount !== null && pageCount > CONFIG.MAX_PDF_PAGES) {
+      issues.push(
+        `PDF has ${pageCount} pages; Gemini PDF limit is 1000 pages`,
+      );
+    }
+
+    return {
+      name: file.getName(),
+      url: this.getFileUrl(file),
+      extension: this.getFileExtension(file),
+      mimeType: file.getMimeType(),
+      sizeBytes,
+      sizeMb: sizeBytes / (1024 * 1024),
+      isPdf,
+      pageCount,
+      canProcess: issues.length === 0,
+      issues,
+    };
+  },
+  validateFileForGemini(file) {
+    return this.getFileAuditInfo(file, true);
+  },
+  auditUnprocessedFiles() {
+    const files = this.getUnprocessedFiles();
+    const auditRows = [];
+    let totalPages = 0;
+    let countedPdfFiles = 0;
+    let filesOverLimit = 0;
+
+    files.forEach((file) => {
+      const audit = this.getFileAuditInfo(file, true);
+      auditRows.push(audit);
+
+      if (audit.pageCount !== null) {
+        totalPages += audit.pageCount;
+        countedPdfFiles++;
+      }
+
+      if (!audit.canProcess) {
+        filesOverLimit++;
+      }
+    });
+
+    return {
+      totalFiles: files.length,
+      totalPages,
+      countedPdfFiles,
+      filesOverLimit,
+      rows: auditRows,
+    };
+  },
   renameProcessedFile(file, voucherData, addProcessedTag = false) {
     try {
       const voucherNo = voucherData.voucherNo || "NO_VOUCHER";
@@ -232,6 +327,7 @@ const DriveManager = {
         type: contentType,
         data: blob,
         mimeType: mimeType,
+        sizeBytes: file.getSize(),
       };
     } catch (error) {
       throw new Error(`Failed to get file content: ${error.message}`);

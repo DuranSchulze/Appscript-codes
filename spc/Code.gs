@@ -116,6 +116,7 @@ function onOpen() {
       .addItem("🔑 Set Gemini API Key", "setGeminiApiKey")
       .addItem("📁 Configure Drive Folder", "configureDriveFolder")
       .addSeparator()
+      .addItem("📄 Check Drive Files", "checkDriveFiles")
       .addItem("📋 View Processing Log", "showProcessingLog")
       .addItem("ℹ️ System Info", "showSystemInfo")
       .addItem("📊 Rate Limiter Status", "testRateLimiter");
@@ -864,6 +865,22 @@ function processNewFiles() {
           8,
         );
 
+        const fileAudit = DriveManager.validateFileForGemini(file);
+        if (!fileAudit.canProcess) {
+          const issueText = fileAudit.issues.join("; ");
+          filesWithErrors++;
+          showToast(
+            `${originalFileName} cannot be processed: ${issueText}`,
+            "Gemini File Limit",
+            10,
+          );
+          Logger.log(
+            `Skipped ${originalFileName}: ${issueText}`,
+            "WARNING",
+          );
+          continue;
+        }
+
         // Rate limiting
         if (filesProcessed > 1) {
           showToast("Waiting briefly to avoid Gemini quota errors.", "Rate Limit", 5);
@@ -1086,6 +1103,102 @@ function showProcessingLog() {
       "Processing log not found. Run Setup System first.",
       SpreadsheetApp.getUi().ButtonSet.OK,
     );
+  }
+}
+
+/**
+ * Check unprocessed Drive files before running Gemini.
+ */
+function checkDriveFiles() {
+  const ui = SpreadsheetApp.getUi();
+
+  try {
+    const scriptProps = PropertiesService.getScriptProperties();
+    const driveFolderId = scriptProps.getProperty("DRIVE_FOLDER_ID");
+
+    if (!driveFolderId) {
+      showToast("Drive folder is not configured yet.", "Setup Required", 8);
+      ui.alert(
+        "❌ Configuration Required",
+        "Drive Folder not configured!\n\nPlease run:\nLiquidation System > Configure Drive Folder",
+        ui.ButtonSet.OK,
+      );
+      return;
+    }
+
+    showToast("Checking file sizes and PDF page counts.", "Drive File Check", 8);
+    const audit = DriveManager.auditUnprocessedFiles();
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheetName = "Drive File Check";
+    let sheet = spreadsheet.getSheetByName(sheetName);
+
+    if (!sheet) {
+      sheet = spreadsheet.insertSheet(sheetName);
+    } else {
+      sheet.clear();
+    }
+
+    const headers = [
+      "Filename",
+      "Type",
+      "Size (MB)",
+      "PDF Pages",
+      "Can Process?",
+      "Issue",
+      "File Link",
+    ];
+
+    const rows = audit.rows.map((row) => [
+      row.name,
+      row.extension || row.mimeType,
+      row.sizeMb.toFixed(2),
+      row.pageCount === null ? "N/A" : row.pageCount,
+      row.canProcess ? "YES" : "NO",
+      row.issues.join("; "),
+      row.url,
+    ]);
+
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+
+    if (rows.length) {
+      sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+      sheet.autoResizeColumns(1, headers.length);
+
+      for (let i = 0; i < audit.rows.length; i++) {
+        const rowNumber = i + 2;
+        if (!audit.rows[i].canProcess) {
+          sheet.getRange(rowNumber, 1, 1, headers.length).setBackground("#f4c7c3");
+        } else if (audit.rows[i].isPdf) {
+          sheet.getRange(rowNumber, 1, 1, headers.length).setBackground("#e8f4fd");
+        }
+      }
+    }
+
+    spreadsheet.setActiveSheet(sheet);
+
+    const message =
+      `Drive File Check Complete\n\n` +
+      `Files found: ${audit.totalFiles}\n` +
+      `PDFs counted: ${audit.countedPdfFiles}\n` +
+      `Total counted PDF pages: ${audit.totalPages}\n` +
+      `Files over Gemini limits: ${audit.filesOverLimit}\n\n` +
+      `Gemini PDF limits:\n` +
+      `- Maximum size: 50 MB\n` +
+      `- Maximum pages: 1000 pages\n\n` +
+      `Details were written to the "${sheetName}" sheet.`;
+
+    showToast(
+      `${audit.totalFiles} file(s), ${audit.totalPages} counted PDF page(s), ${audit.filesOverLimit} over limit.`,
+      "Drive File Check Complete",
+      10,
+    );
+    ui.alert("📄 Drive File Check", message, ui.ButtonSet.OK);
+  } catch (error) {
+    Logger.log(`Drive file check failed: ${error.message}`, "ERROR");
+    showToast(error.message, "Drive File Check Failed", 10);
+    ui.alert("❌ Drive File Check Failed", error.message, ui.ButtonSet.OK);
   }
 }
 
