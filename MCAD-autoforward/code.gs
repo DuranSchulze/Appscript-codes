@@ -205,6 +205,14 @@ function monitorAndForwardSecEmails() {
       properties.getProperty(CONFIG.STARTED_AT_KEY) || 0
     );
 
+    if (!startedAt) {
+      Logger.log(
+        "Automation is not initialized. Run " +
+        "setupSecEmailForwarding first."
+      );
+      return;
+    }
+
     const detectedLabel = getOrCreateLabel_(
       CONFIG.DETECTED_LABEL
     );
@@ -307,9 +315,6 @@ function monitorAndForwardSecEmails() {
         Logger.log(
           `Failed forwarding ${messageId}: ${error.message}`
         );
-
-        // Failed messages will be retried next time.
-        message.star();
 
         try {
           thread.addLabel(failedLabel);
@@ -828,12 +833,16 @@ function cleanupProcessedRecords_() {
  * Prevents duplicate automatic triggers.
  */
 function removeExistingTriggers_() {
+  const handlerFunctions = new Set([
+    "monitorAndForwardSecEmails",
+    "sendDailyAutoForwardSummary"
+  ]);
+
   for (
     const trigger of ScriptApp.getProjectTriggers()
   ) {
     if (
-      trigger.getHandlerFunction() ===
-      "monitorAndForwardSecEmails"
+      handlerFunctions.has(trigger.getHandlerFunction())
     ) {
       ScriptApp.deleteTrigger(trigger);
     }
@@ -851,6 +860,16 @@ function validateConfiguration_() {
   ) {
     throw new Error(
       "Trigger interval must be 1, 5, 10, 15, or 30 minutes."
+    );
+  }
+
+  if (
+    !Number.isInteger(CONFIG.SUMMARY_HOUR) ||
+    CONFIG.SUMMARY_HOUR < 0 ||
+    CONFIG.SUMMARY_HOUR > 23
+  ) {
+    throw new Error(
+      "Summary hour must be a whole number from 0 to 23."
     );
   }
 
@@ -901,6 +920,7 @@ function resetSecEmailForwarding() {
   for (const key of Object.keys(records)) {
     if (
       key.startsWith(CONFIG.PROCESSED_PREFIX) ||
+      key.startsWith(CONFIG.SUMMARY_RECORD_PREFIX) ||
       key === CONFIG.STARTED_AT_KEY
     ) {
       properties.deleteProperty(key);
