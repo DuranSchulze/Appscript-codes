@@ -1,3 +1,4 @@
+Code 1 GS
 WHEN EMAIL from -> noreply-cifssost@sec.gov.ph (GFFS, email validation, AFS)
 FORWARD TO EMAILS:
 felise@duranschulze.com
@@ -40,7 +41,7 @@ accounts.payable2@filepino.com
 
 
 ===============================================
-
+CODE 2 . GS
 WHEN EMAIL from -> e-corr@ipophl.gov.ph
 FORWARD TO EMAILS:
 Paula@duranschulze.com

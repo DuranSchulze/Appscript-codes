@@ -14,76 +14,17 @@ const CONFIG = {
   SUMMARY_HOUR: 23,
   SUMMARY_TIME_ZONE: "Asia/Manila",
 
+  // Paste the same shared Google Spreadsheet ID in both scripts.
+  RULES_SPREADSHEET_ID: "PASTE_SPREADSHEET_ID_HERE",
+  RULES_SHEET_NAME: "Rules - Code2.gs",
+
   ROOT_LABEL: "AutoForward",
   DETECTED_LABEL: "AutoForward/Detected",
   FORWARDED_LABEL: "AutoForward/Forwarded",
   FAILED_LABEL: "AutoForward/Failed",
 
+// Migration backup only. Live runs read RULES_SHEET_NAME instead.
 RULES: [
-  {
-    sender: "noreply-cifssost@sec.gov.ph",
-    keywords: [
-      "GFFS",
-      "email validation",
-      "AFS"
-    ],
-    recipients: [
-      "felise@duranschulze.com",
-      "stephanie@duranschulze.com",
-      "carlnathaniel@duranschulze.com",
-      "projects@filepino.com",
-      "alhyn@filepino.com",
-      "fatima@filepino.com",
-      "accounts@filepino.com",
-      "reception@filepino.com"
-    ]
-  },
-
-  {
-    sender: "no-reply@sec.gov.ph",
-    keywords: [
-      "eAmend",
-      "MC28",
-      "SEC general notice",
-      "SEC general notices",
-      "OTP"
-    ],
-    recipients: [
-      "felise@duranschulze.com",
-      "stephanie@duranschulze.com",
-      "carlnathaniel@duranschulze.com",
-      "projects@filepino.com",
-      "alhyn@filepino.com",
-      "fatima@filepino.com"
-    ]
-  },
-
-  {
-    sender: "service@intl.paypal.com",
-    keywords: [
-      "DDS",
-      "PayPal payment",
-      "payment received"
-    ],
-    recipients: [
-      "marywendy@duranschulze.com",
-      "billing@duranschulze.com"
-    ]
-  },
-
-  {
-    sender: "bpi_cards_estatement@bpi.com.ph",
-    keywords: [
-      "DDS CC",
-      "credit card",
-      "electronic statement",
-      "e-statement"
-    ],
-    recipients: [
-      "accounts.payable1@filepino.com"
-    ]
-  },
-
   {
     sender: "e-corr@ipophl.gov.ph",
 
@@ -98,11 +39,9 @@ RULES: [
 
   {
     sender: "msoa@metrobankcard.com",
-
-    // Forward all emails from this sender.
-    matchAll: true,
-    keywords: [],
-
+    keywords: [
+      "524005XXXXXXXXXX"
+    ],
     recipients: [
       "accounts.payable1@filepino.com",
       "irish@filepino.com",
@@ -133,12 +72,12 @@ RULES: [
   },
 
   {
-    sender: "zafajardo9@gmail.com",
+    sender: "no-reply2@globe.com.ph",
     keywords: [
-      "TEST"
+      "845274438"
     ],
     recipients: [
-      "seo@filepino.com"
+      "roselyn.salazar@lifetrackmed.com"
     ]
   }
 ]
@@ -341,7 +280,7 @@ function monitorAndForwardSecEmails() {
  * Searches for messages from every configured sender.
  */
 function getCandidateMessages_() {
-  const senderSearch = CONFIG.RULES
+  const senderSearch = getRules_()
     .map(rule => `from:${normalizeEmail_(rule.sender)}`)
     .join(" ");
 
@@ -426,7 +365,7 @@ function findMatchingRule_(message) {
     message.getFrom()
   );
 
-  for (const rule of CONFIG.RULES) {
+  for (const rule of getRules_()) {
     if (
       sender !== normalizeEmail_(rule.sender)
     ) {
@@ -522,6 +461,228 @@ function normalizeEmail_(email) {
     .trim()
     .toLowerCase();
 }
+
+
+let rulesCache_ = null;
+
+
+/**
+ * Loads the active forwarding rules from this script's assigned tab.
+ * The cache lasts only for the current Apps Script execution.
+ */
+function getRules_() {
+  if (!rulesCache_) {
+    rulesCache_ = loadRulesFromSheet_();
+  }
+
+  return rulesCache_;
+}
+
+
+function loadRulesFromSheet_() {
+  const spreadsheetId = String(
+    CONFIG.RULES_SPREADSHEET_ID || ""
+  ).trim();
+
+  if (
+    !spreadsheetId ||
+    spreadsheetId === "PASTE_SPREADSHEET_ID_HERE"
+  ) {
+    throw new Error(
+      "Set CONFIG.RULES_SPREADSHEET_ID to the shared " +
+      "Google Spreadsheet ID before running setup."
+    );
+  }
+
+  const spreadsheet =
+    SpreadsheetApp.openById(spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(
+    CONFIG.RULES_SHEET_NAME
+  );
+
+  if (!sheet) {
+    throw new Error(
+      `Rules tab not found: ${CONFIG.RULES_SHEET_NAME}`
+    );
+  }
+
+  const values = sheet.getDataRange().getDisplayValues();
+
+  if (values.length < 2) {
+    throw new Error(
+      `No rule rows found in ${CONFIG.RULES_SHEET_NAME}`
+    );
+  }
+
+  const headers = values[0].map(
+    normalizeRuleHeader_
+  );
+  const requiredHeaders = [
+    "enabled",
+    "sender",
+    "match all",
+    "keywords",
+    "recipients"
+  ];
+  const columns = {};
+
+  for (const header of requiredHeaders) {
+    const index = headers.indexOf(header);
+
+    if (index < 0) {
+      throw new Error(
+        `Missing required column "${header}" in ` +
+        CONFIG.RULES_SHEET_NAME
+      );
+    }
+
+    columns[header] = index;
+  }
+
+  const rules = [];
+
+  for (let index = 1; index < values.length; index++) {
+    const row = values[index];
+    const rowNumber = index + 1;
+
+    if (row.every(value => !String(value).trim())) {
+      continue;
+    }
+
+    const enabled = parseRuleBoolean_(
+      row[columns["enabled"]],
+      false,
+      "Enabled",
+      rowNumber
+    );
+
+    if (!enabled) {
+      continue;
+    }
+
+    rules.push({
+      sender: String(
+        row[columns["sender"]] || ""
+      ).trim(),
+      matchAll: parseRuleBoolean_(
+        row[columns["match all"]],
+        false,
+        "Match All",
+        rowNumber
+      ),
+      keywords: splitRuleList_(
+        row[columns["keywords"]],
+        false
+      ),
+      recipients: splitRuleList_(
+        row[columns["recipients"]],
+        true
+      ),
+      sourceRow: rowNumber
+    });
+  }
+
+  if (rules.length === 0) {
+    throw new Error(
+      `No enabled rules found in ${CONFIG.RULES_SHEET_NAME}`
+    );
+  }
+
+  validateRules_(rules);
+  return rules;
+}
+
+
+function validateRules_(rules) {
+  for (const rule of rules) {
+    const rowLabel = `row ${rule.sourceRow}`;
+
+    if (!normalizeEmail_(rule.sender).includes("@")) {
+      throw new Error(
+        `Invalid sender on ${rowLabel}: ${rule.sender}`
+      );
+    }
+
+    if (!rule.matchAll && !rule.keywords.length) {
+      throw new Error(
+        `No keywords configured on ${rowLabel} for ` +
+        `${rule.sender}. Set Match All to TRUE to ` +
+        "forward everything from this sender."
+      );
+    }
+
+    if (!rule.recipients.length) {
+      throw new Error(
+        `No recipients configured on ${rowLabel} for ` +
+        rule.sender
+      );
+    }
+
+    const invalidRecipient = rule.recipients.find(
+      recipient =>
+        !normalizeEmail_(recipient).includes("@")
+    );
+
+    if (invalidRecipient) {
+      throw new Error(
+        `Invalid recipient on ${rowLabel}: ` +
+        invalidRecipient
+      );
+    }
+  }
+}
+
+
+
+function normalizeRuleHeader_(value) {
+  return String(value || "")
+    .replace(/\([^)]*\)/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+
+function parseRuleBoolean_(
+  value,
+  defaultValue,
+  columnName,
+  rowNumber
+) {
+  const cleanValue = String(value || "")
+    .trim()
+    .toUpperCase();
+
+  if (!cleanValue) {
+    return defaultValue;
+  }
+
+  if (["TRUE", "YES", "Y", "1"].includes(cleanValue)) {
+    return true;
+  }
+
+  if (["FALSE", "NO", "N", "0"].includes(cleanValue)) {
+    return false;
+  }
+
+  throw new Error(
+    `Invalid ${columnName} value on row ${rowNumber}: ` +
+    value
+  );
+}
+
+
+function splitRuleList_(value, allowCommas) {
+  const separator = allowCommas
+    ? /[\n;,]+/
+    : /[\n;]+/;
+
+  return String(value || "")
+    .split(separator)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
 
 
 /**
@@ -888,26 +1049,7 @@ function validateConfiguration_() {
     );
   }
 
-  for (const rule of CONFIG.RULES) {
-    if (!normalizeEmail_(rule.sender).includes("@")) {
-      throw new Error(
-        `Invalid monitored sender: ${rule.sender}`
-      );
-    }
-
-    if (!rule.matchAll && !rule.keywords.length) {
-      throw new Error(
-        `No keywords configured for ${rule.sender}. ` +
-        `Set matchAll: true to forward everything.`
-      );
-    }
-
-    if (!rule.recipients.length) {
-      throw new Error(
-        `No recipients configured for ${rule.sender}`
-      );
-    }
-  }
+  getRules_();
 }
 
 
