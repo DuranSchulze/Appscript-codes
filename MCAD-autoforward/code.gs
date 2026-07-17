@@ -17,10 +17,6 @@ const CONFIG = {
   DETECTED_LABEL: "AutoForward/Detected",
   FORWARDED_LABEL: "AutoForward/Forwarded",
   FAILED_LABEL: "AutoForward/Failed",
-  LABEL_COLOR: {
-    backgroundColor: "#4986e7",
-    textColor: "#ffffff"
-  },
 
 RULES: [
   {
@@ -161,7 +157,6 @@ function setupSecEmailForwarding() {
   getOrCreateLabel_(CONFIG.DETECTED_LABEL);
   getOrCreateLabel_(CONFIG.FORWARDED_LABEL);
   getOrCreateLabel_(CONFIG.FAILED_LABEL);
-  setAutoForwardLabelColors_();
 
   const properties = PropertiesService.getScriptProperties();
 
@@ -525,43 +520,6 @@ function normalizeEmail_(email) {
 function getOrCreateLabel_(labelName) {
   return GmailApp.getUserLabelByName(labelName) ||
     GmailApp.createLabel(labelName);
-}
-
-
-/**
- * Gives the AutoForward parent and status labels one shared color.
- * Requires the Gmail API advanced service in the Apps Script project.
- */
-function setAutoForwardLabelColors_() {
-  const labelNames = [
-    CONFIG.ROOT_LABEL,
-    CONFIG.DETECTED_LABEL,
-    CONFIG.FORWARDED_LABEL,
-    CONFIG.FAILED_LABEL
-  ];
-
-  const response = Gmail.Users.Labels.list("me");
-  const labelsByName = new Map(
-    (response.labels || []).map(
-      label => [label.name, label.id]
-    )
-  );
-
-  for (const labelName of labelNames) {
-    const labelId = labelsByName.get(labelName);
-
-    if (!labelId) {
-      throw new Error(
-        `Could not find Gmail label: ${labelName}`
-      );
-    }
-
-    Gmail.Users.Labels.patch(
-      { color: CONFIG.LABEL_COLOR },
-      "me",
-      labelId
-    );
-  }
 }
 
 
