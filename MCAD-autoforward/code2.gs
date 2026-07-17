@@ -3,7 +3,6 @@ const CONFIG = {
   SEARCH_LOOKBACK_DAYS: 30,
   MAX_THREADS_PER_RUN: 500,
   RETAIN_PROCESSED_DAYS: 60,
-  INCLUDE_SPAM: true,
 
   PROCESSED_PREFIX: "SEC_FORWARDED_",
   SUMMARY_RECORD_PREFIX: "SEC_DAILY_FORWARD_",
@@ -346,13 +345,9 @@ function getCandidateMessages_() {
     .join(" ");
 
   // Curly braces mean OR in Gmail search.
-  const monitoredLocations = CONFIG.INCLUDE_SPAM
-    ? `{in:inbox in:spam label:"${CONFIG.FAILED_LABEL}"}`
-    : `{in:inbox label:"${CONFIG.FAILED_LABEL}"}`;
-
   const query =
     `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
-    `${monitoredLocations} ` +
+    `{in:inbox label:"${CONFIG.FAILED_LABEL}"} ` +
     `{${senderSearch}}`;
 
   const messageMap = new Map();
@@ -381,16 +376,10 @@ function getCandidateMessages_() {
         thread,
         CONFIG.FAILED_LABEL
       );
-      const isMonitoredSpam =
-        CONFIG.INCLUDE_SPAM && thread.isInSpam();
 
       for (const message of thread.getMessages()) {
         if (
-          (
-            message.isInInbox() ||
-            isMonitoredSpam ||
-            isFailedThread
-          ) &&
+          (message.isInInbox() || isFailedThread) &&
           !message.isDraft()
         ) {
           messageMap.set(message.getId(), message);
