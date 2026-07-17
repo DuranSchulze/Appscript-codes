@@ -23,7 +23,8 @@ RULES: [
       "projects@filepino.com",
       "alhyn@filepino.com",
       "fatima@filepino.com",
-      "accounts@filepino.com"
+      "accounts@filepino.com",
+      "reception@filepino.com"
     ]
   },
 
@@ -86,9 +87,11 @@ RULES: [
 
   {
     sender: "msoa@metrobankcard.com",
-    keywords: [
-      "524005XXXXXXXXXX"
-    ],
+
+    // Forward all emails from this sender.
+    matchAll: true,
+    keywords: [],
+
     recipients: [
       "accounts.payable1@filepino.com",
       "irish@filepino.com",
@@ -115,6 +118,16 @@ RULES: [
     ],
     recipients: [
       "roselyn.salazar@lifetrackmed.com"
+    ]
+  },
+
+  {
+    sender: "zafajardo9@gmail.com",
+    keywords: [
+      "TEST"
+    ],
+    recipients: [
+      "seo@filepino.com"
     ]
   }
 ]
@@ -324,6 +337,11 @@ function findMatchingRule_(message) {
       continue;
     }
 
+    // matchAll forwards every email from this sender.
+    if (rule.matchAll) {
+      return rule;
+    }
+
     const matchedKeywords = getMatchedKeywords_(
       message,
       rule
@@ -523,9 +541,10 @@ function validateConfiguration_() {
       );
     }
 
-    if (!rule.keywords.length) {
+    if (!rule.matchAll && !rule.keywords.length) {
       throw new Error(
-        `No keywords configured for ${rule.sender}`
+        `No keywords configured for ${rule.sender}. ` +
+        `Set matchAll: true to forward everything.`
       );
     }
 
