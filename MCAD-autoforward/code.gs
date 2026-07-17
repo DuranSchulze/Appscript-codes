@@ -14,105 +14,16 @@ const CONFIG = {
   SUMMARY_HOUR: 23,
   SUMMARY_TIME_ZONE: "Asia/Manila",
 
-  // Paste the shared Google Spreadsheet ID after uploading the workbook.
+  // Required: paste the ID from the shared Google Sheet URL.
   RULES_SPREADSHEET_ID: "PASTE_SPREADSHEET_ID_HERE",
+
+  // Set this to the rules tab assigned to this Gmail account.
   RULES_SHEET_NAME: "Rules - Code.gs",
 
   ROOT_LABEL: "AutoForward",
   DETECTED_LABEL: "AutoForward/Detected",
   FORWARDED_LABEL: "AutoForward/Forwarded",
-  FAILED_LABEL: "AutoForward/Failed",
-
-// Migration backup only. Live runs read RULES_SHEET_NAME instead.
-RULES: [
-  {
-    sender: "noreply-cifssost@sec.gov.ph",
-    keywords: [
-      "GFFS",
-      "email validation",
-      "AFS"
-    ],
-    recipients: [
-      "felise@duranschulze.com",
-      "stephanie@duranschulze.com",
-      "carlnathaniel@duranschulze.com",
-      "projects@filepino.com",
-      "alhyn@filepino.com",
-      "fatima@filepino.com",
-      "accounts@filepino.com",
-      "reception@filepino.com"
-    ]
-  },
-
-  {
-    sender: "no-reply@sec.gov.ph",
-    keywords: [
-      "eAmend",
-      "MC28",
-      "SEC general notice",
-      "SEC general notices",
-      "OTP"
-    ],
-    recipients: [
-      "felise@duranschulze.com",
-      "stephanie@duranschulze.com",
-      "carlnathaniel@duranschulze.com",
-      "projects@filepino.com",
-      "alhyn@filepino.com",
-      "fatima@filepino.com"
-    ]
-  },
-
-  {
-    sender: "service@intl.paypal.com",
-    keywords: [
-      "DDS",
-      "PayPal payment",
-      "payment received"
-    ],
-    recipients: [
-      "marywendy@duranschulze.com",
-      "billing@duranschulze.com"
-    ]
-  },
-
-  {
-    sender: "bpi_cards_estatement@bpi.com.ph",
-    keywords: [
-      "DDS CC",
-      "credit card",
-      "electronic statement",
-      "e-statement"
-    ],
-    recipients: [
-      "accounts.payable1@filepino.com"
-    ]
-  },
-
-  {
-    sender: "msoa@metrobankcard.com",
-
-    // Forward all emails from this sender.
-    matchAll: true,
-    keywords: [],
-
-    recipients: [
-      "accounts.payable1@filepino.com",
-      "irish@filepino.com",
-      "accounts.payable2@filepino.com"
-    ]
-  },
-
-  {
-    sender: "zafajardo9@gmail.com",
-    keywords: [
-      "TEST"
-    ],
-    recipients: [
-      "seo@filepino.com"
-    ]
-  }
-]
+  FAILED_LABEL: "AutoForward/Failed"
 };
 
 
@@ -496,6 +407,41 @@ function normalizeEmail_(email) {
 
 
 let rulesCache_ = null;
+
+
+/**
+ * Tests the configured Google Sheet without forwarding or changing email.
+ * Run this manually after setting RULES_SPREADSHEET_ID and RULES_SHEET_NAME.
+ */
+function testGoogleSheetConnection() {
+  try {
+    // Force a fresh read so this test always checks the current Sheet data.
+    rulesCache_ = null;
+    const rules = loadRulesFromSheet_();
+    const spreadsheet = SpreadsheetApp.openById(
+      String(CONFIG.RULES_SPREADSHEET_ID).trim()
+    );
+    const result = {
+      connected: true,
+      spreadsheet: spreadsheet.getName(),
+      sheet: CONFIG.RULES_SHEET_NAME,
+      enabledRules: rules.length,
+      senders: rules.map(rule => rule.sender)
+    };
+
+    Logger.log(
+      "Google Sheet connection successful:\n" +
+      JSON.stringify(result, null, 2)
+    );
+
+    return result;
+  } catch (error) {
+    Logger.log(
+      "Google Sheet connection failed: " + error.message
+    );
+    throw error;
+  }
+}
 
 
 /**
