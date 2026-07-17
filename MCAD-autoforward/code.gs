@@ -5,8 +5,17 @@ const CONFIG = {
   RETAIN_PROCESSED_DAYS: 60,
 
   PROCESSED_PREFIX: "SEC_FORWARDED_",
+  SUMMARY_RECORD_PREFIX: "SEC_DAILY_FORWARD_",
   STARTED_AT_KEY: "SEC_AUTOMATION_STARTED_AT",
   LAST_CLEANUP_KEY: "SEC_LAST_CLEANUP",
+  SUMMARY_RECIPIENT_KEY: "SEC_SUMMARY_RECIPIENT",
+
+  SUMMARY_HOUR: 23,
+  SUMMARY_TIME_ZONE: "Asia/Manila",
+
+  DETECTED_LABEL: "AutoForward/Detected",
+  FORWARDED_LABEL: "AutoForward/Forwarded",
+  FAILED_LABEL: "AutoForward/Failed",
 
 RULES: [
   {
@@ -144,7 +153,13 @@ function setupSecEmailForwarding() {
   validateConfiguration_();
   removeExistingTriggers_();
 
+  getOrCreateLabel_(CONFIG.DETECTED_LABEL);
+  getOrCreateLabel_(CONFIG.FORWARDED_LABEL);
+  getOrCreateLabel_(CONFIG.FAILED_LABEL);
+
   const properties = PropertiesService.getScriptProperties();
+
+  getSummaryRecipient_();
 
   if (!properties.getProperty(CONFIG.STARTED_AT_KEY)) {
     properties.setProperty(
@@ -156,6 +171,13 @@ function setupSecEmailForwarding() {
   ScriptApp.newTrigger("monitorAndForwardSecEmails")
     .timeBased()
     .everyMinutes(CONFIG.CHECK_EVERY_MINUTES)
+    .create();
+
+  ScriptApp.newTrigger("sendDailyAutoForwardSummary")
+    .timeBased()
+    .atHour(CONFIG.SUMMARY_HOUR)
+    .everyDays(1)
+    .inTimezone(CONFIG.SUMMARY_TIME_ZONE)
     .create();
 
   Logger.log("SEC email-forwarding automation activated.");
@@ -181,6 +203,16 @@ function monitorAndForwardSecEmails() {
 
     const startedAt = Number(
       properties.getProperty(CONFIG.STARTED_AT_KEY) || 0
+    );
+
+    const detectedLabel = getOrCreateLabel_(
+      CONFIG.DETECTED_LABEL
+    );
+    const forwardedLabel = getOrCreateLabel_(
+      CONFIG.FORWARDED_LABEL
+    );
+    const failedLabel = getOrCreateLabel_(
+      CONFIG.FAILED_LABEL
     );
 
     const messages = getCandidateMessages_();
@@ -210,6 +242,9 @@ function monitorAndForwardSecEmails() {
         continue;
       }
 
+      const thread = message.getThread();
+      thread.addLabel(detectedLabel);
+
       try {
         const matchedKeywords = getMatchedKeywords_(
           message,
@@ -238,6 +273,32 @@ function monitorAndForwardSecEmails() {
 
         processedRecords[processedKey] = processedAt;
 
+        try {
+          thread.addLabel(forwardedLabel);
+          thread.removeLabel(failedLabel);
+        } catch (labelError) {
+          Logger.log(
+            `Message ${messageId} was forwarded, but the ` +
+            `status labels could not be updated: ` +
+            labelError.message
+          );
+        }
+
+        try {
+          recordForwardForDailySummary_(
+            properties,
+            message,
+            rule,
+            processedAt
+          );
+        } catch (summaryError) {
+          Logger.log(
+            `Message ${messageId} was forwarded, but it ` +
+            `could not be added to the daily summary: ` +
+            summaryError.message
+          );
+        }
+
         Logger.log(
           `Forwarded message ${messageId} to: ` +
           rule.recipients.join(", ")
@@ -249,6 +310,15 @@ function monitorAndForwardSecEmails() {
 
         // Failed messages will be retried next time.
         message.star();
+
+        try {
+          thread.addLabel(failedLabel);
+        } catch (labelError) {
+          Logger.log(
+            `Failed label could not be added to message ` +
+            `${messageId}: ${labelError.message}`
+          );
+        }
       }
     }
   } finally {
@@ -267,7 +337,8 @@ function getCandidateMessages_() {
 
   // Curly braces mean OR in Gmail search.
   const query =
-    `in:inbox newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
+    `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
+    `{in:inbox label:"${CONFIG.FAILED_LABEL}"} ` +
     `{${senderSearch}}`;
 
   const messageMap = new Map();
@@ -292,9 +363,14 @@ function getCandidateMessages_() {
     }
 
     for (const thread of threads) {
+      const isFailedThread = threadHasLabel_(
+        thread,
+        CONFIG.FAILED_LABEL
+      );
+
       for (const message of thread.getMessages()) {
         if (
-          message.isInInbox() &&
+          (message.isInInbox() || isFailedThread) &&
           !message.isDraft()
         ) {
           messageMap.set(message.getId(), message);
@@ -429,6 +505,84 @@ function normalizeEmail_(email) {
 
 
 /**
+ * Returns an existing Gmail label or creates it when needed.
+ * A slash creates the nested label structure in Gmail.
+ */
+function getOrCreateLabel_(labelName) {
+  return GmailApp.getUserLabelByName(labelName) ||
+    GmailApp.createLabel(labelName);
+}
+
+
+function threadHasLabel_(thread, labelName) {
+  return thread.getLabels().some(
+    label => label.getName() === labelName
+  );
+}
+
+
+/**
+ * Stores one compact record until the next daily summary is sent.
+ */
+function recordForwardForDailySummary_(
+  properties,
+  message,
+  rule,
+  processedAt
+) {
+  const record = {
+    forwardedAt: Number(processedAt),
+    sender: extractEmailAddress_(message.getFrom()),
+    subject: String(message.getSubject() || "(no subject)")
+      .slice(0, 300),
+    recipients: rule.recipients
+  };
+
+  properties.setProperty(
+    CONFIG.SUMMARY_RECORD_PREFIX + message.getId(),
+    JSON.stringify(record)
+  );
+}
+
+
+/**
+ * Uses the account that ran setup as the summary recipient.
+ */
+function getSummaryRecipient_() {
+  const properties =
+    PropertiesService.getScriptProperties();
+
+  const savedRecipient = normalizeEmail_(
+    properties.getProperty(
+      CONFIG.SUMMARY_RECIPIENT_KEY
+    )
+  );
+
+  if (savedRecipient) {
+    return savedRecipient;
+  }
+
+  const effectiveUser = normalizeEmail_(
+    Session.getEffectiveUser().getEmail()
+  );
+
+  if (!effectiveUser) {
+    throw new Error(
+      "Could not determine the daily-summary recipient. " +
+      "Run setupSecEmailForwarding manually from the owner account."
+    );
+  }
+
+  properties.setProperty(
+    CONFIG.SUMMARY_RECIPIENT_KEY,
+    effectiveUser
+  );
+
+  return effectiveUser;
+}
+
+
+/**
  * Run this before setup to preview matching emails.
  * It does not forward anything.
  */
@@ -460,6 +614,172 @@ function previewMatchingSecEmails() {
   }
 
   Logger.log(`${matchCount} matching email(s) found.`);
+}
+
+
+/**
+ * Shows only messages that the next live run would attempt.
+ * It does not forward, label, or otherwise change any email.
+ */
+function previewPendingEmails() {
+  validateConfiguration_();
+
+  const properties =
+    PropertiesService.getScriptProperties();
+  const records = properties.getProperties();
+  const startedAt = Number(
+    records[CONFIG.STARTED_AT_KEY] || 0
+  );
+
+  if (!startedAt) {
+    Logger.log(
+      "Automation has not been set up yet. Run " +
+      "setupSecEmailForwarding first."
+    );
+    return;
+  }
+
+  const messages = getCandidateMessages_();
+  let pendingCount = 0;
+
+  for (const message of messages) {
+    const messageId = message.getId();
+    const processedKey =
+      CONFIG.PROCESSED_PREFIX + messageId;
+
+    if (
+      records[processedKey] ||
+      message.getDate().getTime() < startedAt
+    ) {
+      continue;
+    }
+
+    const rule = findMatchingRule_(message);
+
+    if (!rule) {
+      continue;
+    }
+
+    pendingCount++;
+
+    Logger.log(JSON.stringify({
+      date: message.getDate(),
+      sender: extractEmailAddress_(message.getFrom()),
+      subject: message.getSubject(),
+      matchedKeywords: getMatchedKeywords_(message, rule),
+      recipients: rule.recipients,
+      retryingFailed: threadHasLabel_(
+        message.getThread(),
+        CONFIG.FAILED_LABEL
+      )
+    }));
+  }
+
+  Logger.log(
+    `${pendingCount} pending email(s) would be attempted.`
+  );
+}
+
+
+/**
+ * Sends all successful forwards recorded since the prior summary.
+ * The daily trigger runs during the 11 PM hour in Manila.
+ */
+function sendDailyAutoForwardSummary() {
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(30000)) {
+    Logger.log(
+      "Daily summary skipped because forwarding is still running. " +
+      "Unreported records will remain for the next summary."
+    );
+    return;
+  }
+
+  try {
+    const properties =
+      PropertiesService.getScriptProperties();
+    const allProperties = properties.getProperties();
+    const summaryRecords = [];
+
+    for (const [key, value] of Object.entries(allProperties)) {
+      if (!key.startsWith(CONFIG.SUMMARY_RECORD_PREFIX)) {
+        continue;
+      }
+
+      try {
+        summaryRecords.push({
+          key,
+          record: JSON.parse(value)
+        });
+      } catch (error) {
+        Logger.log(
+          `Invalid daily-summary record ${key}: ${error.message}`
+        );
+      }
+    }
+
+    summaryRecords.sort(
+      (first, second) =>
+        first.record.forwardedAt - second.record.forwardedAt
+    );
+
+    const generatedAt = Utilities.formatDate(
+      new Date(),
+      CONFIG.SUMMARY_TIME_ZONE,
+      "yyyy-MM-dd HH:mm:ss"
+    );
+    const reportDate = Utilities.formatDate(
+      new Date(),
+      CONFIG.SUMMARY_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+
+    const lines = [
+      "AutoForward daily activity summary",
+      `Generated: ${generatedAt} (${CONFIG.SUMMARY_TIME_ZONE})`,
+      `Successfully forwarded: ${summaryRecords.length}`,
+      ""
+    ];
+
+    if (summaryRecords.length === 0) {
+      lines.push("No emails were forwarded since the last summary.");
+    } else {
+      summaryRecords.forEach((item, index) => {
+        const record = item.record;
+        const forwardedAt = Utilities.formatDate(
+          new Date(record.forwardedAt),
+          CONFIG.SUMMARY_TIME_ZONE,
+          "yyyy-MM-dd HH:mm:ss"
+        );
+
+        lines.push(
+          `${index + 1}. ${record.subject}`,
+          `   Time: ${forwardedAt}`,
+          `   From: ${record.sender}`,
+          `   To: ${record.recipients.join(", ")}`,
+          ""
+        );
+      });
+    }
+
+    GmailApp.sendEmail(
+      getSummaryRecipient_(),
+      `AutoForward Daily Summary - ${reportDate}`,
+      lines.join("\n")
+    );
+
+    // Delete records only after the summary email succeeds.
+    for (const item of summaryRecords) {
+      properties.deleteProperty(item.key);
+    }
+
+    Logger.log(
+      `Daily summary sent with ${summaryRecords.length} record(s).`
+    );
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 
