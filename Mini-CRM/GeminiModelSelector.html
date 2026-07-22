@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172b3f;
+        --muted: #647487;
+        --line: #d9e2eb;
+        --canvas: #f4f7fa;
+        --surface: #ffffff;
+        --navy: #17324d;
+        --blue: #2f6fed;
+        --blue-soft: #eaf1ff;
+        --cyan: #45b7c4;
+        --green: #18855b;
+        --green-soft: #e8f6ef;
+        --amber: #a85d00;
+        --amber-soft: #fff3dc;
+        --red: #b42318;
+        --red-soft: #ffebe9;
+        --shadow: 0 18px 50px rgba(23, 50, 77, .13);
+        font-family: "Google Sans", "Segoe UI", Arial, sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-width: 0;
+        background: var(--canvas);
+        color: var(--ink);
+      }
+
+      button, input, select { font: inherit; }
+
+      .shell {
+        min-height: 100vh;
+        padding: 18px;
+      }
+
+      .console {
+        overflow: hidden;
+        max-width: 690px;
+        margin: 0 auto;
+        border: 1px solid rgba(23, 50, 77, .1);
+        border-radius: 16px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .hero {
+        position: relative;
+        padding: 22px 24px 20px;
+        background: var(--navy);
+        color: #fff;
+      }
+
+      .hero::after {
+        position: absolute;
+        right: 24px;
+        bottom: 0;
+        left: 24px;
+        height: 3px;
+        border-radius: 3px 3px 0 0;
+        background: linear-gradient(90deg, var(--cyan), #86d3dc 62%, transparent);
+        content: "";
+      }
+
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        color: #bcd5eb;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+
+      .spark {
+        width: 8px;
+        height: 8px;
+        transform: rotate(45deg);
+        border-radius: 2px;
+        background: var(--cyan);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 650;
+        letter-spacing: -.025em;
+      }
+
+      .hero p {
+        max-width: 590px;
+        margin: 7px 0 0;
+        color: #d5e2ed;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .content { padding: 20px 24px 22px; }
+
+      .section + .section {
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+      }
+
+      .section-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .section-title {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .state-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 25px;
+        padding: 4px 9px;
+        border-radius: 999px;
+        background: #edf1f5;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .state-chip::before {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .state-chip.connected { background: var(--green-soft); color: var(--green); }
+      .state-chip.pending { background: var(--amber-soft); color: var(--amber); }
+
+      .key-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+      }
+
+      .input-wrap { position: relative; }
+
+      .control {
+        width: 100%;
+        min-height: 44px;
+        border: 1px solid #c7d3de;
+        border-radius: 9px;
+        background: #fff;
+        color: var(--ink);
+        outline: none;
+        transition: border-color 140ms ease, box-shadow 140ms ease;
+      }
+
+      input.control { padding: 9px 44px 9px 12px; }
+      select.control { padding: 8px 34px 8px 11px; }
+
+      .control:focus {
+        border-color: var(--blue);
+        box-shadow: 0 0 0 3px rgba(47, 111, 237, .14);
+      }
+
+      .control:disabled { background: #f1f4f7; color: #8a98a7; }
+
+      .reveal {
+        position: absolute;
+        top: 50%;
+        right: 7px;
+        width: 32px;
+        height: 32px;
+        transform: translateY(-50%);
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .reveal:hover { background: #edf2f7; }
+
+      .helper {
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.4;
+      }
+
+      .button {
+        min-height: 42px;
+        padding: 0 16px;
+        border: 0;
+        border-radius: 9px;
+        cursor: pointer;
+        font-weight: 700;
+        white-space: nowrap;
+        transition: transform 120ms ease, filter 120ms ease, opacity 120ms ease;
+      }
+
+      .button:hover:not(:disabled) { filter: brightness(.96); }
+      .button:active:not(:disabled) { transform: translateY(1px); }
+      .button:focus-visible, .reveal:focus-visible { outline: 3px solid rgba(47, 111, 237, .25); outline-offset: 2px; }
+      .button:disabled { cursor: default; opacity: .5; }
+      .button.primary { background: var(--blue); color: #fff; }
+      .button.secondary { background: #e9eef3; color: var(--ink); }
+      .button.ghost { border: 1px solid var(--line); background: #fff; color: var(--ink); }
+
+      .route {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 52px minmax(0, 1fr);
+        align-items: stretch;
+      }
+
+      .model-stop {
+        min-width: 0;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fbfcfd;
+      }
+
+      .model-stop.primary-stop { border-top: 3px solid var(--blue); }
+      .model-stop.fallback-stop { border-top: 3px solid var(--cyan); }
+
+      .stop-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+      }
+
+      .role-number {
+        display: grid;
+        width: 22px;
+        height: 22px;
+        place-items: center;
+        border-radius: 7px;
+        background: var(--blue-soft);
+        color: var(--blue);
+        letter-spacing: 0;
+      }
+
+      .fallback-stop .role-number { background: #e7f7f8; color: #187986; }
+
+      .route-link {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        color: var(--muted);
+        font-size: 9px;
+        font-weight: 700;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .route-line {
+        position: relative;
+        width: 34px;
+        height: 2px;
+        background: var(--line);
+      }
+
+      .route-line::after {
+        position: absolute;
+        top: -3px;
+        right: 0;
+        width: 0;
+        height: 0;
+        border-top: 4px solid transparent;
+        border-bottom: 4px solid transparent;
+        border-left: 6px solid #93a4b5;
+        content: "";
+      }
+
+      .model-detail {
+        min-height: 55px;
+        margin-top: 9px;
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.42;
+      }
+
+      .model-id {
+        display: block;
+        overflow: hidden;
+        margin-top: 5px;
+        color: #476078;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 9px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .test-results {
+        display: none;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .test-results.visible { display: grid; }
+
+      .test-result {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--green-soft);
+        color: var(--green);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .status {
+        display: none;
+        margin-top: 14px;
+        padding: 10px 12px;
+        border-radius: 9px;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .status.info, .status.error, .status.success { display: block; }
+      .status.info { background: var(--blue-soft); color: #2452a6; }
+      .status.error { background: var(--red-soft); color: var(--red); }
+      .status.success { background: var(--green-soft); color: var(--green); }
+
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .footer-actions { display: flex; gap: 8px; }
+      .privacy { max-width: 260px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+
+      @media (max-width: 620px) {
+        .shell { padding: 0; }
+        .console { border: 0; border-radius: 0; box-shadow: none; }
+        .hero, .content { padding-right: 18px; padding-left: 18px; }
+        .key-grid, .route { grid-template-columns: 1fr; }
+        .route-link { min-height: 48px; transform: none; }
+        .route-line { width: 2px; height: 22px; }
+        .route-line::after {
+          top: auto;
+          right: -3px;
+          bottom: -1px;
+          border-top: 6px solid #93a4b5;
+          border-right: 4px solid transparent;
+          border-bottom: 0;
+          border-left: 4px solid transparent;
+        }
+        .footer { align-items: stretch; flex-direction: column; }
+        .privacy { max-width: none; }
+        .footer-actions { justify-content: flex-end; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="console" aria-labelledby="pageTitle">
+        <header class="hero">
+          <div class="eyebrow"><span class="spark"></span> Mini-CRM AI routing</div>
+          <h1 id="pageTitle">Configure Gemini</h1>
+          <p>Connect an API token, choose the model that handles requests first, and set a backup model for service interruptions.</p>
+        </header>
+
+        <div class="content">
+          <section class="section" aria-labelledby="connectionTitle">
+            <div class="section-heading">
+              <h2 class="section-title" id="connectionTitle">API connection</h2>
+              <span id="connectionChip" class="state-chip pending">Checking</span>
+            </div>
+            <div class="key-grid">
+              <div>
+                <div class="input-wrap">
+                  <input id="apiKey" class="control" type="password" autocomplete="new-password" aria-label="Gemini API token" placeholder="Loading saved connection…">
+                  <button id="revealButton" class="reveal" type="button" aria-label="Show API token" onclick="toggleToken()">Show</button>
+                </div>
+                <div id="keyHint" class="helper">Your token is stored in Apps Script Properties, not in the spreadsheet.</div>
+              </div>
+              <button id="loadButton" class="button secondary" type="button" onclick="loadModels()">Connect &amp; load models</button>
+            </div>
+          </section>
+
+          <section class="section" aria-labelledby="routeTitle">
+            <div class="section-heading">
+              <div>
+                <h2 class="section-title" id="routeTitle">Model route</h2>
+                <div class="helper">The fallback runs only when the primary request fails or returns an invalid response.</div>
+              </div>
+            </div>
+
+            <div class="route">
+              <article class="model-stop primary-stop">
+                <div class="stop-label"><span>Primary model</span><span class="role-number">1</span></div>
+                <select id="primaryModel" class="control" disabled onchange="handleRouteChange()" aria-label="Primary Gemini model">
+                  <option value="">Connect to load models</option>
+                </select>
+                <div id="primaryDetail" class="model-detail">Handles every AI request first.</div>
+              </article>
+
+              <div class="route-link" aria-hidden="true">
+                <span>on failure</span>
+                <span class="route-line"></span>
+              </div>
+
+              <article class="model-stop fallback-stop">
+                <div class="stop-label"><span>Fallback model</span><span class="role-number">2</span></div>
+                <select id="fallbackModel" class="control" disabled onchange="handleRouteChange()" aria-label="Fallback Gemini model">
+                  <option value="">No fallback</option>
+                </select>
+                <div id="fallbackDetail" class="model-detail">Optional backup for failed primary requests.</div>
+              </article>
+            </div>
+
+            <div id="testResults" class="test-results" aria-live="polite"></div>
+            <div id="status" class="status" role="status" aria-live="polite"></div>
+          </section>
+
+          <footer class="footer">
+            <div class="privacy">The saved token is never returned to this dialog. Enter a new value only when replacing it.</div>
+            <div class="footer-actions">
+              <button class="button ghost" type="button" onclick="google.script.host.close()">Cancel</button>
+              <button id="testButton" class="button secondary" type="button" disabled onclick="testRoute()">Test route</button>
+              <button id="saveButton" class="button primary" type="button" disabled onclick="saveSettings()">Save AI settings</button>
+            </div>
+          </footer>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      let settings = null;
+      let models = [];
+      let busy = false;
+      let modelsStale = true;
+
+      document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('apiKey').addEventListener('input', function() {
+          modelsStale = true;
+          clearTestResults();
+          updateActions();
+          setConnectionState('pending', 'Reconnect');
+        });
+
+        setBusy(true, 'Loading saved AI settings…');
+        google.script.run
+          .withSuccessHandler(function(result) {
+            settings = result;
+            const token = document.getElementById('apiKey');
+            token.placeholder = result.hasApiKey ? 'Leave blank to keep saved token' : 'Paste your Gemini API token';
+            document.getElementById('keyHint').textContent = result.hasApiKey
+              ? 'Saved token: ' + result.maskedApiKey + formatValidatedAt(result.validatedAt)
+              : 'No token saved. Paste a Gemini API token to begin.';
+
+            if (result.hasApiKey) {
+              loadModels();
+            } else {
+              setBusy(false);
+              setConnectionState('pending', 'Not connected');
+              showStatus('', '');
+            }
+          })
+          .withFailureHandler(showFailure)
+          .getGeminiSettingsForUi();
+      });
+
+      function loadModels() {
+        const apiKey = document.getElementById('apiKey').value.trim();
+        setBusy(true, 'Checking the token and loading available models…');
+        clearTestResults();
+
+        google.script.run
+          .withSuccessHandler(function(result) {
+            models = result;
+            modelsStale = false;
+            renderModelOptions();
+            setBusy(false);
+            setConnectionState('connected', models.length + ' models available');
+            showStatus('success', 'Connected. Choose a primary model and an optional fallback.');
+          })
+          .withFailureHandler(showFailure)
+          .getAvailableGeminiModels(apiKey);
+      }
+
+      function renderModelOptions() {
+        const primary = document.getElementById('primaryModel');
+        const fallback = document.getElementById('fallbackModel');
+        primary.replaceChildren();
+        fallback.replaceChildren(new Option('No fallback model', ''));
+
+        models.forEach(function(model) {
+          const label = model.label + ' — ' + model.id;
+          primary.add(new Option(label, model.id));
+          fallback.add(new Option(label, model.id));
+        });
+
+        const savedPrimary = settings && modelExists(settings.primaryModel) ? settings.primaryModel : models[0].id;
+        const savedFallback = settings && modelExists(settings.fallbackModel) && settings.fallbackModel !== savedPrimary
+          ? settings.fallbackModel
+          : '';
+
+        primary.value = savedPrimary;
+        fallback.value = savedFallback;
+        primary.disabled = false;
+        fallback.disabled = false;
+        handleRouteChange();
+      }
+
+      function handleRouteChange() {
+        const primaryId = document.getElementById('primaryModel').value;
+        const fallback = document.getElementById('fallbackModel');
+
+        Array.from(fallback.options).forEach(function(option) {
+          option.disabled = Boolean(option.value && option.value === primaryId);
+        });
+        if (fallback.value === primaryId) fallback.value = '';
+
+        renderModelDetail('primaryDetail', primaryId, 'Handles every AI request first.');
+        renderModelDetail('fallbackDetail', fallback.value, 'No fallback selected. Failed AI requests will remain queued for retry.');
+        clearTestResults();
+        updateActions();
+      }
+
+      function renderModelDetail(elementId, modelId, emptyText) {
+        const target = document.getElementById(elementId);
+        const model = getModel(modelId);
+        target.replaceChildren();
+
+        if (!model) {
+          target.textContent = emptyText;
+          return;
+        }
+
+        const description = document.createElement('span');
+        description.textContent = truncate(model.description || 'Content generation model.', 128);
+        const id = document.createElement('span');
+        id.className = 'model-id';
+        id.textContent = model.id + formatLimits(model);
+        target.append(description, id);
+      }
+
+      function testRoute() {
+        if (!validateRoute()) return;
+        setBusy(true, 'Sending a small test request through the selected route…');
+        clearTestResults();
+
+        google.script.run
+          .withSuccessHandler(function(result) {
+            setBusy(false);
+            renderTestResults(result.results || []);
+            showStatus('success', 'Route test passed. Both the token and selected models are ready.');
+          })
+          .withFailureHandler(showFailure)
+          .testGeminiConfiguration(readForm());
+      }
+
+      function saveSettings() {
+        if (!validateRoute()) return;
+        setBusy(true, 'Validating and saving your AI route…');
+
+        google.script.run
+          .withSuccessHandler(function(result) {
+            setBusy(false);
+            const route = result.fallbackModel
+              ? result.primaryModel + ' → ' + result.fallbackModel
+              : result.primaryModel + ' (no fallback)';
+            document.getElementById('apiKey').value = '';
+            showStatus('success', 'Saved. Active route: ' + route + '.');
+            setConnectionState('connected', 'Settings saved');
+            window.setTimeout(function() { google.script.host.close(); }, 1500);
+          })
+          .withFailureHandler(showFailure)
+          .saveGeminiSettings(readForm());
+      }
+
+      function readForm() {
+        return {
+          apiKey: document.getElementById('apiKey').value.trim(),
+          primaryModel: document.getElementById('primaryModel').value,
+          fallbackModel: document.getElementById('fallbackModel').value
+        };
+      }
+
+      function validateRoute() {
+        if (modelsStale) {
+          showStatus('error', 'Connect and reload models after changing the API token.');
+          return false;
+        }
+        const form = readForm();
+        if (!form.primaryModel) {
+          showStatus('error', 'Choose a primary model.');
+          return false;
+        }
+        if (form.fallbackModel && form.fallbackModel === form.primaryModel) {
+          showStatus('error', 'Choose a fallback model that is different from the primary model.');
+          return false;
+        }
+        return true;
+      }
+
+      function renderTestResults(results) {
+        const container = document.getElementById('testResults');
+        container.replaceChildren();
+        results.forEach(function(result) {
+          const row = document.createElement('div');
+          row.className = 'test-result';
+          const role = document.createElement('span');
+          role.textContent = '✓ ' + result.role + ' ready';
+          const latency = document.createElement('span');
+          latency.textContent = result.latencyMs + ' ms';
+          row.append(role, latency);
+          container.appendChild(row);
+        });
+        container.classList.toggle('visible', results.length > 0);
+      }
+
+      function clearTestResults() {
+        const container = document.getElementById('testResults');
+        container.replaceChildren();
+        container.classList.remove('visible');
+      }
+
+      function setBusy(value, message) {
+        busy = value;
+        document.getElementById('loadButton').disabled = value;
+        document.getElementById('primaryModel').disabled = value || !models.length;
+        document.getElementById('fallbackModel').disabled = value || !models.length;
+        updateActions();
+        if (message) showStatus('info', message);
+      }
+
+      function updateActions() {
+        const routeReady = !busy && !modelsStale && models.length && document.getElementById('primaryModel').value;
+        document.getElementById('testButton').disabled = !routeReady;
+        document.getElementById('saveButton').disabled = !routeReady;
+      }
+
+      function showFailure(error) {
+        setBusy(false);
+        setConnectionState('pending', 'Needs attention');
+        showStatus('error', friendlyError(error));
+      }
+
+      function friendlyError(error) {
+        const message = error && error.message ? error.message : String(error || 'Unknown error');
+        if (/API key not valid|invalid.*key/i.test(message)) return 'The API token was rejected. Check the token and connect again.';
+        if (/quota|resource_exhausted|429/i.test(message)) return 'Gemini quota is currently exhausted. Review the API project quota or try again later.';
+        if (/permission|403/i.test(message)) return 'This token does not have permission to use the selected Gemini model.';
+        return message;
+      }
+
+      function showStatus(type, message) {
+        const status = document.getElementById('status');
+        status.className = 'status' + (type ? ' ' + type : '');
+        status.textContent = message || '';
+      }
+
+      function setConnectionState(type, label) {
+        const chip = document.getElementById('connectionChip');
+        chip.className = 'state-chip ' + type;
+        chip.textContent = label;
+      }
+
+      function toggleToken() {
+        const input = document.getElementById('apiKey');
+        const button = document.getElementById('revealButton');
+        const reveal = input.type === 'password';
+        input.type = reveal ? 'text' : 'password';
+        button.textContent = reveal ? 'Hide' : 'Show';
+        button.setAttribute('aria-label', reveal ? 'Hide API token' : 'Show API token');
+      }
+
+      function getModel(id) { return models.find(function(model) { return model.id === id; }); }
+      function modelExists(id) { return Boolean(id && getModel(id)); }
+      function truncate(value, length) { return value.length > length ? value.slice(0, length - 1).trim() + '…' : value; }
+      function formatLimits(model) {
+        const parts = [];
+        if (model.inputTokenLimit) parts.push(Number(model.inputTokenLimit).toLocaleString() + ' in');
+        if (model.outputTokenLimit) parts.push(Number(model.outputTokenLimit).toLocaleString() + ' out');
+        return parts.length ? ' · ' + parts.join(' / ') : '';
+      }
+      function formatValidatedAt(value) {
+        if (!value) return '';
+        const date = new Date(value);
+        return isNaN(date.getTime()) ? '' : ' · validated ' + date.toLocaleString();
+      }
+    </script>
+  </body>
+</html>

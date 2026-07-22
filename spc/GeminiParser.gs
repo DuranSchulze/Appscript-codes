@@ -310,12 +310,8 @@ Rules:
       }
 
       if (useStructuredOutput) {
-        generationConfig.responseFormat = {
-          text: {
-            mimeType: "application/json",
-            schema: this.getVoucherResponseSchema(),
-          },
-        };
+        generationConfig.responseMimeType = "application/json";
+        generationConfig.responseSchema = this.getVoucherResponseSchema();
       }
 
       const payload = {
