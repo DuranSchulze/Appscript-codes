@@ -164,6 +164,13 @@ const DriveManager = {
       file.getMimeType() === "application/pdf"
     );
   },
+  isImageFile(file) {
+    const extension = this.getFileExtension(file);
+    return (
+      ["jpg", "jpeg", "png"].includes(extension) ||
+      String(file.getMimeType()).startsWith("image/")
+    );
+  },
   countPdfPages(file) {
     try {
       if (!this.isPdfFile(file)) {
@@ -332,5 +339,98 @@ const DriveManager = {
     } catch (error) {
       throw new Error(`Failed to get file content: ${error.message}`);
     }
+  },
+  /**
+   * Extract a PDF/image through Drive's document importer. This uses no Gemini
+   * quota and covers both text PDFs and scanned voucher pages.
+   */
+  extractTextWithGoogleOcr(file) {
+    if (!this.isPdfFile(file) && !this.isImageFile(file)) {
+      return null;
+    }
+
+    let temporaryDocumentId = "";
+    try {
+      const scriptProps = PropertiesService.getScriptProperties();
+      const ocrLanguage =
+        scriptProps.getProperty("DRIVE_OCR_LANGUAGE") || "en";
+      const ocrWaitMs =
+        Number(scriptProps.getProperty("DRIVE_OCR_WAIT_MS")) || 3000;
+      const temporaryDocument = Drive.Files.create(
+        {
+          name: `OCR_${file.getName()}`,
+          mimeType: "application/vnd.google-apps.document",
+        },
+        file.getBlob(),
+        {
+          fields: "id",
+          ocrLanguage,
+          supportsAllDrives: true,
+        },
+      );
+
+      temporaryDocumentId = temporaryDocument.id;
+      // Drive returns the new file before OCR text is always ready to read.
+      Utilities.sleep(ocrWaitMs);
+      const text = DocumentApp.openById(temporaryDocumentId)
+        .getBody()
+        .getText()
+        .trim();
+
+      return text;
+    } catch (error) {
+      Logger.log(
+        `Local PDF text/OCR extraction failed for ${file.getName()}: ${error.message}`,
+        "WARNING",
+      );
+      return null;
+    } finally {
+      if (temporaryDocumentId) {
+        try {
+          // Trashing is recoverable and keeps temporary OCR files out of the
+          // active Drive folder.
+          DriveApp.getFileById(temporaryDocumentId).setTrashed(true);
+        } catch (cleanupError) {
+          console.warn(
+            `Could not delete temporary OCR document ${temporaryDocumentId}: ${cleanupError.message}`,
+          );
+        }
+      }
+    }
+  },
+
+  // Backward-compatible name for callers/tests added before OCR covered images.
+  extractPdfText(file) {
+    return this.extractTextWithGoogleOcr(file);
+  },
+
+  /**
+   * Prefer extracted text for PDFs. If Drive conversion cannot read the file,
+   * retain the original PDF so Gemini can still process it in one request.
+   */
+  getContentForVoucherParsing(file) {
+    const originalContent = this.getFileContent(file);
+    const shouldUseOcr = this.isPdfFile(file) || this.isImageFile(file);
+    if (!shouldUseOcr) {
+      return originalContent;
+    }
+
+    const extractedText = this.extractTextWithGoogleOcr(file);
+    if (!extractedText || extractedText.length < 40) {
+      throw new Error(
+        `OCR_TEXT_EMPTY: Google Drive OCR did not extract enough text from ${file.getName()}. Improve the scan or enter the voucher manually; no Gemini request was used.`,
+      );
+    }
+
+    Logger.log(
+      `Drive OCR extracted ${extractedText.length} characters from ${file.getName()}; Gemini will receive text only`,
+      "INFO",
+    );
+    return {
+      type: "text",
+      text: extractedText,
+      mimeType: "text/plain",
+      sizeBytes: extractedText.length,
+    };
   },
 };

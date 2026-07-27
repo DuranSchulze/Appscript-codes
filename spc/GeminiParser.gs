@@ -1,7 +1,7 @@
 /**
  * Gemini AI Parser for Petty Cash Vouchers
- * Version: 4.0 (Enhanced with Exponential Backoff & Rate Limiting)
- * Last Updated: November 10, 2025
+ * Version: 5.0 (Local PDF extraction + quota-aware parsing)
+ * Last Updated: July 22, 2026
  */
 
 var GeminiParser = {
@@ -10,7 +10,7 @@ var GeminiParser = {
    */
   getRetryConfig() {
     return {
-      MAX_RETRIES: 5,
+      MAX_RETRIES: 2,
       INITIAL_BACKOFF_MS: 1000, // 1 second
       MAX_BACKOFF_MS: 60000, // 60 seconds
       BACKOFF_MULTIPLIER: 2,
@@ -20,7 +20,7 @@ var GeminiParser = {
   getModelName() {
     const modelFromProps =
       PropertiesService.getScriptProperties().getProperty("GEMINI_MODEL");
-    const model = (modelFromProps || "gemini-3.1-flash-lite").trim();
+    const model = (modelFromProps || "gemini-2.5-flash-lite").trim();
     return this.replaceDeprecatedModel(this.normalizeModelName(model));
   },
 
@@ -41,9 +41,10 @@ var GeminiParser = {
     const replacements = {
       "gemini-2.0-flash": "gemini-3.5-flash",
       "gemini-2.0-flash-001": "gemini-3.5-flash",
-      "gemini-2.0-flash-lite": "gemini-3.1-flash-lite",
-      "gemini-2.0-flash-lite-001": "gemini-3.1-flash-lite",
-      "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
+      "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
+      "gemini-2.0-flash-lite-001": "gemini-2.5-flash-lite",
+      "gemini-3.1-flash-lite": "gemini-2.5-flash-lite",
+      "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
       "gemini-3-pro-preview": "gemini-3.1-pro-preview",
     };
     return replacements[model] || model;
@@ -111,13 +112,12 @@ var GeminiParser = {
 
     return {
       type: "array",
-      minItems: 1,
+      minItems: 0,
       items: {
         type: "object",
         properties: voucherProperties,
         required: fields.map((field) => field.key),
         propertyOrdering: fields.map((field) => field.key),
-        additionalProperties: false,
       },
     };
   },
@@ -139,6 +139,17 @@ Rules:
 - Return one JSON object per voucher row.
 - Use empty strings for missing fields.
 - Return an empty JSON array if no voucher rows are found.`;
+  },
+
+  annotateVoucherSections(text) {
+    let sectionNumber = 0;
+    return String(text).replace(
+      /(^|\n)(\s*(?:petty\s+cash\s+voucher|voucher\s*(?:no\.?|number|reference)\s*[:#]?))/gi,
+      (match, lineStart, heading) => {
+        sectionNumber++;
+        return `${lineStart}\n--- DETECTED VOUCHER SECTION ${sectionNumber} ---\n${heading}`;
+      },
+    );
   },
 
   logFileSizeGuidance(file, fileContent) {
@@ -176,21 +187,28 @@ Rules:
     return String(text).replace(/key=([^&\s]+)/g, "key=***");
   },
 
-  isZeroQuotaError(apiError) {
-    const message =
-      apiError && apiError.message ? String(apiError.message) : "";
-    if (message.includes("limit: 0")) return true;
-    if (apiError && apiError.status === "RESOURCE_EXHAUSTED" && message) {
-      return message.includes("Quota exceeded") && message.includes("limit: 0");
-    }
-    return false;
+  isQuotaError(error) {
+    const message = String(
+      error && error.message ? error.message : error || "",
+    ).toLowerCase();
+    return (
+      message.includes("generate_content_free_tier_requests") ||
+      message.includes("resource_exhausted") ||
+      message.includes("exceeded your current quota") ||
+      message.includes("quota exceeded") ||
+      message.includes("quota_exhausted") ||
+      message.includes("daily api limit")
+    );
   },
 
   /**
    * Parse multiple vouchers from a document using Gemini 2.0 Flash
    */
   parseMultipleVouchers(file, apiKey) {
-    const fileContent = DriveManager.getFileContent(file);
+    const fileContent = DriveManager.getContentForVoucherParsing(file);
+    if (fileContent.type === "text") {
+      fileContent.text = this.annotateVoucherSections(fileContent.text);
+    }
     this.logFileSizeGuidance(file, fileContent);
     const modelSequence = this.getModelSequence();
     const errors = [];
@@ -214,10 +232,8 @@ Rules:
           );
         }
 
-        const cleanedResult = this.cleanJsonResponse(result);
-        const parsedData = JSON.parse(cleanedResult);
-
-        const vouchers = Array.isArray(parsedData) ? parsedData : [parsedData];
+        const vouchers = this.parseMultiVoucherJsonResponse(result);
+        this.validateVoucherArray(vouchers, fileContent);
 
         console.log(
           `Gemini extracted ${vouchers.length} voucher(s) from ${file.getName()} using ${modelName}`,
@@ -232,15 +248,20 @@ Rules:
         const safeMessage = this.maskApiKeyInText(error && error.message);
         errors.push(`${modelName}: ${safeMessage}`);
 
-        if (
-          safeMessage.includes("QUOTA_ZERO") ||
-          safeMessage.includes("Daily API limit")
-        ) {
-          break;
+        if (this.isQuotaError(error)) {
+          throw new Error(`QUOTA_EXHAUSTED: ${safeMessage}`);
+        }
+
+        const shouldUseStrongerModel =
+          (error && error.name === "SyntaxError") ||
+          safeMessage.includes("VALIDATION_FAILED") ||
+          safeMessage.includes("Invalid response structure");
+        if (!shouldUseStrongerModel) {
+          throw error;
         }
 
         Logger.log(
-          `Gemini model ${modelName} failed, trying fallback if available: ${safeMessage}`,
+          `Gemini output from ${modelName} failed validation; trying the stronger model once: ${safeMessage}`,
           "WARNING",
         );
       }
@@ -249,6 +270,48 @@ Rules:
     const message = errors.join(" | ");
     console.error("Gemini parsing error:", message);
     throw new Error(`Multi-voucher Gemini parsing failed: ${message}`);
+  },
+
+  validateVoucherArray(vouchers, fileContent) {
+    if (!Array.isArray(vouchers)) {
+      throw new Error("VALIDATION_FAILED: Gemini did not return a JSON array");
+    }
+
+    const allowedFields = this.getExtractionFields().map((field) => field.key);
+    vouchers.forEach((voucher, index) => {
+      if (!voucher || typeof voucher !== "object" || Array.isArray(voucher)) {
+        throw new Error(
+          `VALIDATION_FAILED: Voucher ${index + 1} is not an object`,
+        );
+      }
+      const hasIdentity = ["voucherNo", "company", "errandDate", "details"].some(
+        (key) => String(voucher[key] || "").trim(),
+      );
+      if (!hasIdentity) {
+        throw new Error(
+          `VALIDATION_FAILED: Voucher ${index + 1} has no identifying fields`,
+        );
+      }
+      allowedFields.forEach((key) => {
+        if (voucher[key] === null || voucher[key] === undefined) {
+          voucher[key] = "";
+        } else if (typeof voucher[key] !== "string") {
+          voucher[key] = String(voucher[key]);
+        }
+      });
+    });
+
+    // An empty array is valid unless the extracted text clearly contains a
+    // voucher form. In that case the stronger model gets one validation retry.
+    if (
+      vouchers.length === 0 &&
+      fileContent.type === "text" &&
+      /voucher|errand\s+date|expense\s+classification/i.test(fileContent.text)
+    ) {
+      throw new Error(
+        "VALIDATION_FAILED: Voucher labels were present but no vouchers were returned",
+      );
+    }
   },
 
   /**
@@ -273,30 +336,9 @@ Rules:
     try {
       const retryConfig = this.getRetryConfig();
 
-      // Estimate tokens (rough approximation: 1 token ≈ 4 characters)
-      const estimatedTokens = Math.ceil((prompt.length + 1000) / 4); // Add buffer for image tokens
-
-      // PRE-REQUEST RATE LIMIT CHECK
-      const limitCheck = RateLimiterManager.checkLimit(estimatedTokens);
-      if (!limitCheck.canProceed) {
-        if (limitCheck.reason.includes("DAILY_LIMIT")) {
-          throw new Error(
-            `Daily API limit reached (200 requests). Quota resets at midnight PST. Wait time: ${(limitCheck.waitTime / 3600000).toFixed(1)} hours`,
-          );
-        }
-
-        console.log(
-          `⚠️ Rate limit pre-check: ${limitCheck.reason}, waiting ${(limitCheck.waitTime / 1000).toFixed(1)}s`,
-        );
-        Logger.log(`Rate limit pre-check: ${limitCheck.reason}`, "INFO");
-        rateLimiterSleep(
-          limitCheck.waitTime,
-          `Pre-request rate limiting (${limitCheck.reason})`,
-        );
-      }
-
-      // Prepare API request
-      const base64Data = Utilities.base64Encode(fileContent.data.getBytes());
+      const inputLength =
+        fileContent.type === "text" ? fileContent.text.length : 1000;
+      const estimatedTokens = Math.ceil((prompt.length + inputLength) / 4);
 
       const generationConfig = {
         temperature: 0,
@@ -305,7 +347,7 @@ Rules:
         maxOutputTokens: 2048,
       };
 
-      if (useMediaResolution) {
+      if (useMediaResolution && fileContent.type !== "text") {
         generationConfig.mediaResolution = "MEDIA_RESOLUTION_MEDIUM";
       }
 
@@ -314,18 +356,22 @@ Rules:
         generationConfig.responseSchema = this.getVoucherResponseSchema();
       }
 
+      const parts = [{ text: prompt }];
+      if (fileContent.type === "text") {
+        parts.push({ text: `\n\nSOURCE DOCUMENT:\n${fileContent.text}` });
+      } else {
+        parts.push({
+          inline_data: {
+            mime_type: fileContent.mimeType,
+            data: Utilities.base64Encode(fileContent.data.getBytes()),
+          },
+        });
+      }
+
       const payload = {
         contents: [
           {
-            parts: [
-              { text: prompt },
-              {
-                inline_data: {
-                  mime_type: fileContent.mimeType,
-                  data: base64Data,
-                },
-              },
-            ],
+            parts,
           },
         ],
         generationConfig,
@@ -340,6 +386,7 @@ Rules:
 
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
+      RateLimiterManager.acquireRequestSlot();
       console.log(
         `🌐 Gemini API request to ${modelName} (Attempt ${retryCount + 1}/${retryConfig.MAX_RETRIES + 1})`,
       );
@@ -384,112 +431,16 @@ Rules:
         throw new Error(`HTTP ${responseCode}: ${responseText}`);
       }
 
-      // HANDLE 429 (RATE LIMIT) ERRORS
+      // Quota/rate errors are not transient. Retrying only burns the free tier.
       if (responseCode === 429) {
-        if (this.isZeroQuotaError(errorResponse.error)) {
-          const safeServerMessage = this.maskApiKeyInText(
-            errorResponse.error?.message || "Quota exceeded",
-          );
-          throw new Error(`HTTP 429: QUOTA_ZERO: ${safeServerMessage}`);
-        }
-
-        if (retryCount >= retryConfig.MAX_RETRIES) {
-          throw new Error(
-            `Max retries (${retryConfig.MAX_RETRIES}) exceeded. Last error: ${errorResponse.error?.message || "Rate limit exceeded"}`,
-          );
-        }
-
-        // Extract suggested retry delay from API error
-        const suggestedDelay = this.extractRetryDelay(errorResponse.error);
-
-        // Calculate exponential backoff delay
-        const exponentialDelay =
-          retryConfig.INITIAL_BACKOFF_MS *
-          Math.pow(retryConfig.BACKOFF_MULTIPLIER, retryCount);
-
-        // Use the larger of suggested delay or exponential backoff
-        const backoffDelay = suggestedDelay
-          ? Math.max(suggestedDelay, exponentialDelay)
-          : exponentialDelay;
-
-        const finalDelay = Math.min(backoffDelay, retryConfig.MAX_BACKOFF_MS);
-
-        console.log(
-          `⚠️ HTTP 429: Quota exceeded. Retry ${retryCount + 1}/${retryConfig.MAX_RETRIES}`,
+        const safeServerMessage = this.maskApiKeyInText(
+          errorResponse.error?.message || "Quota exceeded",
         );
-        console.log(
-          `   Suggested: ${suggestedDelay ? (suggestedDelay / 1000).toFixed(1) : "none"}s, Using: ${(finalDelay / 1000).toFixed(1)}s`,
-        );
-        Logger.log(
-          `HTTP 429 detected. Retry ${retryCount + 1}/${retryConfig.MAX_RETRIES} after ${(finalDelay / 1000).toFixed(1)}s`,
-          "WARNING",
-        );
-
-        rateLimiterSleep(
-          finalDelay,
-          `Exponential backoff (attempt ${retryCount + 1})`,
-        );
-
-        // RECURSIVE RETRY
-        return this.callGeminiVision(
-          fileContent,
-          prompt,
-          apiKey,
-          retryCount + 1,
-          modelName,
-          useStructuredOutput,
-          useMediaResolution,
-        );
-      }
-
-      if (responseCode === 400 && useStructuredOutput) {
-        const errorMessage = errorResponse.error?.message || responseText;
-        if (
-          errorMessage.includes("responseFormat") ||
-          errorMessage.includes("schema") ||
-          errorMessage.includes("JSON mode")
-        ) {
-          Logger.log(
-            `Structured output unavailable for ${modelName}; retrying legacy JSON prompt mode`,
-            "WARNING",
-          );
-          return this.callGeminiVision(
-            fileContent,
-            prompt,
-            apiKey,
-            retryCount,
-            modelName,
-            false,
-            useMediaResolution,
-          );
-        }
-      }
-
-      if (responseCode === 400 && useMediaResolution) {
-        const errorMessage = errorResponse.error?.message || responseText;
-        if (
-          errorMessage.includes("mediaResolution") ||
-          errorMessage.includes("media_resolution") ||
-          errorMessage.includes("MediaResolution")
-        ) {
-          Logger.log(
-            `Media resolution setting unavailable for ${modelName}; retrying without it`,
-            "WARNING",
-          );
-          return this.callGeminiVision(
-            fileContent,
-            prompt,
-            apiKey,
-            retryCount,
-            modelName,
-            useStructuredOutput,
-            false,
-          );
-        }
+        throw new Error(`HTTP 429: QUOTA_EXHAUSTED: ${safeServerMessage}`);
       }
 
       // HANDLE 503 (SERVICE UNAVAILABLE) AND 500 (INTERNAL SERVER ERROR)
-      if (responseCode === 503 || responseCode === 500) {
+      if ([500, 502, 503, 504].includes(responseCode)) {
         if (retryCount >= retryConfig.MAX_RETRIES) {
           throw new Error(
             `Max retries (${retryConfig.MAX_RETRIES}) exceeded. Status: ${responseCode}, Error: ${errorResponse.error?.message || "Server error"}`,
@@ -539,14 +490,19 @@ Rules:
         throw error;
       }
 
-      // UNEXPECTED ERRORS - Retry if attempts remain
+      // Only network/temporary failures are retried. Validation, auth, quota,
+      // and ordinary programming errors fail immediately.
       console.error(
         "✗ Unexpected error:",
         this.maskApiKeyInText(error.message),
       );
 
       const retryConfig = this.getRetryConfig();
-      if (retryCount < retryConfig.MAX_RETRIES) {
+      const transientMessage = String(error && error.message ? error.message : error);
+      const isTransient = /timed?\s*out|temporary|connection reset|dns|network/i.test(
+        transientMessage,
+      );
+      if (isTransient && retryCount < retryConfig.MAX_RETRIES) {
         const backoffDelay = Math.min(
           retryConfig.INITIAL_BACKOFF_MS *
             Math.pow(retryConfig.BACKOFF_MULTIPLIER, retryCount),
@@ -574,9 +530,7 @@ Rules:
         );
       }
 
-      throw new Error(
-        `Request failed after ${retryConfig.MAX_RETRIES} retries: ${this.maskApiKeyInText(error.message)}`,
-      );
+      throw error;
     }
   },
 
@@ -636,6 +590,9 @@ Rules:
   parseMultiVoucherJsonResponse(text) {
     const cleanedResult = this.cleanJsonResponse(text);
     const parsedData = JSON.parse(cleanedResult);
-    return Array.isArray(parsedData) ? parsedData : [parsedData];
+    if (!Array.isArray(parsedData)) {
+      throw new Error("VALIDATION_FAILED: Gemini response must be a JSON array");
+    }
+    return parsedData;
   },
 };

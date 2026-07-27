@@ -25,9 +25,10 @@ function getConfig() {
   const deprecatedModelReplacements = {
     "gemini-2.0-flash": "gemini-3.5-flash",
     "gemini-2.0-flash-001": "gemini-3.5-flash",
-    "gemini-2.0-flash-lite": "gemini-3.1-flash-lite",
-    "gemini-2.0-flash-lite-001": "gemini-3.1-flash-lite",
-    "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
+    "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
+    "gemini-2.0-flash-lite-001": "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite": "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
     "gemini-3-pro-preview": "gemini-3.1-pro-preview",
   };
 
@@ -63,25 +64,15 @@ function getConfig() {
     MAX_VOUCHERS_PER_BATCH: 30,
     MULTI_VOUCHER_NOTE: "Part of multi-voucher file",
     DATE_SUBFOLDER_FORMAT: "MM Month",
-    MAX_FILES_PER_RUN: 10,
-    RATE_LIMIT_DELAY_MS: 5000, // Existing delay between files
+    // Three requests fit safely inside Apps Script's execution window when
+    // requests are globally spaced 65 seconds apart.
+    MAX_FILES_PER_RUN: 3,
 
-    // NEW: Enhanced rate limiting parameters
-    BATCH_SIZE: 3, // Process 3 files per batch
-    DELAY_BETWEEN_BATCHES_MS: 10000, // 10 seconds between batches
-    ENABLE_RATE_LIMITER: true, // Enable pre-request quota checking
-    MAX_RETRIES: 5, // Maximum retry attempts for 429 errors
-
-    DEFAULT_GEMINI_MODEL: "gemini-3.1-flash-lite",
+    DEFAULT_GEMINI_MODEL: "gemini-2.5-flash-lite",
     DEFAULT_GEMINI_FALLBACK_MODEL: "gemini-3.5-flash",
     GEMINI_MODELS: [
-      "gemini-3.1-flash-lite",
-      "gemini-3.5-flash",
-      "gemini-3-flash-preview",
-      "gemini-3.1-pro-preview",
-      "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
-      "gemini-2.5-pro",
+      "gemini-3.5-flash",
     ],
   };
 }
@@ -114,6 +105,7 @@ function onOpen() {
       .createMenu("Settings & Monitoring")
       .addItem("⚙️ Setup System", "setupSystemWizard")
       .addItem("🔑 Set Gemini API Key", "setGeminiApiKey")
+      .addItem("🌐 Set OCR Language", "setDriveOcrLanguage")
       .addItem("📁 Configure Drive Folder", "configureDriveFolder")
       .addSeparator()
       .addItem("📄 Check Drive Files", "checkDriveFiles")
@@ -760,6 +752,44 @@ function setGeminiApiKey() {
 }
 
 /**
+ * Configure the language hint used by Google Drive OCR.
+ * Common values for this project are "en" and "fil".
+ */
+function setDriveOcrLanguage() {
+  const ui = SpreadsheetApp.getUi();
+  const scriptProps = PropertiesService.getScriptProperties();
+  const currentLanguage =
+    scriptProps.getProperty("DRIVE_OCR_LANGUAGE") || "en";
+  const response = ui.prompt(
+    "🌐 Google Drive OCR Language",
+    `Current language: ${currentLanguage}\n\nEnter a language code such as:\n• en — English\n• fil — Filipino/Tagalog`,
+    ui.ButtonSet.OK_CANCEL,
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    return;
+  }
+
+  const language = response.getResponseText().trim().toLowerCase();
+  if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(language)) {
+    ui.alert(
+      "Invalid OCR Language",
+      "Enter a valid language code such as en or fil.",
+      ui.ButtonSet.OK,
+    );
+    return;
+  }
+
+  scriptProps.setProperty("DRIVE_OCR_LANGUAGE", language);
+  Logger.log(`Drive OCR language updated to ${language}`, "CONFIG");
+  ui.alert(
+    "OCR Language Updated",
+    `Google Drive OCR will now use: ${language}`,
+    ui.ButtonSet.OK,
+  );
+}
+
+/**
  * Process new files from Drive folder
  * Main processing function with rate limiting and error handling
  */
@@ -879,12 +909,6 @@ function processNewFiles() {
             "WARNING",
           );
           continue;
-        }
-
-        // Rate limiting
-        if (filesProcessed > 1) {
-          showToast("Waiting briefly to avoid Gemini quota errors.", "Rate Limit", 5);
-          Utilities.sleep(CONFIG.RATE_LIMIT_DELAY_MS);
         }
 
         showToast(`Reading vouchers from ${originalFileName}.`, "Gemini Parsing", 8);
@@ -1046,8 +1070,10 @@ function processNewFiles() {
           error && error.message ? error.message : "",
         );
         if (
-          errorMessage.includes("QUOTA_ZERO") ||
-          errorMessage.includes("Daily API limit reached")
+          errorMessage.includes("QUOTA_EXHAUSTED") ||
+          errorMessage.includes("RESOURCE_EXHAUSTED") ||
+          errorMessage.includes("Daily API limit reached") ||
+          errorMessage.includes("exceeded your current quota")
         ) {
           abortRun = true;
           showToast(
@@ -1248,11 +1274,12 @@ function showSystemInfo() {
 📅 Subfolder Format: ${CONFIG.DATE_SUBFOLDER_FORMAT}
 
 ⚙️ Processing Configuration:
-⏱️ Rate Limit Delay: ${CONFIG.RATE_LIMIT_DELAY_MS}ms
 📦 Max Files Per Run: ${CONFIG.MAX_FILES_PER_RUN}
-📦 Batch Size: ${CONFIG.BATCH_SIZE}
-⏳ Delay Between Batches: ${CONFIG.DELAY_BETWEEN_BATCHES_MS}ms
-🔄 Max Retries: ${CONFIG.MAX_RETRIES}
+⏱️ Minimum request interval: ${RateLimiterManager.getLimits().MIN_INTERVAL_MS / 1000}s
+🔄 Transient-error retries: ${GeminiParser.getRetryConfig().MAX_RETRIES}
+📄 PDF/image preprocessing: Drive OCR to Google Docs
+🌐 OCR language: ${scriptProps.getProperty("DRIVE_OCR_LANGUAGE") || "en"}
+⏳ OCR completion wait: ${(Number(scriptProps.getProperty("DRIVE_OCR_WAIT_MS")) || 3000) / 1000}s
 
 📊 Current API Usage (Rate Limiter):
 📈 Requests this minute: ${rateStats.requestsThisMinute}/${rateStats.maxRPM}

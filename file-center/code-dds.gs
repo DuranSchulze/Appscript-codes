@@ -13,7 +13,7 @@
  *
  * Version: 2025-2 (Production-Ready)
  * Last Updated: October 19, 2025
- * Author: Atty. Mary Wendy Duran
+ * Author: Zackery Alline Fajardo
  * ===================================================================
  */
 
@@ -29,7 +29,6 @@
  */
 
 // Configuration Constants
-const SPREADSHEET_ID = "1Pr90AQwuf1IX1rgtpfheSglpJyPwONdwhIKGY1Hg0u8";
 const TIMEZONE = "GMT+8";
 const MAX_FILENAME_LENGTH = 220;
 const MAX_FORMATTED_TITLE_LENGTH = 200;
@@ -58,8 +57,46 @@ function onOpen() {
     getTargetSpreadsheetId();
     createCustomMenu();
     Logger.log("Custom menu created successfully");
+
+    // Auto-detect: if sheets don't exist yet, prompt for one-click setup
+    promptSetupIfNeeded();
   } catch (error) {
     logError("Menu creation failed", error);
+  }
+}
+
+/**
+ * Checks if required sheets exist and prompts user to run setup if not.
+ */
+function promptSetupIfNeeded() {
+  try {
+    const ss = openTargetSpreadsheet();
+    const requiredSheets = [
+      "Dashboard",
+      "Scanned Files Log",
+      "Audit Trail",
+      "Flagged Files",
+    ];
+    const existing = requiredSheets.filter(
+      (name) => ss.getSheetByName(name),
+    );
+    if (existing.length >= requiredSheets.length) return; // All sheets exist
+
+    const missing = requiredSheets.filter(
+      (name) => !ss.getSheetByName(name),
+    );
+    const ui = SpreadsheetApp.getUi();
+    const response = ui.alert(
+      "⚡ Quick Setup",
+      `This spreadsheet needs ${missing.length} sheet(s) to be set up:\n\n• ${missing.join("\n• ")}\n\nRun one-click setup now?`,
+      ui.ButtonSet.YES_NO,
+    );
+    if (response === ui.Button.YES) {
+      initializeSetup();
+    }
+  } catch (e) {
+    // Silently skip if spreadsheet isn't accessible yet
+    Logger.log("Setup prompt skipped: " + e.message);
   }
 }
 
@@ -187,6 +224,17 @@ function initializeSetup() {
         : "";
     const successMessage = `✅ System Setup Complete!\n\n📊 Results:\n• Sheets Created: ${setupResults.sheetsCreated}\n• Sheets Updated: ${setupResults.sheetsUpdated}\n• Processing Time: ${processingTime.toFixed(2)} seconds${modelSetupMessage}\n\n🚀 Ready for AI-powered document processing!`;
     ui.alert("Setup Complete", successMessage, ui.ButtonSet.OK);
+
+    // Navigate user to the Dashboard sheet so they can start adding data
+    const dashboardSheet = ss.getSheetByName("Dashboard");
+    if (dashboardSheet) {
+      dashboardSheet.activate();
+      ss.toast(
+        "👉 Add your departments here: Column A = Name, B = Drive Folder ID, C = Emails",
+        "Start adding data",
+        10,
+      );
+    }
   } catch (error) {
     logError("System initialization failed", error);
     SpreadsheetApp.getUi().alert(
@@ -980,9 +1028,43 @@ Extract the complete title now:`;
       muteHttpExceptions: true,
     };
 
-    const response = UrlFetchApp.fetch(url, options);
-    const responseCode = response.getResponseCode();
-    const responseText = response.getContentText();
+    // Retry loop with exponential backoff for rate limits and server errors
+    let response, responseCode, responseText, lastError;
+    for (let attempt = 0; attempt < API_RETRY_ATTEMPTS; attempt++) {
+      try {
+        response = UrlFetchApp.fetch(url, options);
+        responseCode = response.getResponseCode();
+        responseText = response.getContentText();
+
+        if (responseCode === 429 || responseCode >= 500) {
+          lastError = new Error(
+            `HTTP ${responseCode}: ${responseText.substring(0, 200)}`,
+          );
+          if (attempt < API_RETRY_ATTEMPTS - 1) {
+            const delay = API_RETRY_DELAY * Math.pow(2, attempt);
+            debugLog(
+              `⏳ Retrying after HTTP ${responseCode} (attempt ${attempt + 1}/${API_RETRY_ATTEMPTS}, ${delay}ms delay)`,
+            );
+            Utilities.sleep(delay);
+            continue;
+          }
+        }
+        break; // Success or non-retryable client error (4xx except 429)
+      } catch (fetchError) {
+        lastError = fetchError;
+        if (attempt < API_RETRY_ATTEMPTS - 1) {
+          const delay = API_RETRY_DELAY * Math.pow(2, attempt);
+          debugLog(
+            `⏳ Network error, retrying (attempt ${attempt + 1}/${API_RETRY_ATTEMPTS}, ${delay}ms): ${fetchError.message}`,
+          );
+          Utilities.sleep(delay);
+        }
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error("Gemini API request failed after retries");
+    }
 
     debugLog(`📥 Response code: ${responseCode}`);
     debugLog(`Response preview: ${responseText.substring(0, 300)}...`);
@@ -1603,6 +1685,7 @@ function logScannedFileWithUrls(
       fileUrl: fileUrl,
       folderUrl: folderUrlForEmail,
       fileSize: formattedSize,
+      processTime: processTime,
       aiUsed: aiUsed,
       rowNumber: rowNumber,
     };
@@ -1663,6 +1746,7 @@ function getTodaysProcessedFilesWithDirectUrls(date) {
             fileUrl: emailData.fileUrl,
             folderUrl: emailData.folderUrl,
             fileSize: emailData.fileSize,
+            processTime: emailData.processTime || 0,
             aiUsed: emailData.aiUsed || "N/A",
           });
         } catch (e) {
@@ -2997,29 +3081,29 @@ function sendBatchEmails(
   emailType = "daily",
 ) {
   try {
-    const allRecipients = [...toRecipients, ...ccRecipients];
-    const totalRecipients = allRecipients.length;
-    const totalBatches = Math.ceil(totalRecipients / MAX_RECIPIENTS_PER_EMAIL);
+    const ccString = ccRecipients.join(",");
+    const ccCount = ccRecipients.length;
+    const toCount = toRecipients.length;
+
+    // Reserve room for CC in every batch so they're never dropped
+    const maxToPerBatch = Math.max(1, MAX_RECIPIENTS_PER_EMAIL - ccCount);
+    const totalBatches = Math.ceil(toCount / maxToPerBatch);
     let batchesSent = 0,
       errors = 0;
     const failedBatches = [];
 
     for (let i = 0; i < totalBatches; i++) {
-      const startIndex = i * MAX_RECIPIENTS_PER_EMAIL;
-      const endIndex = Math.min(
-        startIndex + MAX_RECIPIENTS_PER_EMAIL,
-        totalRecipients,
-      );
-      const batchRecipients = allRecipients.slice(startIndex, endIndex);
+      const startIndex = i * maxToPerBatch;
+      const endIndex = Math.min(startIndex + maxToPerBatch, toCount);
+      const batchToRecipients = toRecipients.slice(startIndex, endIndex);
+      const batchToString = batchToRecipients.join(",");
 
       try {
-        const batchString = batchRecipients.join(",");
-
         sendSingleEmail(
           todaysFiles,
           date,
-          batchString,
-          "",
+          batchToString,
+          ccString,
           i + 1,
           totalBatches,
           emailType,
@@ -3029,19 +3113,22 @@ function sendBatchEmails(
         if (i < totalBatches - 1) Utilities.sleep(EMAIL_BATCH_DELAY);
       } catch (batchError) {
         const errorMessage = batchError.message || String(batchError);
-        const sampleRecipients = formatEmailArrayPreview(batchRecipients, 8);
+        const sampleRecipients = formatEmailArrayPreview(
+          [...batchToRecipients, ...ccRecipients],
+          8,
+        );
 
         logError(`Batch ${i + 1} failed`, batchError);
         logAudit(
           "Batch email failed",
-          `Batch ${i + 1}/${totalBatches} failed for ${batchRecipients.length} recipients`,
+          `Batch ${i + 1}/${totalBatches} failed for ${batchToRecipients.length + ccCount} recipients`,
           "Error",
           `${errorMessage}\nSample recipients: ${sampleRecipients}`,
         );
 
         failedBatches.push({
           batchNumber: i + 1,
-          recipientCount: batchRecipients.length,
+          recipientCount: batchToRecipients.length + ccCount,
           sampleRecipients: sampleRecipients,
           errorMessage: errorMessage,
         });
@@ -3049,7 +3136,8 @@ function sendBatchEmails(
       }
     }
 
-    const successMessage = `Batch sending: ${batchesSent}/${totalBatches} batches to ${totalRecipients} recipients`;
+    const totalRecipients = toCount + ccCount;
+    const successMessage = `Batch sending: ${batchesSent}/${totalBatches} batches to ${totalRecipients} recipients (${toCount} TO + ${ccCount} CC)`;
     logAudit(
       errors > 0 ? "Batch sending with errors" : "Batch sending complete",
       successMessage,
@@ -3119,8 +3207,18 @@ function sendSingleEmail(
     });
     const totalSize = formatFileSize(totalSizeBytes);
 
-    // Calculate average processing time
-    let avgProcessTime = "1.2s"; // Default if not available
+    // Calculate actual average processing time from today's file data
+    let avgProcessTime = "1.2s";
+    const filesWithTime = todaysFiles.filter(
+      (f) => typeof f.processTime === "number" && f.processTime > 0,
+    );
+    if (filesWithTime.length > 0) {
+      const totalTime = filesWithTime.reduce(
+        (sum, f) => sum + f.processTime,
+        0,
+      );
+      avgProcessTime = (totalTime / filesWithTime.length).toFixed(1) + "s";
+    }
 
     // Start HTML email with blue theme
     let htmlBody = `<!DOCTYPE html>
@@ -3312,7 +3410,7 @@ function sendSingleEmail(
       attachments: [],
     };
 
-    if (ccRecipients && ccRecipients.trim() && !isBatched) {
+    if (ccRecipients && ccRecipients.trim()) {
       emailOptions.cc = ccRecipients;
     }
 
@@ -3777,7 +3875,9 @@ function getTargetSpreadsheetId() {
   var storedId = properties.getProperty("TARGET_SPREADSHEET_ID");
   if (storedId) return storedId;
 
-  return SPREADSHEET_ID;
+  throw new Error(
+    "No spreadsheet ID found. Please open the bound spreadsheet at least once so the script can detect it."
+  );
 }
 
 function openTargetSpreadsheet() {

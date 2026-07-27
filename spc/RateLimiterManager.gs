@@ -11,6 +11,14 @@
  * Tracks requests per minute, tokens per minute, and daily requests
  */
 const RateLimiterManager = {
+  getLimits() {
+    const props = PropertiesService.getScriptProperties();
+    return {
+      MAX_RPD: Number(props.getProperty("GEMINI_MAX_REQUESTS_PER_DAY")) || 20,
+      MIN_INTERVAL_MS:
+        Number(props.getProperty("GEMINI_REQUEST_INTERVAL_MS")) || 65000,
+    };
+  },
   /**
    * Get rate limiter state from PropertiesService (persistent across executions)
    */
@@ -79,10 +87,10 @@ const RateLimiterManager = {
     const state = this.getState();
     const now = Date.now();
 
-    // Gemini 2.0 Flash Free Tier limits
-    const MAX_RPM = 15; // Requests per minute
+    const limits = this.getLimits();
+    const MAX_RPM = 1;
     const MAX_TPM = 1000000; // Tokens per minute
-    const MAX_RPD = 200; // Requests per day
+    const MAX_RPD = limits.MAX_RPD;
 
     // Check daily limit
     if (state.dailyRequestCount >= MAX_RPD) {
@@ -133,19 +141,49 @@ const RateLimiterManager = {
    */
   recordRequest(tokensUsed = 0) {
     const state = this.getState();
-    const now = Date.now();
-
-    state.requestTimes.push(now);
-    state.tokenEvents.push({ time: now, tokens: tokensUsed });
+    state.tokenEvents.push({ time: Date.now(), tokens: tokensUsed });
     state.tokenCount += tokensUsed;
-    state.dailyRequestCount++;
-    state.lastRequestTime = now;
 
     this.saveState(state);
 
     console.log(
-      `📊 Rate Stats: RPM=${state.requestTimes.length}/15, Daily=${state.dailyRequestCount}/200, Tokens≈${state.tokenCount}`,
+      `📊 Rate Stats: requests today=${state.dailyRequestCount}/${this.getLimits().MAX_RPD}, Tokens≈${state.tokenCount}`,
     );
+  },
+
+  /**
+   * Reserve the next global request slot. The script lock makes this a
+   * persistent concurrency-1 queue even when two users start processing.
+   */
+  acquireRequestSlot() {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(300000);
+
+    try {
+      const limits = this.getLimits();
+      const state = this.getState();
+      if (state.dailyRequestCount >= limits.MAX_RPD) {
+        throw new Error(
+          `Daily API limit reached (${state.dailyRequestCount}/${limits.MAX_RPD}).`,
+        );
+      }
+
+      const waitMs = Math.max(
+        0,
+        limits.MIN_INTERVAL_MS - (Date.now() - (state.lastRequestTime || 0)),
+      );
+      if (waitMs > 0) {
+        rateLimiterSleep(waitMs, "Gemini request queue");
+      }
+
+      // Reserve before UrlFetch so failed HTTP attempts are also rate-limited.
+      state.requestTimes.push(Date.now());
+      state.dailyRequestCount++;
+      state.lastRequestTime = Date.now();
+      this.saveState(state);
+    } finally {
+      lock.releaseLock();
+    }
   },
 
   /**
@@ -184,8 +222,8 @@ const RateLimiterManager = {
       requestsThisMinute: state.requestTimes.length,
       requestsToday: state.dailyRequestCount,
       tokensThisMinute: state.tokenCount,
-      maxRPM: 15,
-      maxRPD: 200,
+      maxRPM: 1,
+      maxRPD: this.getLimits().MAX_RPD,
       maxTPM: 1000000,
     };
   },
