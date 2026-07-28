@@ -1825,7 +1825,7 @@ function sendAlertEmail(toRecipients, ccRecipients, subject, htmlBody) {
 
   const emailOptions = {
     htmlBody: htmlBody,
-    name: "DDS Alert Automation",
+    name: "Akasya Alert Automation",
   };
 
   if (ccRecipients && ccRecipients.length > 0) {
@@ -1918,10 +1918,10 @@ function notifyNoFilesForDay(date, departments) {
       return;
     }
 
-    const subject = `DDS Alert - No Files Processed (${date})`;
+    const subject = `Akasya Alert - No Files Processed (${date})`;
     const htmlBody = `
       <div style="font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;">
-        <h2 style="margin:0 0 10px 0;color:#1d4ed8;">DDS Daily Alert: No Files Processed</h2>
+        <h2 style="margin:0 0 10px 0;color:#1d4ed8;">Akasya Daily Alert: No Files Processed</h2>
         <p style="margin:0 0 8px 0;"><strong>Date:</strong> ${date}</p>
         <p style="margin:0 0 12px 0;">No files were processed for today.</p>
         <p style="margin:0;">Please check the source department folders, upload timing, and schedule status if this is unexpected.</p>
@@ -1987,7 +1987,7 @@ function notifyProcessingErrorsForToday(departments, processingSummary) {
 
     const htmlBody = `
       <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;">
-        <h2 style="margin:0 0 10px 0;color:#b91c1c;">DDS Error Alert Summary</h2>
+        <h2 style="margin:0 0 10px 0;color:#b91c1c;">Akasya Error Alert Summary</h2>
         <p style="margin:0 0 10px 0;"><strong>Date:</strong> ${today}</p>
 
         <div style="margin-bottom:14px;padding:10px;border:1px solid #fecaca;background:#fef2f2;border-radius:6px;">
@@ -2022,7 +2022,7 @@ function notifyProcessingErrorsForToday(departments, processingSummary) {
       </div>
     `;
 
-    const subject = `DDS Alert - ${processingSummary.errors} Processing Error(s) on ${today}`;
+    const subject = `Akasya Alert - ${processingSummary.errors} Processing Error(s) on ${today}`;
     const sent = sendAlertEmail(
       recipients.to,
       recipients.cc,
@@ -3178,8 +3178,8 @@ function sendSingleEmail(
 
     // Subject line
     const subject = isWeekly
-      ? `DDS Weekly Summary of Received Documents - Week ending ${date}${batchInfo}`
-      : `DDS Everyday Summary of Received Documents - ${date}${batchInfo}`;
+      ? `Akasya Weekly Summary of Received Documents - Week ending ${date}${batchInfo}`
+      : `Akasya Everyday Summary of Received Documents - ${date}${batchInfo}`;
 
     const filesByDept = {};
     todaysFiles.forEach((file) => {
@@ -3240,17 +3240,17 @@ function sendSingleEmail(
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;background-color:#f0f4f8;">
   <div class="container" style="max-width:700px;margin:20px auto;background-color:#ffffff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1);overflow:hidden;">
     
-    <!-- Header with Blue Gradient -->
-    <div style="background:linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #60a5fa 100%);color:white;padding:30px 20px;text-align:center;">
-      <h1 style="margin:0;font-size:26px;font-weight:600;letter-spacing:0.5px;">📋 DDS - ${isWeekly ? "Weekly" : "Daily"} Document Report</h1>
+    <!-- Header with Amber/Gold Gradient -->
+    <div style="background:linear-gradient(135deg, #92400e 0%, #d97706 50%, #fbbf24 100%);color:white;padding:30px 20px;text-align:center;">
+      <h1 style="margin:0;font-size:26px;font-weight:600;letter-spacing:0.5px;">📋 Akasya - ${isWeekly ? "Weekly" : "Daily"} Document Report</h1>
       <p style="margin:8px 0 0 0;font-size:14px;opacity:0.9;">${isWeekly ? "Week ending" : ""} ${date}</p>
     </div>`;
 
     // Batch warning (if applicable)
     if (isBatched) {
       htmlBody += `
-    <div style="background:#dbeafe;padding:12px 20px;margin:0;border-left:4px solid #3b82f6;">
-      <strong style="color:#1e40af;">📨 Batch ${batchNumber} of ${totalBatches}</strong>
+    <div style="background:#fef3c7;padding:12px 20px;margin:0;border-left:4px solid #d97706;">
+      <strong style="color:#92400e;">📨 Batch ${batchNumber} of ${totalBatches}</strong>
     </div>`;
     }
 
@@ -3258,21 +3258,21 @@ function sendSingleEmail(
     htmlBody += `
     <div style="padding:20px;">
       <div class="stat-row" style="display:flex;justify-content:space-between;gap:10px;margin-bottom:20px;">
-        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #bfdbfe;">
-          <div style="font-size:28px;font-weight:700;color:#1e40af;margin-bottom:4px;">${todaysFiles.length}</div>
-          <div style="font-size:11px;color:#64748b;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">Files</div>
+        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #fde68a;">
+          <div style="font-size:28px;font-weight:700;color:#92400e;margin-bottom:4px;">${todaysFiles.length}</div>
+          <div style="font-size:11px;color:#78716c;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">Files</div>
         </div>
-        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #bfdbfe;">
-          <div style="font-size:28px;font-weight:700;color:#1e40af;margin-bottom:4px;">${Object.keys(filesByDept).length}</div>
-          <div style="font-size:11px;color:#64748b;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">Departments</div>
+        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #fde68a;">
+          <div style="font-size:28px;font-weight:700;color:#92400e;margin-bottom:4px;">${Object.keys(filesByDept).length}</div>
+          <div style="font-size:11px;color:#78716c;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">Departments</div>
         </div>
-        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #bfdbfe;">
-          <div style="font-size:28px;font-weight:700;color:#1e40af;margin-bottom:4px;">${totalSize.split(" ")[0]}</div>
-          <div style="font-size:11px;color:#64748b;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">${totalSize.split(" ")[1]}</div>
+        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #fde68a;">
+          <div style="font-size:28px;font-weight:700;color:#92400e;margin-bottom:4px;">${totalSize.split(" ")[0]}</div>
+          <div style="font-size:11px;color:#78716c;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">${totalSize.split(" ")[1]}</div>
         </div>
-        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #bfdbfe;">
-          <div style="font-size:28px;font-weight:700;color:#1e40af;margin-bottom:4px;">${avgProcessTime.replace("s", "")}</div>
-          <div style="font-size:11px;color:#64748b;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">AVG TIME (s)</div>
+        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #fde68a;">
+          <div style="font-size:28px;font-weight:700;color:#92400e;margin-bottom:4px;">${avgProcessTime.replace("s", "")}</div>
+          <div style="font-size:11px;color:#78716c;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">AVG TIME (s)</div>
         </div>
       </div>`;
 
@@ -3284,50 +3284,50 @@ function sendSingleEmail(
         Math.round((files.length / todaysFiles.length) * 100),
       );
 
-      // Blue shades for different departments
+      // Amber/gold shades for different departments
       const blueShades = [
         {
-          bg: "#eff6ff",
-          border: "#3b82f6",
-          text: "#1e40af",
-          progress: "#3b82f6",
-        }, // Standard blue
+          bg: "#fffbeb",
+          border: "#d97706",
+          text: "#92400e",
+          progress: "#d97706",
+        }, // Warm amber
         {
-          bg: "#f0f9ff",
-          border: "#0284c7",
-          text: "#075985",
-          progress: "#0284c7",
-        }, // Sky blue
+          bg: "#fefce8",
+          border: "#ca8a04",
+          text: "#854d0e",
+          progress: "#ca8a04",
+        }, // Golden yellow
         {
-          bg: "#ecfeff",
-          border: "#06b6d4",
-          text: "#0e7490",
-          progress: "#06b6d4",
-        }, // Cyan
+          bg: "#fef9c3",
+          border: "#eab308",
+          text: "#713f12",
+          progress: "#eab308",
+        }, // Bright gold
         {
-          bg: "#f0fdfa",
-          border: "#14b8a6",
-          text: "#115e59",
-          progress: "#14b8a6",
-        }, // Teal
+          bg: "#fff7ed",
+          border: "#ea580c",
+          text: "#9a3412",
+          progress: "#ea580c",
+        }, // Deep orange
         {
-          bg: "#f0fdf4",
-          border: "#10b981",
-          text: "#065f46",
-          progress: "#10b981",
-        }, // Emerald
+          bg: "#fef2f2",
+          border: "#dc2626",
+          text: "#991b1b",
+          progress: "#dc2626",
+        }, // Rust red
       ];
       const colors = blueShades[index % blueShades.length];
 
       htmlBody += `
-      <div style="background:${colors.bg};border:2px solid ${colors.border};border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 2px 6px rgba(59,130,246,0.08);">
+      <div style="background:${colors.bg};border:2px solid ${colors.border};border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 2px 6px rgba(217,119,6,0.08);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
           <h3 style="margin:0;color:${colors.text};font-size:18px;font-weight:600;">🏢 ${dept}</h3>
           <span style="background:${colors.progress};color:white;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600;">${files.length} file${files.length > 1 ? "s" : ""}</span>
         </div>
         
         <!-- Progress Bar -->
-        <div style="background:#e0e7ff;height:6px;border-radius:3px;margin-bottom:16px;overflow:hidden;">
+        <div style="background:#fef3c7;height:6px;border-radius:3px;margin-bottom:16px;overflow:hidden;">
           <div style="background:${colors.progress};height:100%;width:${completionPercent}%;border-radius:3px;"></div>
         </div>
         
@@ -3372,24 +3372,24 @@ function sendSingleEmail(
 
     // MOVED: Search Function Section to bottom (BEFORE File Organization)
     htmlBody += `
-      <div style="background:linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);padding:16px;border-radius:8px;margin-bottom:18px;text-align:center;border:2px solid #3b82f6;">
-        <p style="margin:0 0 10px 0;color:#1e40af;font-size:15px;font-weight:600;">🔍 Search Processed Files</p>
-        <a href="${getSpreadsheetUrl()}" style="display:inline-block;background:#3b82f6;color:white;padding:11px 24px;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(59,130,246,0.3);transition:background 0.3s;">Open File Search</a>
-        <p style="margin:10px 0 0 0;color:#64748b;font-size:12px;">Search all processed files in the Scanned Files Log</p>
+      <div style="background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);padding:16px;border-radius:8px;margin-bottom:18px;text-align:center;border:2px solid #d97706;">
+        <p style="margin:0 0 10px 0;color:#92400e;font-size:15px;font-weight:600;">🔍 Search Processed Files</p>
+        <a href="${getSpreadsheetUrl()}" style="display:inline-block;background:#d97706;color:white;padding:11px 24px;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(217,119,6,0.3);transition:background 0.3s;">Open File Search</a>
+        <p style="margin:10px 0 0 0;color:#78716c;font-size:12px;">Search all processed files in the Scanned Files Log</p>
       </div>`;
 
-    // File Organization Info - Blue themed
+    // File Organization Info - Warm amber themed
     htmlBody += `
-      <div style="background:linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);padding:18px;border-radius:8px;margin-top:0;border-left:4px solid #0284c7;">
-        <h4 style="color:#075985;margin:0 0 10px 0;font-size:16px;font-weight:600;">📂 File Organization</h4>
-        <p style="margin:0 0 8px 0;color:#0c4a6e;line-height:1.6;font-size:14px;">Files are automatically organized into: <strong>Department → Year → Month → Date</strong></p>
-        <p style="margin:0;color:#64748b;font-size:13px;font-style:italic;">Example: Legal → 2025 → October → 19 October</p>
+      <div style="background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:18px;border-radius:8px;margin-top:0;border-left:4px solid #b45309;">
+        <h4 style="color:#92400e;margin:0 0 10px 0;font-size:16px;font-weight:600;">📂 File Organization</h4>
+        <p style="margin:0 0 8px 0;color:#78350f;line-height:1.6;font-size:14px;">Files are automatically organized into: <strong>Department → Year → Month → Date</strong></p>
+        <p style="margin:0;color:#78716c;font-size:13px;font-style:italic;">Example: Legal → 2025 → October → 19 October</p>
       </div>
     </div>
     
     <!-- Footer -->
     <div style="background:#f8fafc;padding:20px;text-align:center;border-top:1px solid #e2e8f0;">
-      <p style="margin:0 0 5px 0;color:#475569;font-size:13px;font-weight:500;">Automated by DDS v2025-10</p>
+      <p style="margin:0 0 5px 0;color:#475569;font-size:13px;font-weight:500;">Automated by Akasya v2025-10</p>
       <p style="margin:0;color:#94a3b8;font-size:12px;">Generated: ${new Date().toLocaleString("en-US", { timeZone: "Asia/Singapore" })} (GMT+8)</p>`;
 
     if (isBatched) {
@@ -3406,7 +3406,7 @@ function sendSingleEmail(
 
     const emailOptions = {
       htmlBody: htmlBody,
-      name: "DDS Document Automation",
+      name: "Akasya Document Automation",
       attachments: [],
     };
 
