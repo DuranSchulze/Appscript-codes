@@ -42,24 +42,62 @@ const DataValidator = {
   validateDate(dateStr) {
     if (!dateStr) return "";
 
-    try {
-      // Try to parse various date formats
-      const date = new Date(dateStr);
-      if (isNaN(date.getTime())) {
-        return "";
-      }
+    const value = String(dateStr).trim();
+    let match;
 
-      // Return in YYYY-MM-DD format
-      return (
-        date.getFullYear() +
-        "-" +
-        String(date.getMonth() + 1).padStart(2, "0") +
-        "-" +
-        String(date.getDate()).padStart(2, "0")
-      );
-    } catch (error) {
+    // Treat voucher dates as calendar dates, not moments in time. Constructing
+    // `new Date("YYYY-MM-DD")` interprets the value through a timezone and can
+    // move it to the previous day in some Apps Script/spreadsheet settings.
+    match = value.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:\D.*)?$/);
+    if (match) {
+      return this.formatDateParts(match[1], match[2], match[3]);
+    }
+
+    match = value.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+    if (match) {
+      const first = Number(match[1]);
+      const second = Number(match[2]);
+
+      // Use the unambiguous component when possible. For dates such as
+      // 07/29/2026, this is MM/DD/YYYY. Ambiguous numeric dates follow the
+      // spreadsheet's expected US-style entry format.
+      const month = first > 12 ? second : first;
+      const day = first > 12 ? first : second;
+      return this.formatDateParts(match[3], month, day);
+    }
+
+    return "";
+  },
+  /**
+   * Validate date components and return a timezone-free ISO calendar date.
+   */
+  formatDateParts(yearValue, monthValue, dayValue) {
+    const year = Number(yearValue);
+    const month = Number(monthValue);
+    const day = Number(dayValue);
+
+    if (
+      !Number.isInteger(year) ||
+      !Number.isInteger(month) ||
+      !Number.isInteger(day) ||
+      year < 1900 ||
+      year > 2100 ||
+      month < 1 ||
+      month > 12 ||
+      day < 1
+    ) {
       return "";
     }
+
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (day > daysInMonth) {
+      return "";
+    }
+
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(
+      2,
+      "0",
+    )}-${String(day).padStart(2, "0")}`;
   },
   /**
    * Validate voucher number format
@@ -102,7 +140,7 @@ const DataValidator = {
       Company: 200,
       Staff: 100,
       Service: 150,
-      Details: 500,
+      Details: 2000,
       "Expense Classification": 100,
       Location: 200,
     };

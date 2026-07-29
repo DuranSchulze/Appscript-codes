@@ -4,8 +4,10 @@ The parser is optimized for Gemini's limited free-request quota:
 
 - PDFs and images are first converted temporarily to a Google Doc for text extraction/OCR. This does not use a Gemini request.
 - The script waits three seconds for OCR to complete, reads the result with `DocumentApp`, and moves the temporary Google Doc to trash.
+- Summary-only PCF Voucher/cover pages are skipped unless OCR finds the detailed liquidation markers (`ERRAND DATE`, `DETAILS`, and at least one supporting errand field).
 - Gemini receives OCR text only. If OCR produces no usable text, processing stops without spending a Gemini request.
 - The complete extracted document is sent once and all vouchers are returned in one JSON array.
+- Voucher dates are handled as timezone-free calendar dates, and `DETAILS` must remain traceable verbatim to the OCR source instead of being summarized or rewritten.
 - `gemini-2.5-flash-lite` is the primary model. `gemini-3.5-flash` is used only if the primary response fails JSON/content validation.
 - Quota (`429` / `RESOURCE_EXHAUSTED`) errors stop immediately. Only temporary `5xx` and network failures are retried, at most twice.
 - A persistent lock and 65-second request interval serialize Gemini calls across concurrent Apps Script executions.

@@ -71,7 +71,8 @@ var GeminiParser = {
       },
       {
         key: "errandDate",
-        description: "date after ERRAND DATE; return YYYY-MM-DD",
+        description:
+          "date printed after ERRAND DATE; preserve the exact calendar day and return YYYY-MM-DD",
       },
       {
         key: "errandBy",
@@ -83,7 +84,8 @@ var GeminiParser = {
       },
       {
         key: "details",
-        description: "DETAILS column value; keep concise",
+        description:
+          "transcribe the DETAILS column value verbatim; preserve names, reference numbers, wording, and meaningful punctuation; do not summarize, correct, or rewrite",
       },
       {
         key: "mainLocation",
@@ -127,18 +129,52 @@ var GeminiParser = {
       .map((field) => `- ${field.key}: ${field.description}`)
       .join("\n");
 
-    return `Extract petty cash voucher rows only.
+    return `Extract liquidation/errand detail rows only.
 
 Target fields:
 ${fieldList}
 
 Rules:
 - Search only for the target fields above.
+- A valid source section must contain the detailed liquidation/errand fields, such as ERRAND DATE, ERRAND BY, SERVICE, DETAILS, Main Location of Errand, AMOUNT, and EXPENSE CLASSIFICATION.
+- Do not extract a PCF Voucher, Petty Cash Fund Voucher, request, cover sheet, replenishment sheet, receipt, or summary/list page merely because it contains a voucher number, company, date, or amount.
+- If a PDF contains both a PCF Voucher/summary page and detailed liquidation/errand rows, ignore the PCF Voucher/summary page and extract only the detailed rows.
+- Copy DETAILS exactly as printed. Do not shorten, paraphrase, translate, correct grammar, expand abbreviations, or combine it with SERVICE or other fields.
+- Preserve the calendar day printed under ERRAND DATE. Do not apply timezone conversion or substitute the document/processing date.
 - Do not transcribe, summarize, or describe unrelated page content.
-- If a page has a summary/list and no actual voucher form rows, ignore that page.
 - Return one JSON object per voucher row.
 - Use empty strings for missing fields.
 - Return an empty JSON array if no voucher rows are found.`;
+  },
+
+  hasDetailedLiquidationMarkers(text) {
+    const sourceText = String(text || "");
+    const hasErrandDate = /\berrand\s+date\b/i.test(sourceText);
+    const hasDetails = /\bdetails?\b/i.test(sourceText);
+    const supportingMarkers = [
+      /\berrand\s+by\b/i,
+      /\bservice\b/i,
+      /\bmain\s+location(?:\s+of\s+errand)?\b/i,
+      /\bexpense\s+classification\b/i,
+    ].filter((pattern) => pattern.test(sourceText)).length;
+
+    return hasErrandDate && hasDetails && supportingMarkers >= 1;
+  },
+
+  isSummaryOnlyPcfText(text) {
+    const sourceText = String(text || "");
+    const hasPcfVoucherHeading =
+      /\b(?:pcf|petty\s+cash\s+fund)\s+voucher\b/i.test(sourceText);
+    return (
+      hasPcfVoucherHeading &&
+      !this.hasDetailedLiquidationMarkers(sourceText)
+    );
+  },
+
+  normalizeForSourceEvidence(text) {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "");
   },
 
   annotateVoucherSections(text) {
@@ -208,6 +244,16 @@ Rules:
     const fileContent = DriveManager.getContentForVoucherParsing(file);
     if (fileContent.type === "text") {
       fileContent.text = this.annotateVoucherSections(fileContent.text);
+      if (!this.hasDetailedLiquidationMarkers(fileContent.text)) {
+        const skipReason = this.isSummaryOnlyPcfText(fileContent.text)
+          ? "summary-only PCF Voucher"
+          : "document without a detailed liquidation/errand section";
+        Logger.log(
+          `Skipped ${skipReason}: ${file.getName()}.`,
+          "WARNING",
+        );
+        return [];
+      }
     }
     this.logFileSizeGuidance(file, fileContent);
     const modelSequence = this.getModelSequence();
@@ -292,6 +338,20 @@ Rules:
           `VALIDATION_FAILED: Voucher ${index + 1} has no identifying fields`,
         );
       }
+
+      if (fileContent.type === "text" && voucher.details) {
+        const sourceEvidence = this.normalizeForSourceEvidence(fileContent.text);
+        const detailsEvidence = this.normalizeForSourceEvidence(voucher.details);
+        if (
+          detailsEvidence.length >= 6 &&
+          !sourceEvidence.includes(detailsEvidence)
+        ) {
+          throw new Error(
+            `VALIDATION_FAILED: Voucher ${index + 1} DETAILS was rewritten or is not present in the source text`,
+          );
+        }
+      }
+
       allowedFields.forEach((key) => {
         if (voucher[key] === null || voucher[key] === undefined) {
           voucher[key] = "";
@@ -301,12 +361,13 @@ Rules:
       });
     });
 
-    // An empty array is valid unless the extracted text clearly contains a
-    // voucher form. In that case the stronger model gets one validation retry.
+    // An empty array is valid unless the extracted text contains several
+    // detailed liquidation/errand labels. A PCF heading by itself is not
+    // evidence of a row that should be extracted.
     if (
       vouchers.length === 0 &&
       fileContent.type === "text" &&
-      /voucher|errand\s+date|expense\s+classification/i.test(fileContent.text)
+      this.hasDetailedLiquidationMarkers(fileContent.text)
     ) {
       throw new Error(
         "VALIDATION_FAILED: Voucher labels were present but no vouchers were returned",
