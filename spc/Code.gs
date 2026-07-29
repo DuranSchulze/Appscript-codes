@@ -22,27 +22,6 @@
 function getConfig() {
   const scriptProps = PropertiesService.getScriptProperties();
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  const deprecatedModelReplacements = {
-    "gemini-2.0-flash": "gemini-3.5-flash",
-    "gemini-2.0-flash-001": "gemini-3.5-flash",
-    "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
-    "gemini-2.0-flash-lite-001": "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite": "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
-    "gemini-3-pro-preview": "gemini-3.1-pro-preview",
-  };
-
-  ["GEMINI_MODEL", "GEMINI_FALLBACK_MODEL"].forEach((propertyName) => {
-    const currentModel = scriptProps.getProperty(propertyName);
-    const replacementModel = deprecatedModelReplacements[currentModel];
-    if (replacementModel) {
-      scriptProps.setProperty(propertyName, replacementModel);
-      Logger.log(
-        `Updated ${propertyName} from deprecated ${currentModel} to ${replacementModel}`,
-        "CONFIG",
-      );
-    }
-  });
 
   return {
     DRIVE_FOLDER_ID: scriptProps.getProperty("DRIVE_FOLDER_ID") || "",
@@ -70,11 +49,88 @@ function getConfig() {
 
     DEFAULT_GEMINI_MODEL: "gemini-2.5-flash-lite",
     DEFAULT_GEMINI_FALLBACK_MODEL: "gemini-3.5-flash",
-    GEMINI_MODELS: [
-      "gemini-2.5-flash-lite",
-      "gemini-3.5-flash",
-    ],
   };
+}
+
+/**
+ * Fetch every model visible to the configured API key that supports the
+ * generateContent method used by this automation.
+ */
+function fetchAvailableGeminiModels(apiKey) {
+  if (!apiKey) {
+    throw new Error("Gemini API key is not configured.");
+  }
+
+  const modelsById = {};
+  let pageToken = "";
+
+  do {
+    let url =
+      "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000";
+    if (pageToken) {
+      url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    }
+
+    const response = UrlFetchApp.fetch(url, {
+      method: "get",
+      headers: {
+        "x-goog-api-key": apiKey,
+      },
+      muteHttpExceptions: true,
+    });
+    const responseCode = response.getResponseCode();
+    const responseText = response.getContentText();
+
+    if (responseCode !== 200) {
+      let serverMessage = responseText;
+      try {
+        const errorResponse = JSON.parse(responseText);
+        serverMessage = errorResponse.error?.message || responseText;
+      } catch (parseError) {
+        // Keep the raw response when the API did not return JSON.
+      }
+      throw new Error(
+        `Unable to list Gemini models (HTTP ${responseCode}): ${serverMessage}`,
+      );
+    }
+
+    const result = JSON.parse(responseText);
+    (result.models || []).forEach((model) => {
+      const supportedMethods = model.supportedGenerationMethods || [];
+      const supportsGenerateContent = supportedMethods.some(
+        (method) => String(method).toLowerCase() === "generatecontent",
+      );
+      if (!supportsGenerateContent || !model.name) {
+        return;
+      }
+
+      const modelId = String(model.name).replace(/^models\//, "");
+      modelsById[modelId] = {
+        id: modelId,
+        displayName: model.displayName || modelId,
+        inputTokenLimit: Number(model.inputTokenLimit) || 0,
+        outputTokenLimit: Number(model.outputTokenLimit) || 0,
+      };
+    });
+
+    pageToken = result.nextPageToken || "";
+  } while (pageToken);
+
+  return Object.keys(modelsById)
+    .sort()
+    .map((modelId) => modelsById[modelId]);
+}
+
+function formatGeminiModelList(models) {
+  return models
+    .map((model, index) => {
+      const displaySuffix =
+        model.displayName && model.displayName !== model.id
+          ? ` — ${model.displayName}`
+          : "";
+      return `${index + 1}. ${model.id}${displaySuffix}`;
+    })
+    .join("\n");
 }
 
 function showToast(message, title = "Liquidation System", timeoutSeconds = 5) {
@@ -134,12 +190,34 @@ function setGeminiModel() {
   const CONFIG = getConfig();
   const ui = SpreadsheetApp.getUi();
   const scriptProps = PropertiesService.getScriptProperties();
+  const apiKey = scriptProps.getProperty("GEMINI_API_KEY") || "";
 
-  const availableModels = CONFIG.GEMINI_MODELS || [];
+  if (!apiKey) {
+    ui.alert(
+      "❌ Gemini API Key Required",
+      "Configure the Gemini API key before loading available models.",
+      ui.ButtonSet.OK,
+    );
+    return;
+  }
+
+  let availableModels;
+  try {
+    availableModels = fetchAvailableGeminiModels(apiKey);
+  } catch (error) {
+    Logger.log(`Gemini model discovery failed: ${error.message}`, "ERROR");
+    ui.alert(
+      "❌ Unable to Load Gemini Models",
+      error.message,
+      ui.ButtonSet.OK,
+    );
+    return;
+  }
+
   if (!availableModels.length) {
     ui.alert(
-      "❌ No Models Configured",
-      "No Gemini models are configured in the script.",
+      "❌ No Compatible Models Found",
+      "The Gemini API did not return any models that support generateContent for this API key.",
       ui.ButtonSet.OK,
     );
     return;
@@ -150,9 +228,7 @@ function setGeminiModel() {
   const currentFallbackModel =
     scriptProps.getProperty("GEMINI_FALLBACK_MODEL") ||
     CONFIG.DEFAULT_GEMINI_FALLBACK_MODEL;
-  const modelListText = availableModels
-    .map((m, i) => `${i + 1}. ${m}`)
-    .join("\n");
+  const modelListText = formatGeminiModelList(availableModels);
 
   const response = ui.prompt(
     "🤖 Select Primary Gemini Model",
@@ -175,7 +251,7 @@ function setGeminiModel() {
     return;
   }
 
-  const model = availableModels[index - 1];
+  const model = availableModels[index - 1].id;
   scriptProps.setProperty("GEMINI_MODEL", model);
 
   const fallbackResponse = ui.prompt(
@@ -194,7 +270,7 @@ function setGeminiModel() {
         fallbackIndex >= 1 &&
         fallbackIndex <= availableModels.length
       ) {
-        fallbackModel = availableModels[fallbackIndex - 1];
+        fallbackModel = availableModels[fallbackIndex - 1].id;
         scriptProps.setProperty("GEMINI_FALLBACK_MODEL", fallbackModel);
       } else {
         ui.alert(
@@ -432,16 +508,37 @@ function setupSystemWizard() {
       }
     }
 
-    const availableModels = CONFIG.GEMINI_MODELS || [];
+    const configuredApiKey =
+      scriptProps.getProperty("GEMINI_API_KEY") || currentApiKey;
+    if (!configuredApiKey) {
+      ui.alert(
+        "❌ Gemini API Key Required",
+        "A valid Gemini API key is required to load the available models.",
+        ui.ButtonSet.OK,
+      );
+      return;
+    }
+
+    let availableModels;
+    try {
+      availableModels = fetchAvailableGeminiModels(configuredApiKey);
+    } catch (error) {
+      Logger.log(`Gemini model discovery failed: ${error.message}`, "ERROR");
+      ui.alert(
+        "❌ Unable to Load Gemini Models",
+        error.message,
+        ui.ButtonSet.OK,
+      );
+      return;
+    }
+
     if (availableModels.length) {
       const currentModel =
         scriptProps.getProperty("GEMINI_MODEL") || CONFIG.DEFAULT_GEMINI_MODEL;
       const currentFallbackModel =
         scriptProps.getProperty("GEMINI_FALLBACK_MODEL") ||
         CONFIG.DEFAULT_GEMINI_FALLBACK_MODEL;
-      const modelListText = availableModels
-        .map((m, i) => `${i + 1}. ${m}`)
-        .join("\n");
+      const modelListText = formatGeminiModelList(availableModels);
 
       const modelResponse = ui.prompt(
         "🤖 Step 3: Primary Gemini Model",
@@ -462,7 +559,10 @@ function setupSystemWizard() {
       if (selected) {
         const index = parseInt(selected, 10);
         if (index && index >= 1 && index <= availableModels.length) {
-          scriptProps.setProperty("GEMINI_MODEL", availableModels[index - 1]);
+          scriptProps.setProperty(
+            "GEMINI_MODEL",
+            availableModels[index - 1].id,
+          );
         } else {
           ui.alert(
             "⚠️ Invalid Model Selection",
@@ -497,7 +597,7 @@ function setupSystemWizard() {
         ) {
           scriptProps.setProperty(
             "GEMINI_FALLBACK_MODEL",
-            availableModels[fallbackIndex - 1],
+            availableModels[fallbackIndex - 1].id,
           );
         } else {
           ui.alert(
@@ -507,6 +607,13 @@ function setupSystemWizard() {
           );
         }
       }
+    } else {
+      ui.alert(
+        "❌ No Compatible Models Found",
+        "The Gemini API did not return any models that support generateContent for this API key.",
+        ui.ButtonSet.OK,
+      );
+      return;
     }
 
     // Create sheets

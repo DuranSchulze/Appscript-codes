@@ -21,7 +21,7 @@ var GeminiParser = {
     const modelFromProps =
       PropertiesService.getScriptProperties().getProperty("GEMINI_MODEL");
     const model = (modelFromProps || "gemini-2.5-flash-lite").trim();
-    return this.replaceDeprecatedModel(this.normalizeModelName(model));
+    return this.normalizeModelName(model);
   },
 
   getFallbackModelName() {
@@ -30,24 +30,11 @@ var GeminiParser = {
         "GEMINI_FALLBACK_MODEL",
       );
     const model = (modelFromProps || "gemini-3.5-flash").trim();
-    return this.replaceDeprecatedModel(this.normalizeModelName(model));
+    return this.normalizeModelName(model);
   },
 
   normalizeModelName(model) {
     return model.startsWith("models/") ? model.replace(/^models\//, "") : model;
-  },
-
-  replaceDeprecatedModel(model) {
-    const replacements = {
-      "gemini-2.0-flash": "gemini-3.5-flash",
-      "gemini-2.0-flash-001": "gemini-3.5-flash",
-      "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
-      "gemini-2.0-flash-lite-001": "gemini-2.5-flash-lite",
-      "gemini-3.1-flash-lite": "gemini-2.5-flash-lite",
-      "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
-      "gemini-3-pro-preview": "gemini-3.1-pro-preview",
-    };
-    return replacements[model] || model;
   },
 
   getModelSequence() {

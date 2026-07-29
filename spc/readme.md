@@ -8,7 +8,8 @@ The parser is optimized for Gemini's limited free-request quota:
 - Gemini receives OCR text only. If OCR produces no usable text, processing stops without spending a Gemini request.
 - The complete extracted document is sent once and all vouchers are returned in one JSON array.
 - Voucher dates are handled as timezone-free calendar dates, and `DETAILS` must remain traceable verbatim to the OCR source instead of being summarized or rewritten.
-- `gemini-2.5-flash-lite` is the primary model. `gemini-3.5-flash` is used only if the primary response fails JSON/content validation.
+- The setup and model-selection menus fetch the models visible to the configured API key from Gemini's `models.list` endpoint and show those supporting `generateContent`. The selected IDs are used without hardcoded remapping.
+- `gemini-2.5-flash-lite` and `gemini-3.5-flash` remain initial defaults until the user selects primary and fallback models.
 - Quota (`429` / `RESOURCE_EXHAUSTED`) errors stop immediately. Only temporary `5xx` and network failures are retried, at most twice.
 - A persistent lock and 65-second request interval serialize Gemini calls across concurrent Apps Script executions.
 - The local safety counter defaults to 20 attempts per day and can be overridden with the `GEMINI_MAX_REQUESTS_PER_DAY` script property.
