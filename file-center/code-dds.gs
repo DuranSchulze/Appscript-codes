@@ -3240,8 +3240,8 @@ function sendSingleEmail(
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;background-color:#f0f4f8;">
   <div class="container" style="max-width:700px;margin:20px auto;background-color:#ffffff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1);overflow:hidden;">
     
-    <!-- Header with Amber/Gold Gradient -->
-    <div style="background:linear-gradient(135deg, #92400e 0%, #d97706 50%, #fbbf24 100%);color:white;padding:30px 20px;text-align:center;">
+    <!-- Header with Green Gradient -->
+    <div style="background:linear-gradient(135deg, #064e3b 0%, #059669 50%, #10b981 100%);color:white;padding:30px 20px;text-align:center;">
       <h1 style="margin:0;font-size:26px;font-weight:600;letter-spacing:0.5px;">📋 Akasya - ${isWeekly ? "Weekly" : "Daily"} Document Report</h1>
       <p style="margin:8px 0 0 0;font-size:14px;opacity:0.9;">${isWeekly ? "Week ending" : ""} ${date}</p>
     </div>`;
@@ -3249,8 +3249,8 @@ function sendSingleEmail(
     // Batch warning (if applicable)
     if (isBatched) {
       htmlBody += `
-    <div style="background:#fef3c7;padding:12px 20px;margin:0;border-left:4px solid #d97706;">
-      <strong style="color:#92400e;">📨 Batch ${batchNumber} of ${totalBatches}</strong>
+    <div style="background:#d1fae5;padding:12px 20px;margin:0;border-left:4px solid #059669;">
+      <strong style="color:#064e3b;">📨 Batch ${batchNumber} of ${totalBatches}</strong>
     </div>`;
     }
 
@@ -3258,20 +3258,20 @@ function sendSingleEmail(
     htmlBody += `
     <div style="padding:20px;">
       <div class="stat-row" style="display:flex;justify-content:space-between;gap:10px;margin-bottom:20px;">
-        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #fde68a;">
-          <div style="font-size:28px;font-weight:700;color:#92400e;margin-bottom:4px;">${todaysFiles.length}</div>
+        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #a7f3d0;">
+          <div style="font-size:28px;font-weight:700;color:#064e3b;margin-bottom:4px;">${todaysFiles.length}</div>
           <div style="font-size:11px;color:#78716c;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">Files</div>
         </div>
-        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #fde68a;">
-          <div style="font-size:28px;font-weight:700;color:#92400e;margin-bottom:4px;">${Object.keys(filesByDept).length}</div>
+        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #a7f3d0;">
+          <div style="font-size:28px;font-weight:700;color:#064e3b;margin-bottom:4px;">${Object.keys(filesByDept).length}</div>
           <div style="font-size:11px;color:#78716c;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">Departments</div>
         </div>
-        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #fde68a;">
-          <div style="font-size:28px;font-weight:700;color:#92400e;margin-bottom:4px;">${totalSize.split(" ")[0]}</div>
+        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #a7f3d0;">
+          <div style="font-size:28px;font-weight:700;color:#064e3b;margin-bottom:4px;">${totalSize.split(" ")[0]}</div>
           <div style="font-size:11px;color:#78716c;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">${totalSize.split(" ")[1]}</div>
         </div>
-        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #fde68a;">
-          <div style="font-size:28px;font-weight:700;color:#92400e;margin-bottom:4px;">${avgProcessTime.replace("s", "")}</div>
+        <div class="stat-col" style="flex:1;background:linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);padding:16px;border-radius:8px;text-align:center;border:1px solid #a7f3d0;">
+          <div style="font-size:28px;font-weight:700;color:#064e3b;margin-bottom:4px;">${avgProcessTime.replace("s", "")}</div>
           <div style="font-size:11px;color:#78716c;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">AVG TIME (s)</div>
         </div>
       </div>`;
@@ -3284,50 +3284,50 @@ function sendSingleEmail(
         Math.round((files.length / todaysFiles.length) * 100),
       );
 
-      // Amber/gold shades for different departments
+      // Green shades for different departments
       const blueShades = [
         {
-          bg: "#fffbeb",
-          border: "#d97706",
-          text: "#92400e",
-          progress: "#d97706",
-        }, // Warm amber
+          bg: "#ecfdf5",
+          border: "#059669",
+          text: "#064e3b",
+          progress: "#059669",
+        }, // Emerald
         {
-          bg: "#fefce8",
-          border: "#ca8a04",
-          text: "#854d0e",
-          progress: "#ca8a04",
-        }, // Golden yellow
+          bg: "#f0fdf4",
+          border: "#16a34a",
+          text: "#14532d",
+          progress: "#16a34a",
+        }, // Forest green
         {
-          bg: "#fef9c3",
-          border: "#eab308",
-          text: "#713f12",
-          progress: "#eab308",
-        }, // Bright gold
+          bg: "#f7fee7",
+          border: "#65a30d",
+          text: "#3f6212",
+          progress: "#65a30d",
+        }, // Lime
         {
-          bg: "#fff7ed",
-          border: "#ea580c",
-          text: "#9a3412",
-          progress: "#ea580c",
-        }, // Deep orange
+          bg: "#f0fdfa",
+          border: "#0d9488",
+          text: "#115e59",
+          progress: "#0d9488",
+        }, // Teal
         {
-          bg: "#fef2f2",
-          border: "#dc2626",
-          text: "#991b1b",
-          progress: "#dc2626",
-        }, // Rust red
+          bg: "#eff6ff",
+          border: "#2563eb",
+          text: "#1e3a8a",
+          progress: "#2563eb",
+        }, // Blue (contrast)
       ];
       const colors = blueShades[index % blueShades.length];
 
       htmlBody += `
-      <div style="background:${colors.bg};border:2px solid ${colors.border};border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 2px 6px rgba(217,119,6,0.08);">
+      <div style="background:${colors.bg};border:2px solid ${colors.border};border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 2px 6px rgba(5,150,105,0.08);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
           <h3 style="margin:0;color:${colors.text};font-size:18px;font-weight:600;">🏢 ${dept}</h3>
           <span style="background:${colors.progress};color:white;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600;">${files.length} file${files.length > 1 ? "s" : ""}</span>
         </div>
         
         <!-- Progress Bar -->
-        <div style="background:#fef3c7;height:6px;border-radius:3px;margin-bottom:16px;overflow:hidden;">
+        <div style="background:#d1fae5;height:6px;border-radius:3px;margin-bottom:16px;overflow:hidden;">
           <div style="background:${colors.progress};height:100%;width:${completionPercent}%;border-radius:3px;"></div>
         </div>
         
@@ -3372,17 +3372,17 @@ function sendSingleEmail(
 
     // MOVED: Search Function Section to bottom (BEFORE File Organization)
     htmlBody += `
-      <div style="background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);padding:16px;border-radius:8px;margin-bottom:18px;text-align:center;border:2px solid #d97706;">
-        <p style="margin:0 0 10px 0;color:#92400e;font-size:15px;font-weight:600;">🔍 Search Processed Files</p>
-        <a href="${getSpreadsheetUrl()}" style="display:inline-block;background:#d97706;color:white;padding:11px 24px;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(217,119,6,0.3);transition:background 0.3s;">Open File Search</a>
+      <div style="background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);padding:16px;border-radius:8px;margin-bottom:18px;text-align:center;border:2px solid #059669;">
+        <p style="margin:0 0 10px 0;color:#064e3b;font-size:15px;font-weight:600;">🔍 Search Processed Files</p>
+        <a href="${getSpreadsheetUrl()}" style="display:inline-block;background:#059669;color:white;padding:11px 24px;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(5,150,105,0.3);transition:background 0.3s;">Open File Search</a>
         <p style="margin:10px 0 0 0;color:#78716c;font-size:12px;">Search all processed files in the Scanned Files Log</p>
       </div>`;
 
-    // File Organization Info - Warm amber themed
+    // File Organization Info - Green themed
     htmlBody += `
-      <div style="background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);padding:18px;border-radius:8px;margin-top:0;border-left:4px solid #b45309;">
-        <h4 style="color:#92400e;margin:0 0 10px 0;font-size:16px;font-weight:600;">📂 File Organization</h4>
-        <p style="margin:0 0 8px 0;color:#78350f;line-height:1.6;font-size:14px;">Files are automatically organized into: <strong>Department → Year → Month → Date</strong></p>
+      <div style="background:linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);padding:18px;border-radius:8px;margin-top:0;border-left:4px solid #047857;">
+        <h4 style="color:#064e3b;margin:0 0 10px 0;font-size:16px;font-weight:600;">📂 File Organization</h4>
+        <p style="margin:0 0 8px 0;color:#064e3b;line-height:1.6;font-size:14px;">Files are automatically organized into: <strong>Department → Year → Month → Date</strong></p>
         <p style="margin:0;color:#78716c;font-size:13px;font-style:italic;">Example: Legal → 2025 → October → 19 October</p>
       </div>
     </div>

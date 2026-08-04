@@ -1,7 +1,7 @@
 /**
  * Gemini AI Parser for Petty Cash Vouchers
- * Version: 5.0 (Local PDF extraction + quota-aware parsing)
- * Last Updated: July 22, 2026
+ * Version: 5.1 (Truncation detection + malformed JSON recovery)
+ * Last Updated: August 4, 2026
  */
 
 var GeminiParser = {
@@ -300,6 +300,54 @@ Rules:
       }
     }
 
+    // A model can occasionally return malformed JSON even when responseSchema
+    // is enabled (for example, an unterminated string). Make one final request
+    // with explicit prompt-only JSON instructions. This also gives a deployment
+    // with the same primary/fallback model a real recovery attempt instead of
+    // failing after the single unique model in getModelSequence().
+    const recoveryModel =
+      modelSequence[modelSequence.length - 1] || this.getModelName();
+    const recoveryPrompt = `${prompt}
+
+CRITICAL OUTPUT FORMAT:
+- Return ONLY one complete, valid JSON array.
+- Do not use Markdown code fences or add an explanation.
+- Escape quotation marks and line breaks inside string values.
+- Keep every object and close the final JSON array.`;
+
+    try {
+      Logger.log(
+        `Structured JSON parsing failed; retrying ${file.getName()} once with prompt-only JSON recovery`,
+        "WARNING",
+      );
+      const recoveryResult = this.callGeminiVision(
+        fileContent,
+        recoveryPrompt,
+        apiKey,
+        0,
+        recoveryModel,
+        false,
+        true,
+        8192,
+      );
+      const recoveredVouchers =
+        this.parseMultiVoucherJsonResponse(recoveryResult);
+      this.validateVoucherArray(recoveredVouchers, fileContent);
+      Logger.log(
+        `Gemini JSON recovery extracted ${recoveredVouchers.length} voucher(s) from ${file.getName()} using ${recoveryModel}`,
+        "INFO",
+      );
+      return recoveredVouchers;
+    } catch (recoveryError) {
+      const safeRecoveryMessage = this.maskApiKeyInText(
+        recoveryError && recoveryError.message,
+      );
+      errors.push(`${recoveryModel} recovery: ${safeRecoveryMessage}`);
+      if (this.isQuotaError(recoveryError)) {
+        throw new Error(`QUOTA_EXHAUSTED: ${safeRecoveryMessage}`);
+      }
+    }
+
     const message = errors.join(" | ");
     console.error("Gemini parsing error:", message);
     throw new Error(`Multi-voucher Gemini parsing failed: ${message}`);
@@ -378,6 +426,7 @@ Rules:
     modelNameOverride = null,
     useStructuredOutput = true,
     useMediaResolution = true,
+    maxOutputTokens = 4096,
   ) {
     const modelName = modelNameOverride || this.getModelName();
 
@@ -392,7 +441,7 @@ Rules:
         temperature: 0,
         topK: 16,
         topP: 0.8,
-        maxOutputTokens: 2048,
+        maxOutputTokens,
       };
 
       if (useMediaResolution && fileContent.type !== "text") {
@@ -454,6 +503,31 @@ Rules:
         RateLimiterManager.recordRequest(tokensUsed);
 
         console.log(`✓ Gemini API success. Tokens used: ${tokensUsed}`);
+
+        const finishReason = String(
+          jsonResponse.candidates?.[0]?.finishReason || "",
+        ).toUpperCase();
+        if (finishReason === "MAX_TOKENS") {
+          if (maxOutputTokens < 8192) {
+            Logger.log(
+              `Gemini response from ${modelName} was truncated at ${maxOutputTokens} output tokens; retrying with 8192`,
+              "WARNING",
+            );
+            return this.callGeminiVision(
+              fileContent,
+              prompt,
+              apiKey,
+              retryCount,
+              modelName,
+              useStructuredOutput,
+              useMediaResolution,
+              8192,
+            );
+          }
+          throw new Error(
+            "VALIDATION_FAILED: Gemini response was truncated at the maximum output-token limit",
+          );
+        }
 
         if (
           !jsonResponse.candidates ||
@@ -519,6 +593,7 @@ Rules:
           modelName,
           useStructuredOutput,
           useMediaResolution,
+          maxOutputTokens,
         );
       }
 
@@ -575,6 +650,7 @@ Rules:
           modelName,
           useStructuredOutput,
           useMediaResolution,
+          maxOutputTokens,
         );
       }
 
@@ -637,7 +713,14 @@ Rules:
 
   parseMultiVoucherJsonResponse(text) {
     const cleanedResult = this.cleanJsonResponse(text);
-    const parsedData = JSON.parse(cleanedResult);
+    let parsedData;
+    try {
+      parsedData = JSON.parse(cleanedResult);
+    } catch (error) {
+      throw new Error(
+        `VALIDATION_FAILED: Gemini returned malformed JSON (${error.message})`,
+      );
+    }
     if (!Array.isArray(parsedData)) {
       throw new Error("VALIDATION_FAILED: Gemini response must be a JSON array");
     }
