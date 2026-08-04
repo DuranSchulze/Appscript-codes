@@ -51,8 +51,9 @@
 const CONFIG = {
   CHECK_EVERY_MINUTES: 5,
   SEARCH_LOOKBACK_DAYS: 30,
+  UNREAD_LOOKBACK_DAYS: 3,
   MAX_THREADS_PER_RUN: 500,
-  BATCH_FORWARD_LIMIT: 50,
+  BATCH_FORWARD_LIMIT: 25,
   RETAIN_PROCESSED_DAYS: 60,
   INCLUDE_SPAM: true,
   MAX_RETRIES: 5,
@@ -829,6 +830,7 @@ function monitorAndForwardSecEmails() {
   let forwardedCount = 0;
   let failedCount = 0;
   let detectedCount = 0;
+  let skippedCount = 0;
 
   try {
     rulesCache_ = null;
@@ -885,15 +887,22 @@ function monitorAndForwardSecEmails() {
       return;
     }
 
-    // ── Pass 1: identify all matching messages and apply Detected label ──
-    const matchingEntries = [];
+    // ── Single pass: process newest-first, one message at a time ──
+    const batchLimit = CONFIG.BATCH_FORWARD_LIMIT || 25;
 
-    for (const message of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      if (forwardedCount + failedCount >= batchLimit) {
+        skippedCount = messages.length - i;
+        break;
+      }
+
+      const message = messages[i];
       const messageId = message.getId();
       const processedKey = CONFIG.PROCESSED_PREFIX + messageId;
       const retryKey = CONFIG.FAILED_RETRY_PREFIX + messageId;
+      const thread = message.getThread();
 
-      // Skip already-forwarded messages
+      // Skip already-forwarded (by message-ID record; labels are on threads)
       if (processedRecords[processedKey]) {
         continue;
       }
@@ -903,7 +912,7 @@ function monitorAndForwardSecEmails() {
         continue;
       }
 
-      // Check retry backoff: if previously failed, respect the delay
+      // Retry backoff check
       const retryData = getRetryData_(properties, retryKey);
       if (retryData && retryData.count >= CONFIG.MAX_RETRIES) {
         continue;
@@ -913,15 +922,13 @@ function monitorAndForwardSecEmails() {
         continue;
       }
 
+      // Rule matching
       const rule = findMatchingRule_(message);
-
       if (!rule) {
         continue;
       }
 
-      const thread = message.getThread();
-
-      // Apply Detected label immediately for all matching messages
+      // Apply Detected label now — this message is about to be processed
       try {
         thread.addLabel(detectedLabel);
         detectedCount++;
@@ -931,29 +938,7 @@ function monitorAndForwardSecEmails() {
         );
       }
 
-      matchingEntries.push({
-        message,
-        rule,
-        thread,
-        messageId,
-        processedKey,
-        retryKey,
-        retryData
-      });
-    }
-
-    Logger.log(
-      `Pass 1 complete: ${detectedCount} Detected label(s) applied; ` +
-      `${matchingEntries.length} message(s) ready to forward.`
-    );
-
-    // ── Pass 2: forward matching messages with retry tracking ──
-    const batchLimit = CONFIG.BATCH_FORWARD_LIMIT || 50;
-    const forwardBatch = matchingEntries.slice(0, batchLimit);
-
-    for (const entry of forwardBatch) {
-      const { message, rule, thread, messageId, processedKey, retryKey, retryData } = entry;
-
+      // ── Forward the message ──
       try {
         const matchedKeywords = getMatchedKeywords_(message, rule);
 
@@ -968,13 +953,11 @@ function monitorAndForwardSecEmails() {
         properties.setProperty(processedKey, processedAt);
         forwardedCount++;
 
-        // Clear this message's retry state. Thread failure labels are then
-        // recalculated from every message in the conversation.
+        // Clear retry state and apply success labels
         if (retryData) {
           properties.deleteProperty(retryKey);
         }
 
-        // Apply Forwarded and recalculate both retry-state labels.
         try {
           thread.addLabel(forwardedLabel);
           syncThreadFailureLabels_(
@@ -1009,12 +992,9 @@ function monitorAndForwardSecEmails() {
         );
         failedCount++;
 
-        // Increment retry counter
         const newRetryCount = (retryData ? retryData.count : 0) + 1;
         setRetryData_(properties, retryKey, newRetryCount);
 
-        // Recalculate retry labels for the entire conversation. Failed means
-        // another retry is pending; Retry Exhausted means manual review.
         try {
           syncThreadFailureLabels_(
             thread,
@@ -1029,8 +1009,6 @@ function monitorAndForwardSecEmails() {
           );
         }
 
-        // The retry record, rather than a successful-processed marker, keeps
-        // this message out of subsequent attempts.
         if (newRetryCount >= CONFIG.MAX_RETRIES) {
           Logger.log(
             `Message ${messageId} has failed ${newRetryCount} times. ` +
@@ -1053,8 +1031,9 @@ function monitorAndForwardSecEmails() {
 
     Logger.log(
       `Run complete: ${detectedCount} detected, ${forwardedCount} forwarded, ` +
-      `${failedCount} failed, ${matchingEntries.length - forwardBatch.length} ` +
-      `deferred to next run.`
+      `${failedCount} failed` +
+      (skippedCount > 0 ? `, ${skippedCount} deferred to next run` : "") +
+      `.`
     );
   } catch (error) {
     recordCurrentAccountError_(error, context);
@@ -1066,10 +1045,11 @@ function monitorAndForwardSecEmails() {
 
 
 /**
- * Searches Gmail for messages from every enabled sender in this account's tab.
- * Finds eligible inbox, configured spam, and retry-pending messages.
- * Forwarded labels are intentionally not excluded because labels belong to
- * threads while successful-processing records belong to individual messages.
+ * Searches Gmail in priority order:
+ *   1. Recent unread inbox messages from monitored senders (fast, urgent)
+ *   2. Detected-labelled messages not yet forwarded (backlog catch-up)
+ *   3. Failed-labelled messages pending retry
+ * Sorted newest-first so fresh emails are processed before old ones.
  */
 function getCandidateMessages_() {
   const rules = getRules_();
@@ -1082,93 +1062,106 @@ function getCandidateMessages_() {
     return [];
   }
 
-  // Build sender OR-group, capped to avoid hitting Gmail query length limits
-  const maxSendersPerQuery = 50;
-  const senderBatches = [];
-  for (let i = 0; i < uniqueSenders.length; i += maxSendersPerQuery) {
-    senderBatches.push(
-      uniqueSenders
-        .slice(i, i + maxSendersPerQuery)
-        .map(sender => `from:${sender}`)
-        .join(" ")
-    );
-  }
-
-  const monitoredLocations = CONFIG.INCLUDE_SPAM
-    ? `{in:inbox in:spam label:"${CONFIG.FAILED_LABEL}"}`
-    : `{in:inbox label:"${CONFIG.FAILED_LABEL}"}`;
-  const baseQuery =
-    `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
-    `${monitoredLocations}`;
+  const senderGroup = uniqueSenders
+    .slice(0, 50)
+    .map(sender => `from:${sender}`)
+    .join(" ");
 
   const messageMap = new Map();
-  let totalThreadsFound = 0;
+  let totalFound = 0;
 
-  for (const senderGroup of senderBatches) {
-    const query = `${baseQuery} {${senderGroup}}`;
-    Logger.log(`Searching Gmail: ${query}`);
+  // ── Tier 1: Recent unread inbox (fast — indexed by Gmail) ──
+  const unreadQuery =
+    `newer_than:${CONFIG.UNREAD_LOOKBACK_DAYS}d ` +
+    `in:inbox is:unread -label:${CONFIG.FORWARDED_LABEL} ` +
+    `{${senderGroup}}`;
+  totalFound += searchGmailAndCollect_(unreadQuery, messageMap, "unread inbox");
 
-    let start = 0;
-    const batchSize = 50;
+  // ── Tier 2: Detected but not yet forwarded (catch-up backlog) ──
+  const detectedQuery =
+    `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
+    `label:${CONFIG.DETECTED_LABEL} -label:${CONFIG.FORWARDED_LABEL}`;
+  totalFound += searchGmailAndCollect_(detectedQuery, messageMap, "detected backlog");
 
-    while (totalThreadsFound < CONFIG.MAX_THREADS_PER_RUN) {
-      const amount = Math.min(
-        batchSize,
-        CONFIG.MAX_THREADS_PER_RUN - totalThreadsFound
+  // ── Tier 3: Failed pending retry ──
+  const failedQuery =
+    `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
+    `label:${CONFIG.FAILED_LABEL} -label:${CONFIG.FORWARDED_LABEL}`;
+  totalFound += searchGmailAndCollect_(failedQuery, messageMap, "failed retry");
+
+  // ── Tier 4 (if spam enabled): Spam folder from monitored senders ──
+  if (CONFIG.INCLUDE_SPAM) {
+    const spamQuery =
+      `newer_than:${CONFIG.UNREAD_LOOKBACK_DAYS}d ` +
+      `in:spam -label:${CONFIG.FORWARDED_LABEL} {${senderGroup}}`;
+    totalFound += searchGmailAndCollect_(spamQuery, messageMap, "spam");
+  }
+
+  // Sort newest-first so urgent emails are forwarded before old backlog
+  const messages = Array.from(messageMap.values());
+  messages.sort(
+    (first, second) =>
+      second.getDate().getTime() - first.getDate().getTime()
+  );
+
+  Logger.log(
+    `Gmail search complete: ${totalFound} thread(s) scanned, ` +
+    `${messages.length} unique candidate message(s) found (newest first).`
+  );
+
+  return messages;
+}
+
+
+/**
+ * Helper: runs one Gmail search, collects non-draft messages into the map.
+ */
+function searchGmailAndCollect_(query, messageMap, label) {
+  Logger.log(`Searching Gmail [${label}]: ${query}`);
+
+  let threadCount = 0;
+  let start = 0;
+  const batchSize = 50;
+  const maxThreads = CONFIG.MAX_THREADS_PER_RUN;
+
+  while (threadCount < maxThreads) {
+    const amount = Math.min(batchSize, maxThreads - threadCount);
+
+    let threads;
+    try {
+      threads = GmailApp.search(query, start, amount);
+    } catch (searchError) {
+      Logger.log(
+        `Gmail search [${label}] failed: ${searchError.message}. Skipping.`
       );
+      break;
+    }
 
-      const threads = GmailApp.search(query, start, amount);
+    if (threads.length === 0) {
+      break;
+    }
 
-      if (threads.length === 0) {
-        break;
-      }
+    threadCount += threads.length;
 
-      totalThreadsFound += threads.length;
-
-      for (const thread of threads) {
-        const isFailedThread = threadHasLabel_(
-          thread,
-          CONFIG.FAILED_LABEL
-        );
-        const isMonitoredSpam =
-          CONFIG.INCLUDE_SPAM && thread.isInSpam();
-        const messages = thread.getMessages();
-
-        for (const message of messages) {
-          if (
-            (
-              message.isInInbox() ||
-              isMonitoredSpam ||
-              isFailedThread
-            ) &&
-            !message.isInTrash() &&
-            !message.isDraft()
-          ) {
+    for (const thread of threads) {
+      for (const message of thread.getMessages()) {
+        if (!message.isDraft() && !message.isInTrash()) {
+          // Use message ID as key; later tiers won't overwrite earlier ones
+          if (!messageMap.has(message.getId())) {
             messageMap.set(message.getId(), message);
           }
         }
       }
+    }
 
-      start += threads.length;
+    start += threads.length;
 
-      if (threads.length < amount) {
-        break;
-      }
+    if (threads.length < amount) {
+      break;
     }
   }
 
-  const messages = Array.from(messageMap.values());
-  messages.sort(
-    (first, second) =>
-      first.getDate().getTime() - second.getDate().getTime()
-  );
-
-  Logger.log(
-    `Gmail search complete: ${totalThreadsFound} thread(s) scanned, ` +
-    `${messages.length} unique candidate message(s) found.`
-  );
-
-  return messages;
+  return threadCount;
 }
 
 
