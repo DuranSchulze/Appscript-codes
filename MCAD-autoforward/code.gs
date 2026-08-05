@@ -51,8 +51,11 @@
 const CONFIG = {
   CHECK_EVERY_MINUTES: 5,
   SEARCH_LOOKBACK_DAYS: 30,
-  UNREAD_LOOKBACK_DAYS: 3,
+  RECENT_LOOKBACK_DAYS: 2,
+  BACKFILL_EVERY_MINUTES: 10,
+  RETRY_EVERY_HOURS: 2,
   MAX_THREADS_PER_RUN: 500,
+  BACKFILL_THREADS_PER_PAGE: 100,
   BATCH_FORWARD_LIMIT: 25,
   RETAIN_PROCESSED_DAYS: 60,
   INCLUDE_SPAM: true,
@@ -68,7 +71,7 @@ const CONFIG = {
   RULE_DATA_ROWS: 500,
   RULE_SCHEMA_VERSION: 2,
   INFO_SHEET_NAME: "AutoForward Info",
-  INFO_SHEET_VERSION: 3,
+  INFO_SHEET_VERSION: 4,
 
   // Optional: addresses that may edit every protected account rule tab.
   ADMIN_EMAILS: [],
@@ -78,6 +81,9 @@ const CONFIG = {
   FAILED_RETRY_PREFIX: "AF_FAILED_RETRY_",
   SUMMARY_RECORD_PREFIX: "AF_DAILY_FORWARD_",
   STARTED_AT_KEY: "AF_AUTOMATION_STARTED_AT",
+  BACKFILL_CUTOFF_KEY: "AF_BACKFILL_CUTOFF",
+  BACKFILL_STATE_KEY: "AF_BACKFILL_STATE",
+  LAST_SCAN_AT_KEY: "AF_LAST_SCAN_AT",
   LAST_CLEANUP_KEY: "AF_LAST_CLEANUP",
   LAST_TRIGGER_REPAIR_KEY: "AF_LAST_TRIGGER_REPAIR",
   SUMMARY_RECIPIENT_KEY: "AF_SUMMARY_RECIPIENT",
@@ -280,7 +286,7 @@ function buildAutoForwardInfoSheet_(sheet, marker) {
     ["3. Validate", "Choose AutoForward → Validate my rules and correct every reported row."],
     ["4. Preview", "Preview matching emails before activation. Preview actions never forward or label email."],
     ["5. Start", "Choose ▶️ Start or repair my automation and accept the requested Google permissions."],
-    ["6. Confirm", "Choose 📊 Show automation status and confirm Active with 3 of 3 triggers installed."]
+    ["6. Confirm", "Choose 📊 Show automation status and confirm Active with 5 of 5 triggers during initial backfill, then 4 of 4 afterward."]
   ]);
 
   row = writeInfoSection_(sheet, row + 1, "RULE TABLE", [
@@ -298,10 +304,10 @@ function buildAutoForwardInfoSheet_(sheet, marker) {
     ["Validate rules", "Checks enabled rows without reading or changing Gmail."],
     ["Preview matching", "Reads recent matching emails and writes details to the Apps Script execution log."],
     ["Preview pending", "Shows only emails the next active run would attempt."],
-    ["Start or repair", "Validates rules and installs or repairs your monitor, daily summary, and self-repair watchdog triggers."],
+    ["Start or repair", "Validates rules and installs or repairs recent monitoring, temporary backfill, retry, summary, and watchdog triggers."],
     ["Show status", "Checks trigger health, repairs missing triggers when active, and displays account, tab, last run, and last error."],
-    ["Pause", "Removes all three personal triggers but keeps your rules and processed history."],
-    ["Reset history", "Pauses and clears your history. Recent email may forward again after reactivation."]
+    ["Pause", "Removes all personal triggers but keeps your rules and processed history."],
+    ["Reset history", "Pauses and clears your history. Reactivation intentionally starts a new 30-day backfill, so matching email may forward again."]
   ]);
 
   row = writeInfoSection_(sheet, row + 1, "GMAIL LABELS & MESSAGE STATE", [
@@ -316,7 +322,7 @@ function buildAutoForwardInfoSheet_(sheet, marker) {
     ["Distribute copies", "Give each user their own Google Sheets copy. Installable triggers are personal and must be created once by that user."],
     ["One-click start", "If a new private copy contains exactly one valid Rules tab, Start or repair automatically assigns it to the signed-in account."],
     ["Safe fallback", "If no single valid starter tab can be identified, AutoForward creates a new account-owned rule tab instead of guessing."],
-    ["Trigger watchdog", "The monitor, summary, and watchdog restore missing AutoForward triggers when at least one personal trigger remains."],
+    ["Trigger watchdog", "Managed workers restore missing required AutoForward triggers when at least one personal trigger remains."],
     ["Recovery limit", "If all triggers are deleted or Google authorization is revoked, the user must choose Start or repair once to restore access."]
   ]);
 
@@ -332,7 +338,7 @@ function buildAutoForwardInfoSheet_(sheet, marker) {
     ["Menu is missing", "Confirm you have Editor access, reload the spreadsheet, and wait a few seconds for AutoForward to appear."],
     ["Authorization fails", "Ask your Google Workspace administrator whether Gmail, Apps Script, or external forwarding is restricted."],
     ["No rule tab", "Run Create or open my rule tab from the Gmail account that will own the automation."],
-    ["No forwarding", "Validate rules, check Show automation status, confirm 3 triggers, and review Apps Script Executions for the last error."],
+    ["No forwarding", "Validate rules, check Show automation status, confirm the required trigger count, and review Apps Script Executions for the last error."],
     ["Wrong account", "Pause the automation, sign out or switch Google accounts, reopen the sheet, and activate from the intended Gmail account."],
     ["Safety", "Start with one controlled sender, keyword, and recipient before enabling production rules."]
   ]);
@@ -731,10 +737,30 @@ function activateMyAutoForwarding() {
     getOrCreateLabel_(CONFIG.RETRY_EXHAUSTED_LABEL);
 
     if (!properties.getProperty(CONFIG.STARTED_AT_KEY)) {
+      const activatedAt = Date.now();
       properties.setProperty(
         CONFIG.STARTED_AT_KEY,
-        String(Date.now())
+        String(activatedAt)
       );
+      properties.setProperty(
+        CONFIG.BACKFILL_CUTOFF_KEY,
+        String(
+          activatedAt - CONFIG.SEARCH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
+        )
+      );
+      setBackfillState_(properties, {
+        phase: "unread",
+        senderBatch: 0,
+        start: 0
+      });
+    } else if (!properties.getProperty(CONFIG.BACKFILL_STATE_KEY)) {
+      // Existing installations must not unexpectedly forward historical mail
+      // merely because this version was deployed.
+      setBackfillState_(properties, {
+        phase: "complete",
+        senderBatch: 0,
+        start: 0
+      });
     }
 
     properties.setProperty(
@@ -759,7 +785,7 @@ function activateMyAutoForwarding() {
 
     context.spreadsheet.toast(
       `Automation is active for ${context.account} with ` +
-      `${triggerHealth.total} of 3 triggers.`,
+      `${triggerHealth.total} of ${triggerHealth.required} triggers.`,
       "AutoForward",
       8
     );
@@ -827,10 +853,6 @@ function monitorAndForwardSecEmails() {
   }
 
   let context = null;
-  let forwardedCount = 0;
-  let failedCount = 0;
-  let detectedCount = 0;
-  let skippedCount = 0;
 
   try {
     rulesCache_ = null;
@@ -844,7 +866,6 @@ function monitorAndForwardSecEmails() {
     cleanupProcessedRecords_();
 
     const properties = getUserProperties_();
-    const processedRecords = properties.getProperties();
     const startedAt = Number(
       properties.getProperty(CONFIG.STARTED_AT_KEY) || 0
     );
@@ -858,182 +879,26 @@ function monitorAndForwardSecEmails() {
 
     maybeRepairRequiredTriggers_(properties);
 
-    const detectedLabel = getOrCreateLabel_(CONFIG.DETECTED_LABEL);
-    const forwardedLabel = getOrCreateLabel_(CONFIG.FORWARDED_LABEL);
-    const failedLabel = getOrCreateLabel_(CONFIG.FAILED_LABEL);
-    const retryExhaustedLabel = getOrCreateLabel_(
-      CONFIG.RETRY_EXHAUSTED_LABEL
-    );
-
-    Logger.log(
-      "Labels verified: Detected, Forwarded, Failed, Retry Exhausted."
-    );
-
-    const messages = getCandidateMessages_();
-
-    if (messages.length === 0) {
-      Logger.log("No candidate messages found. Nothing to process this run.");
-
-      const completedAt = Date.now();
-      updateAccountRegistration_(context.account, {
-        status: "Active",
-        lastRunAt: completedAt,
-        lastError: ""
-      });
-      updateRuleSheetStatus_(context.ruleSheet, {
-        status: "Active",
-        lastRun: formatDateTime_(new Date(completedAt))
-      });
-      return;
-    }
-
-    // ── Single pass: process newest-first, one message at a time ──
-    const batchLimit = CONFIG.BATCH_FORWARD_LIMIT || 25;
-
-    for (let i = 0; i < messages.length; i++) {
-      if (forwardedCount + failedCount >= batchLimit) {
-        skippedCount = messages.length - i;
-        break;
-      }
-
-      const message = messages[i];
-      const messageId = message.getId();
-      const processedKey = CONFIG.PROCESSED_PREFIX + messageId;
-      const retryKey = CONFIG.FAILED_RETRY_PREFIX + messageId;
-      const thread = message.getThread();
-
-      // Skip already-forwarded (by message-ID record; labels are on threads)
-      if (processedRecords[processedKey]) {
-        continue;
-      }
-
-      // Skip messages from before automation was activated
-      if (message.getDate().getTime() < startedAt) {
-        continue;
-      }
-
-      // Retry backoff check
-      const retryData = getRetryData_(properties, retryKey);
-      if (retryData && retryData.count >= CONFIG.MAX_RETRIES) {
-        continue;
-      }
-      if (retryData && Date.now() - retryData.lastAttempt <
-          CONFIG.RETRY_DELAY_HOURS * 60 * 60 * 1000) {
-        continue;
-      }
-
-      // Rule matching
-      const rule = findMatchingRule_(message);
-      if (!rule) {
-        continue;
-      }
-
-      // Apply Detected label now — this message is about to be processed
-      try {
-        thread.addLabel(detectedLabel);
-        detectedCount++;
-      } catch (labelError) {
-        Logger.log(
-          `Could not apply Detected label to ${messageId}: ${labelError.message}`
-        );
-      }
-
-      // ── Forward the message ──
-      try {
-        const matchedKeywords = getMatchedKeywords_(message, rule);
-
-        Logger.log(
-          `Forwarding "${message.getSubject()}" from ${rule.sender}. ` +
-          `Matched: ${matchedKeywords.join(", ") || "all messages"}`
-        );
-
-        message.forward(rule.recipients.join(","));
-
-        const processedAt = String(Date.now());
-        properties.setProperty(processedKey, processedAt);
-        forwardedCount++;
-
-        // Clear retry state and apply success labels
-        if (retryData) {
-          properties.deleteProperty(retryKey);
-        }
-
-        try {
-          thread.addLabel(forwardedLabel);
-          syncThreadFailureLabels_(
-            thread,
-            properties,
-            failedLabel,
-            retryExhaustedLabel
-          );
-        } catch (labelError) {
-          Logger.log(
-            `Message ${messageId} was forwarded, but labels could not ` +
-            `be updated: ${labelError.message}`
-          );
-        }
-
-        try {
-          recordForwardForDailySummary_(
-            properties,
-            message,
-            rule,
-            processedAt
-          );
-        } catch (summaryError) {
-          Logger.log(
-            `Message ${messageId} was forwarded, but its summary ` +
-            `record failed: ${summaryError.message}`
-          );
-        }
-      } catch (error) {
-        Logger.log(
-          `Failed forwarding ${messageId}: ${error.message}`
-        );
-        failedCount++;
-
-        const newRetryCount = (retryData ? retryData.count : 0) + 1;
-        setRetryData_(properties, retryKey, newRetryCount);
-
-        try {
-          syncThreadFailureLabels_(
-            thread,
-            properties,
-            failedLabel,
-            retryExhaustedLabel
-          );
-        } catch (labelError) {
-          Logger.log(
-            `Could not synchronize failure labels for ${messageId}: ` +
-            labelError.message
-          );
-        }
-
-        if (newRetryCount >= CONFIG.MAX_RETRIES) {
-          Logger.log(
-            `Message ${messageId} has failed ${newRetryCount} times. ` +
-            `It will not be retried again within the configured search window.`
-          );
-        }
-      }
-    }
+    const messages = getRecentCandidateMessages_();
+    const result = processCandidateMessages_(messages, properties, {
+      retryOnly: false
+    });
+    properties.setProperty(CONFIG.LAST_SCAN_AT_KEY, String(Date.now()));
 
     const completedAt = Date.now();
-    updateAccountRegistration_(context.account, {
+    const updatedRegistration = updateAccountRegistration_(context.account, {
       status: "Active",
-      lastRunAt: completedAt,
-      lastError: ""
+      lastRunAt: completedAt
     });
     updateRuleSheetStatus_(context.ruleSheet, {
-      status: "Active",
+      status: updatedRegistration.lastError ? "Needs attention" : "Active",
       lastRun: formatDateTime_(new Date(completedAt))
     });
 
     Logger.log(
-      `Run complete: ${detectedCount} detected, ${forwardedCount} forwarded, ` +
-      `${failedCount} failed` +
-      (skippedCount > 0 ? `, ${skippedCount} deferred to next run` : "") +
-      `.`
+      `Recent monitor complete: ${result.detected} detected, ` +
+      `${result.forwarded} forwarded, ${result.failed} failed, ` +
+      `${result.deferred} deferred.`
     );
   } catch (error) {
     recordCurrentAccountError_(error, context);
@@ -1045,123 +910,470 @@ function monitorAndForwardSecEmails() {
 
 
 /**
- * Searches Gmail in priority order:
- *   1. Recent unread inbox messages from monitored senders (fast, urgent)
- *   2. Detected-labelled messages not yet forwarded (backlog catch-up)
- *   3. Failed-labelled messages pending retry
- * Sorted newest-first so fresh emails are processed before old ones.
+ * Temporary worker used only while a new account's 30-day backfill is active.
+ * It exhausts unread mail before moving to read mail and optional spam, and
+ * persists pagination so large mailboxes continue across executions without
+ * rescanning page one.
  */
-function getCandidateMessages_() {
-  const rules = getRules_();
-  const uniqueSenders = Array.from(
-    new Set(rules.map(rule => normalizeEmail_(rule.sender)))
-  );
+function continueInitialBackfill() {
+  const lock = LockService.getUserLock();
 
-  if (uniqueSenders.length === 0) {
-    Logger.log("No enabled senders configured. Nothing to search.");
-    return [];
+  if (!lock.tryLock(30000)) {
+    Logger.log("Backfill skipped because another account worker is active.");
+    return;
   }
 
-  const senderGroup = uniqueSenders
-    .slice(0, 50)
-    .map(sender => `from:${sender}`)
-    .join(" ");
+  let context = null;
 
+  try {
+    rulesCache_ = null;
+    context = getAccountContext_();
+    const properties = getUserProperties_();
+    const state = getBackfillState_(properties);
+
+    if (state.phase === "complete") {
+      ensureRequiredTriggers_();
+      return;
+    }
+
+    const senderBatches = getSenderBatches_();
+    if (senderBatches.length === 0) {
+      completeBackfill_(properties, context);
+      return;
+    }
+
+    if (state.senderBatch >= senderBatches.length) {
+      advanceBackfillPhase_(properties, state, context);
+      return;
+    }
+
+    const unread = state.phase === "unread";
+    const spam = state.phase === "spam";
+    const senderGroup = senderBatches[state.senderBatch];
+    const backfillCutoff = Number(
+      properties.getProperty(CONFIG.BACKFILL_CUTOFF_KEY) || 0
+    );
+    const readStateQuery = spam
+      ? ""
+      : unread ? "is:unread " : "is:read ";
+    const query =
+      `after:${formatGmailSearchDate_(backfillCutoff - 24 * 60 * 60 * 1000)} ` +
+      `${spam ? "in:spam" : "in:inbox"} ` +
+      readStateQuery +
+      `{${senderGroup}}`;
+    const threads = searchGmailPage_(
+      query,
+      state.start,
+      CONFIG.BACKFILL_THREADS_PER_PAGE,
+      `backfill ${state.phase}`
+    );
+    const messages = collectMessagesFromThreads_(
+      threads,
+      (message, thread) =>
+        spam
+          ? thread.isInSpam()
+          : message.isInInbox() && message.isUnread() === unread
+    ).sort(compareMessagesNewestFirst_);
+    const result = processCandidateMessages_(messages, properties, {
+      retryOnly: false,
+      cutoff: backfillCutoff,
+      upperBound: Number(properties.getProperty(CONFIG.STARTED_AT_KEY) || 0)
+    });
+
+    if (result.deferred === 0) {
+      if (threads.length < CONFIG.BACKFILL_THREADS_PER_PAGE) {
+        state.senderBatch++;
+        state.start = 0;
+      } else {
+        state.start += threads.length;
+      }
+      setBackfillState_(properties, state);
+    }
+
+    Logger.log(JSON.stringify({
+      worker: "backfill",
+      phase: state.phase,
+      senderBatch: state.senderBatch,
+      start: state.start,
+      result
+    }));
+  } catch (error) {
+    recordCurrentAccountError_(error, context);
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+/**
+ * Retries only messages that have explicit per-message retry state. Forwarded
+ * is intentionally not excluded because Gmail labels belong to whole threads.
+ */
+function retryFailedAutoForwardEmails() {
+  const lock = LockService.getUserLock();
+
+  if (!lock.tryLock(30000)) {
+    Logger.log("Retry worker skipped because another account worker is active.");
+    return;
+  }
+
+  let context = null;
+
+  try {
+    rulesCache_ = null;
+    context = getAccountContext_();
+    const properties = getUserProperties_();
+    const query =
+      `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
+      `label:${CONFIG.FAILED_LABEL}`;
+    const threads = searchGmailPages_(
+      query,
+      CONFIG.MAX_THREADS_PER_RUN,
+      "failed retry"
+    );
+    const messages = collectMessagesFromThreads_(threads)
+      .sort(compareMessagesNewestFirst_);
+    const result = processCandidateMessages_(messages, properties, {
+      retryOnly: true
+    });
+
+    Logger.log(JSON.stringify({worker: "retry", result}));
+  } catch (error) {
+    recordCurrentAccountError_(error, context);
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+/**
+ * Recent monitoring uses a deliberate overlap. Unread messages are returned
+ * first, followed by read messages, and per-message records prevent duplicates.
+ */
+function getRecentCandidateMessages_() {
+  const senderBatches = getSenderBatches_();
   const messageMap = new Map();
-  let totalFound = 0;
+  const unreadMessages = [];
+  const readMessages = [];
+  const queryCount = Math.max(
+    1,
+    senderBatches.length * (CONFIG.INCLUDE_SPAM ? 3 : 2)
+  );
+  const threadsPerQuery = Math.max(
+    1,
+    Math.floor(CONFIG.MAX_THREADS_PER_RUN / queryCount)
+  );
 
-  // ── Tier 1: Recent unread inbox (fast — indexed by Gmail) ──
-  const unreadQuery =
-    `newer_than:${CONFIG.UNREAD_LOOKBACK_DAYS}d ` +
-    `in:inbox is:unread -label:${CONFIG.FORWARDED_LABEL} ` +
-    `{${senderGroup}}`;
-  totalFound += searchGmailAndCollect_(unreadQuery, messageMap, "unread inbox");
-
-  // ── Tier 2: Detected but not yet forwarded (catch-up backlog) ──
-  const detectedQuery =
-    `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
-    `label:${CONFIG.DETECTED_LABEL} -label:${CONFIG.FORWARDED_LABEL}`;
-  totalFound += searchGmailAndCollect_(detectedQuery, messageMap, "detected backlog");
-
-  // ── Tier 3: Failed pending retry ──
-  const failedQuery =
-    `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
-    `label:${CONFIG.FAILED_LABEL} -label:${CONFIG.FORWARDED_LABEL}`;
-  totalFound += searchGmailAndCollect_(failedQuery, messageMap, "failed retry");
-
-  // ── Tier 4 (if spam enabled): Spam folder from monitored senders ──
-  if (CONFIG.INCLUDE_SPAM) {
-    const spamQuery =
-      `newer_than:${CONFIG.UNREAD_LOOKBACK_DAYS}d ` +
-      `in:spam -label:${CONFIG.FORWARDED_LABEL} {${senderGroup}}`;
-    totalFound += searchGmailAndCollect_(spamQuery, messageMap, "spam");
+  for (const unread of [true, false]) {
+    for (const senderGroup of senderBatches) {
+      const query =
+        `newer_than:${CONFIG.RECENT_LOOKBACK_DAYS}d in:inbox ` +
+        `${unread ? "is:unread" : "is:read"} {${senderGroup}}`;
+      const threads = searchGmailPages_(
+        query,
+        threadsPerQuery,
+        `recent ${unread ? "unread" : "read"}`
+      );
+      addUniqueMessages_(
+        collectMessagesFromThreads_(
+          threads,
+          message => message.isInInbox() && message.isUnread() === unread
+        ),
+        messageMap,
+        unread ? unreadMessages : readMessages
+      );
+    }
   }
 
-  // Sort newest-first so urgent emails are forwarded before old backlog
-  const messages = Array.from(messageMap.values());
-  messages.sort(
-    (first, second) =>
-      second.getDate().getTime() - first.getDate().getTime()
-  );
+  if (CONFIG.INCLUDE_SPAM) {
+    for (const senderGroup of senderBatches) {
+      const query =
+        `newer_than:${CONFIG.RECENT_LOOKBACK_DAYS}d in:spam ` +
+        `{${senderGroup}}`;
+      const threads = searchGmailPages_(query, threadsPerQuery, "recent spam");
+      addUniqueMessages_(
+        collectMessagesFromThreads_(
+          threads,
+          (message, thread) => thread.isInSpam() && message.isUnread()
+        ),
+        messageMap,
+        unreadMessages
+      );
+      addUniqueMessages_(
+        collectMessagesFromThreads_(
+          threads,
+          (message, thread) => thread.isInSpam() && !message.isUnread()
+        ),
+        messageMap,
+        readMessages
+      );
+    }
+  }
 
-  Logger.log(
-    `Gmail search complete: ${totalFound} thread(s) scanned, ` +
-    `${messages.length} unique candidate message(s) found (newest first).`
+  unreadMessages.sort(compareMessagesNewestFirst_);
+  readMessages.sort(compareMessagesNewestFirst_);
+  return unreadMessages.concat(readMessages);
+}
+
+
+function getCandidateMessages_() {
+  return getRecentCandidateMessages_();
+}
+
+
+function getSenderBatches_() {
+  const uniqueSenders = Array.from(
+    new Set(getRules_().map(rule => normalizeEmail_(rule.sender)))
   );
+  const batches = [];
+
+  for (let index = 0; index < uniqueSenders.length; index += 50) {
+    batches.push(
+      uniqueSenders
+        .slice(index, index + 50)
+        .map(sender => `from:${sender}`)
+        .join(" ")
+    );
+  }
+
+  return batches;
+}
+
+
+function searchGmailPage_(query, start, amount, label) {
+  Logger.log(`Searching Gmail [${label}]: ${query}; start=${start}`);
+
+  try {
+    return GmailApp.search(query, start, amount);
+  } catch (error) {
+    throw new Error(`Gmail search [${label}] failed: ${error.message}`);
+  }
+}
+
+
+function searchGmailPages_(query, maxThreads, label) {
+  const threads = [];
+  let start = 0;
+
+  while (threads.length < maxThreads) {
+    const amount = Math.min(50, maxThreads - threads.length);
+    const page = searchGmailPage_(query, start, amount, label);
+    threads.push(...page);
+    start += page.length;
+
+    if (page.length < amount) {
+      break;
+    }
+  }
+
+  return threads;
+}
+
+
+function collectMessagesFromThreads_(threads, predicate) {
+  const messages = [];
+
+  for (const thread of threads) {
+    for (const message of thread.getMessages()) {
+      if (
+        !message.isDraft() &&
+        !message.isInTrash() &&
+        (!predicate || predicate(message, thread))
+      ) {
+        messages.push(message);
+      }
+    }
+  }
 
   return messages;
 }
 
 
-/**
- * Helper: runs one Gmail search, collects non-draft messages into the map.
- */
-function searchGmailAndCollect_(query, messageMap, label) {
-  Logger.log(`Searching Gmail [${label}]: ${query}`);
+function addUniqueMessages_(messages, messageMap, destination) {
+  for (const message of messages) {
+    if (!messageMap.has(message.getId())) {
+      messageMap.set(message.getId(), message);
+      destination.push(message);
+    }
+  }
+}
 
-  let threadCount = 0;
-  let start = 0;
-  const batchSize = 50;
-  const maxThreads = CONFIG.MAX_THREADS_PER_RUN;
 
-  while (threadCount < maxThreads) {
-    const amount = Math.min(batchSize, maxThreads - threadCount);
+function compareMessagesNewestFirst_(first, second) {
+  return second.getDate().getTime() - first.getDate().getTime();
+}
 
-    let threads;
-    try {
-      threads = GmailApp.search(query, start, amount);
-    } catch (searchError) {
-      Logger.log(
-        `Gmail search [${label}] failed: ${searchError.message}. Skipping.`
-      );
-      break;
+
+function formatGmailSearchDate_(timestamp) {
+  return Utilities.formatDate(
+    new Date(timestamp),
+    Session.getScriptTimeZone(),
+    "yyyy/MM/dd"
+  );
+}
+
+
+function processCandidateMessages_(messages, properties, options) {
+  const settings = options || {};
+  const records = properties.getProperties();
+  const detectedLabel = getOrCreateLabel_(CONFIG.DETECTED_LABEL);
+  const forwardedLabel = getOrCreateLabel_(CONFIG.FORWARDED_LABEL);
+  const failedLabel = getOrCreateLabel_(CONFIG.FAILED_LABEL);
+  const retryExhaustedLabel = getOrCreateLabel_(
+    CONFIG.RETRY_EXHAUSTED_LABEL
+  );
+  const entries = [];
+  const detectedThreadIds = new Set();
+  const now = Date.now();
+
+  for (const message of messages) {
+    const messageId = message.getId();
+    const processedKey = CONFIG.PROCESSED_PREFIX + messageId;
+    const retryKey = CONFIG.FAILED_RETRY_PREFIX + messageId;
+    const retryData = getRetryData_(properties, retryKey);
+    const messageTime = message.getDate().getTime();
+
+    if (records[processedKey]) {
+      continue;
+    }
+    if (settings.cutoff && messageTime < settings.cutoff) {
+      continue;
+    }
+    if (settings.upperBound && messageTime > settings.upperBound) {
+      continue;
+    }
+    if (settings.retryOnly && !retryData) {
+      continue;
+    }
+    if (!settings.retryOnly && retryData) {
+      continue;
+    }
+    if (
+      retryData &&
+      (
+        Number(retryData.count) >= CONFIG.MAX_RETRIES ||
+        now - Number(retryData.lastAttempt) <
+          CONFIG.RETRY_DELAY_HOURS * 60 * 60 * 1000
+      )
+    ) {
+      continue;
     }
 
-    if (threads.length === 0) {
-      break;
+    const rule = findMatchingRule_(message);
+    if (!rule) {
+      continue;
     }
 
-    threadCount += threads.length;
-
-    for (const thread of threads) {
-      for (const message of thread.getMessages()) {
-        if (!message.isDraft() && !message.isInTrash()) {
-          // Use message ID as key; later tiers won't overwrite earlier ones
-          if (!messageMap.has(message.getId())) {
-            messageMap.set(message.getId(), message);
-          }
-        }
+    const thread = message.getThread();
+    const threadId = thread.getId();
+    if (!detectedThreadIds.has(threadId)) {
+      try {
+        thread.addLabel(detectedLabel);
+        detectedThreadIds.add(threadId);
+      } catch (labelError) {
+        Logger.log(
+          `Could not apply Detected label to ${messageId}: ${labelError.message}`
+        );
       }
     }
 
-    start += threads.length;
+    entries.push({
+      message,
+      messageId,
+      processedKey,
+      retryKey,
+      retryData,
+      rule,
+      thread
+    });
+  }
 
-    if (threads.length < amount) {
-      break;
+  const forwardBatch = entries.slice(0, CONFIG.BATCH_FORWARD_LIMIT);
+  let forwarded = 0;
+  let failed = 0;
+
+  for (const entry of forwardBatch) {
+    const {
+      message,
+      messageId,
+      processedKey,
+      retryKey,
+      retryData,
+      rule,
+      thread
+    } = entry;
+
+    try {
+      const matchedKeywords = getMatchedKeywords_(message, rule);
+      Logger.log(
+        `Forwarding "${message.getSubject()}" from ${rule.sender}. ` +
+        `Matched: ${matchedKeywords.join(", ") || "all messages"}`
+      );
+      message.forward(rule.recipients.join(","));
+
+      const processedAt = String(Date.now());
+      properties.setProperty(processedKey, processedAt);
+      properties.deleteProperty(retryKey);
+      forwarded++;
+
+      try {
+        thread.addLabel(forwardedLabel);
+        syncThreadFailureLabels_(
+          thread,
+          properties,
+          failedLabel,
+          retryExhaustedLabel
+        );
+      } catch (labelError) {
+        Logger.log(
+          `Message ${messageId} was forwarded, but labels could not be ` +
+          `updated: ${labelError.message}`
+        );
+      }
+
+      try {
+        recordForwardForDailySummary_(
+          properties,
+          message,
+          rule,
+          processedAt
+        );
+      } catch (summaryError) {
+        Logger.log(
+          `Message ${messageId} was forwarded, but its summary record ` +
+          `failed: ${summaryError.message}`
+        );
+      }
+    } catch (error) {
+      failed++;
+      const newRetryCount = (retryData ? Number(retryData.count) : 0) + 1;
+      setRetryData_(properties, retryKey, newRetryCount);
+      Logger.log(`Failed forwarding ${messageId}: ${error.message}`);
+
+      try {
+        syncThreadFailureLabels_(
+          thread,
+          properties,
+          failedLabel,
+          retryExhaustedLabel
+        );
+      } catch (labelError) {
+        Logger.log(
+          `Could not synchronize failure labels for ${messageId}: ` +
+          labelError.message
+        );
+      }
     }
   }
 
-  return threadCount;
+  return {
+    detected: entries.length,
+    forwarded,
+    failed,
+    deferred: Math.max(0, entries.length - forwardBatch.length)
+  };
 }
 
 
@@ -1367,6 +1579,9 @@ function clearCurrentUserAutomationStateForCopy_() {
       key.startsWith(CONFIG.FAILED_RETRY_PREFIX) ||
       key.startsWith(CONFIG.SUMMARY_RECORD_PREFIX) ||
       key === CONFIG.STARTED_AT_KEY ||
+      key === CONFIG.BACKFILL_CUTOFF_KEY ||
+      key === CONFIG.BACKFILL_STATE_KEY ||
+      key === CONFIG.LAST_SCAN_AT_KEY ||
       key === CONFIG.LAST_CLEANUP_KEY ||
       key === CONFIG.SUMMARY_RECIPIENT_KEY ||
       key === "AF_BOUND_SPREADSHEET_ID"
@@ -1445,6 +1660,86 @@ function rememberSpreadsheetForUser_(spreadsheetId) {
 
 function getUserProperties_() {
   return PropertiesService.getUserProperties();
+}
+
+
+function getBackfillState_(properties) {
+  const raw = properties.getProperty(CONFIG.BACKFILL_STATE_KEY);
+
+  if (!raw) {
+    return {phase: "complete", senderBatch: 0, start: 0};
+  }
+
+  try {
+    const state = JSON.parse(raw);
+    return {
+      phase: ["unread", "read", "spam", "complete"].includes(state.phase)
+        ? state.phase
+        : "complete",
+      senderBatch: Math.max(0, Number(state.senderBatch) || 0),
+      start: Math.max(0, Number(state.start) || 0)
+    };
+  } catch (error) {
+    throw new Error(`Backfill state is damaged: ${error.message}`);
+  }
+}
+
+
+function setBackfillState_(properties, state) {
+  properties.setProperty(
+    CONFIG.BACKFILL_STATE_KEY,
+    JSON.stringify({
+      phase: state.phase,
+      senderBatch: Math.max(0, Number(state.senderBatch) || 0),
+      start: Math.max(0, Number(state.start) || 0)
+    })
+  );
+}
+
+
+function advanceBackfillPhase_(properties, state, context) {
+  if (state.phase === "unread") {
+    setBackfillState_(properties, {
+      phase: "read",
+      senderBatch: 0,
+      start: 0
+    });
+    Logger.log("Initial unread backfill complete; read backfill will begin.");
+    return;
+  }
+
+  if (state.phase === "read" && CONFIG.INCLUDE_SPAM) {
+    setBackfillState_(properties, {
+      phase: "spam",
+      senderBatch: 0,
+      start: 0
+    });
+    Logger.log("Initial read backfill complete; spam backfill will begin.");
+    return;
+  }
+
+  completeBackfill_(properties, context);
+}
+
+
+function completeBackfill_(properties, context) {
+  setBackfillState_(properties, {
+    phase: "complete",
+    senderBatch: 0,
+    start: 0
+  });
+  ensureRequiredTriggers_();
+
+  if (context) {
+    updateAccountRegistration_(context.account, {
+      status: "Active — initial backfill complete"
+    });
+    updateRuleSheetStatus_(context.ruleSheet, {
+      status: "Active — initial backfill complete"
+    });
+  }
+
+  Logger.log("Initial 30-day unread/read backfill is complete.");
 }
 
 
@@ -2336,6 +2631,9 @@ function previewPendingEmails() {
     const properties = getUserProperties_();
     const records = properties.getProperties();
     const startedAt = Number(records[CONFIG.STARTED_AT_KEY] || 0);
+    const eligibilityCutoff = Number(
+      records[CONFIG.BACKFILL_CUTOFF_KEY] || startedAt
+    );
 
     if (!startedAt) {
       throw new Error(
@@ -2354,7 +2652,7 @@ function previewPendingEmails() {
 
       if (
         records[processedKey] ||
-        message.getDate().getTime() < startedAt ||
+        message.getDate().getTime() < eligibilityCutoff ||
         (
           retryData &&
           (
@@ -2594,9 +2892,28 @@ function rememberRetryThreadForSync_(threadMap, messageId) {
 function getManagedTriggerHandlers_() {
   return [
     "monitorAndForwardSecEmails",
+    "continueInitialBackfill",
+    "retryFailedAutoForwardEmails",
     "sendDailyAutoForwardSummary",
     "autoRepairAutoForwarding"
   ];
+}
+
+
+function getRequiredTriggerHandlers_() {
+  const handlers = [
+    "monitorAndForwardSecEmails",
+    "retryFailedAutoForwardEmails",
+    "sendDailyAutoForwardSummary",
+    "autoRepairAutoForwarding"
+  ];
+  const state = getBackfillState_(getUserProperties_());
+
+  if (state.phase !== "complete") {
+    handlers.splice(1, 0, "continueInitialBackfill");
+  }
+
+  return handlers;
 }
 
 
@@ -2605,6 +2922,20 @@ function createManagedTrigger_(handlerFunction) {
     return ScriptApp.newTrigger(handlerFunction)
       .timeBased()
       .everyMinutes(CONFIG.CHECK_EVERY_MINUTES)
+      .create();
+  }
+
+  if (handlerFunction === "continueInitialBackfill") {
+    return ScriptApp.newTrigger(handlerFunction)
+      .timeBased()
+      .everyMinutes(CONFIG.BACKFILL_EVERY_MINUTES)
+      .create();
+  }
+
+  if (handlerFunction === "retryFailedAutoForwardEmails") {
+    return ScriptApp.newTrigger(handlerFunction)
+      .timeBased()
+      .everyHours(CONFIG.RETRY_EVERY_HOURS)
       .create();
   }
 
@@ -2629,21 +2960,29 @@ function createManagedTrigger_(handlerFunction) {
 
 
 /**
- * Creates missing managed triggers and removes accidental duplicates.
- * The monitor and watchdog both call this, allowing either one to restore the
- * other plus the daily summary trigger.
+ * Creates missing required triggers and removes duplicates or an inactive
+ * backfill trigger. The backfill trigger exists only until initial catch-up is
+ * complete; the four long-running responsibilities remain afterward.
  */
 function ensureRequiredTriggers_() {
-  const handlers = getManagedTriggerHandlers_();
+  const handlers = getRequiredTriggerHandlers_();
   const handlerSet = new Set(handlers);
+  const managedSet = new Set(getManagedTriggerHandlers_());
   const existingByHandler = new Map();
   const created = [];
   const removedDuplicates = [];
+  const removedInactive = [];
 
   for (const trigger of ScriptApp.getProjectTriggers()) {
     const handler = trigger.getHandlerFunction();
 
+    if (!managedSet.has(handler)) {
+      continue;
+    }
+
     if (!handlerSet.has(handler)) {
+      ScriptApp.deleteTrigger(trigger);
+      removedInactive.push(handler);
       continue;
     }
 
@@ -2667,18 +3006,21 @@ function ensureRequiredTriggers_() {
     String(Date.now())
   );
 
-  if (created.length || removedDuplicates.length) {
+  if (created.length || removedDuplicates.length || removedInactive.length) {
     Logger.log(JSON.stringify({
       triggerRepair: true,
       created,
-      removedDuplicates
+      removedDuplicates,
+      removedInactive
     }));
   }
 
   return {
     total: existingByHandler.size,
+    required: handlers.length,
     created,
-    removedDuplicates
+    removedDuplicates,
+    removedInactive
   };
 }
 
@@ -2724,10 +3066,13 @@ function autoRepairAutoForwarding() {
 
     const health = ensureRequiredTriggers_();
 
-    if (health.created.length || health.removedDuplicates.length) {
+    if (
+      health.created.length ||
+      health.removedDuplicates.length ||
+      health.removedInactive.length
+    ) {
       updateAccountRegistration_(context.account, {
-        status: "Active — self-repaired",
-        lastError: ""
+        status: "Active — self-repaired"
       });
       updateRuleSheetStatus_(context.ruleSheet, {
         status: "Active — self-repaired"
@@ -2775,6 +3120,9 @@ function prepareUnactivatedAccount_() {
   const records = properties.getProperties();
 
   properties.deleteProperty(CONFIG.STARTED_AT_KEY);
+  properties.deleteProperty(CONFIG.BACKFILL_CUTOFF_KEY);
+  properties.deleteProperty(CONFIG.BACKFILL_STATE_KEY);
+  properties.deleteProperty(CONFIG.LAST_SCAN_AT_KEY);
   properties.deleteProperty(CONFIG.SUMMARY_RECIPIENT_KEY);
 
   for (const key of Object.keys(records)) {
@@ -2792,6 +3140,45 @@ function validateConfiguration_() {
     throw new Error(
       "Trigger interval must be 1, 5, 10, 15, or 30 minutes."
     );
+  }
+
+  if (!allowedIntervals.includes(CONFIG.BACKFILL_EVERY_MINUTES)) {
+    throw new Error(
+      "Backfill interval must be 1, 5, 10, 15, or 30 minutes."
+    );
+  }
+
+  if (
+    !Number.isInteger(CONFIG.RETRY_EVERY_HOURS) ||
+    CONFIG.RETRY_EVERY_HOURS < 1
+  ) {
+    throw new Error("Retry trigger interval must be a positive whole hour.");
+  }
+
+  if (
+    !Number.isInteger(CONFIG.RECENT_LOOKBACK_DAYS) ||
+    CONFIG.RECENT_LOOKBACK_DAYS < 1 ||
+    CONFIG.RECENT_LOOKBACK_DAYS > CONFIG.SEARCH_LOOKBACK_DAYS
+  ) {
+    throw new Error(
+      "Recent lookback must be a positive whole number no greater than " +
+      "the initial backfill lookback."
+    );
+  }
+
+  if (
+    !Number.isInteger(CONFIG.MAX_THREADS_PER_RUN) ||
+    CONFIG.MAX_THREADS_PER_RUN < 1
+  ) {
+    throw new Error("Maximum threads per run must be a positive whole number.");
+  }
+
+  if (
+    !Number.isInteger(CONFIG.BACKFILL_THREADS_PER_PAGE) ||
+    CONFIG.BACKFILL_THREADS_PER_PAGE < 1 ||
+    CONFIG.BACKFILL_THREADS_PER_PAGE > 500
+  ) {
+    throw new Error("Backfill page size must be a whole number from 1 to 500.");
   }
 
   if (
@@ -2850,6 +3237,8 @@ function showMyAutoForwardStatus() {
     const context = getAccountContext_();
     const properties = getUserProperties_();
     const registration = getAccountRegistration_(context.account);
+    const backfillState = getBackfillState_(properties);
+    const requiredHandlers = getRequiredTriggerHandlers_();
     const startedAt = Number(
       properties.getProperty(CONFIG.STARTED_AT_KEY) || 0
     );
@@ -2874,7 +3263,7 @@ function showMyAutoForwardStatus() {
     const isRunning =
       startedAt &&
       isRegistrationExpectedActive_(registration) &&
-      uniqueTriggerCount === getManagedTriggerHandlers_().length;
+      uniqueTriggerCount === requiredHandlers.length;
     const hasError = Boolean(registration.lastError);
     const automationIcon = isRunning
       ? hasError ? "🟡" : "🟢"
@@ -2887,7 +3276,8 @@ function showMyAutoForwardStatus() {
       "",
       `📧 Gmail account: ${context.account}`,
       `📄 Rule tab: ${context.ruleSheet.getName()}`,
-      `⚙️ Triggers installed: ${uniqueTriggerCount} of 3`,
+      `⚙️ Triggers installed: ${uniqueTriggerCount} of ${requiredHandlers.length}`,
+      `📚 Initial backfill: ${backfillState.phase}`,
       `▶️ First started: ${startedAt ? formatDateTime_(new Date(startedAt)) : "No"}`,
       `🕒 Last monitor run: ${registration.lastRunAt ? formatDateTime_(new Date(registration.lastRunAt)) : "Never"}`,
       `🚨 Last error: ${registration.lastError || "None"}`
@@ -2939,8 +3329,8 @@ function confirmAndResetMyAutoForwarding() {
   const response = ui.alert(
     "Reset AutoForward history?",
     "This pauses your automation and clears your processed-message " +
-    "history. Recently received emails could be forwarded again after " +
-    "you reactivate it.",
+    "history. Reactivation starts a new 30-day backfill, so matching " +
+    "emails could be forwarded again.",
     ui.ButtonSet.YES_NO
   );
 
@@ -2967,6 +3357,9 @@ function resetSecEmailForwarding() {
         key.startsWith(CONFIG.FAILED_RETRY_PREFIX) ||
         key.startsWith(CONFIG.SUMMARY_RECORD_PREFIX) ||
         key === CONFIG.STARTED_AT_KEY ||
+        key === CONFIG.BACKFILL_CUTOFF_KEY ||
+        key === CONFIG.BACKFILL_STATE_KEY ||
+        key === CONFIG.LAST_SCAN_AT_KEY ||
         key === CONFIG.LAST_CLEANUP_KEY
       ) {
         properties.deleteProperty(key);

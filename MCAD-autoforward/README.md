@@ -44,17 +44,25 @@ Every Gmail account must complete these steps while signed in as that account:
 6. Select **AutoForward → Preview matching emails** if a read-only preview is desired.
 7. Select **⚡ AutoForward → ▶️ Start or repair my automation**.
 
-Activation creates three installable triggers owned by the current Gmail user:
+Activation initially creates five installable triggers owned by the current Gmail user:
 
-- Gmail monitoring every five minutes.
+- Recent Gmail monitoring every five minutes.
+- A temporary 30-day backfill worker every ten minutes.
+- A failed-message retry worker every two hours.
 - A daily summary during the 11 PM hour in `Asia/Manila`.
 - A self-repair watchdog every six hours.
 
-Messages received before the user's first activation time are not forwarded.
+On first activation, the temporary worker scans the preceding 30 days in
+bounded pages. It processes unread inbox mail first, then read inbox mail, and
+then spam when spam processing is enabled. When the initial backfill completes,
+its trigger removes itself, leaving four ongoing
+triggers. Existing installations upgraded to this version are marked backfill
+complete so deploying code cannot unexpectedly forward historical mail; reset
+and reactivate only when an intentional new 30-day backfill is desired.
 
-The monitor, summary, and watchdog check the same trigger set. If one trigger
-remains, it can recreate the other missing AutoForward triggers. If all three
-triggers are deleted, authorization is revoked, or Google disables execution,
+The workers, summary, and watchdog check the same required trigger set. If one
+managed trigger remains, it can recreate other missing AutoForward triggers. If
+all triggers are deleted, authorization is revoked, or Google disables execution,
 the user must choose **▶️ Start or repair my automation** once.
 
 ## Distributing private copies
@@ -98,9 +106,9 @@ Rules are evaluated from top to bottom. The first matching row is used. Put send
 - **✅ Validate my rules** — validates enabled rows without reading or changing Gmail.
 - **🔎 Preview matching emails** — reads Gmail and logs recent matches without forwarding or labeling.
 - **📬 Preview pending emails** — shows only messages the next live run would attempt.
-- **▶️ Start or repair my automation** — validates rules and installs or repairs the current user's three AutoForward triggers.
+- **▶️ Start or repair my automation** — validates rules and installs or repairs the current user's required triggers.
 - **📊 Show automation status** — checks trigger health, performs repair when active, and shows account, rule tab, last run, and last error.
-- **⏸️ Pause automation** — removes the current user's three triggers and keeps rules/history.
+- **⏸️ Pause automation** — removes the current user's managed triggers and keeps rules/history.
 - **🧹 Reset my processed history** — confirms, pauses, and clears the current user's processed and summary history.
 
 ## Existing rule-tab migration
@@ -121,7 +129,22 @@ Do not activate the old and new script versions for the same Gmail account simul
 
 ## Gmail behavior
 
-The monitor searches enabled senders in the inbox, spam (when enabled in `CONFIG`), and previously failed threads. It processes the oldest messages first and forwards the original Gmail message with its attachments. Successfully forwarded message IDs and retry state are stored separately for each Gmail user; those message-level records, not Gmail labels alone, control duplicate prevention and retries.
+The initial worker scans up to 30 days of inbox history using persistent
+pagination: unread first, then read, followed by optional spam. The ongoing
+monitor searches an overlapping two-day window, prioritizes unread messages,
+and then checks read messages. Spam is included when enabled in `CONFIG`. Sender rules are divided into batches so
+accounts with more than 50 configured senders are not silently truncated.
+
+The retry worker separately checks failed conversations without excluding
+conversations that also have the `Forwarded` label. Every worker processes
+newest messages first and forwards the original Gmail message with its
+attachments. All forwarding workers use the same per-user lock, so separate
+triggers cannot forward concurrently for one account.
+
+Successfully forwarded message IDs and retry state are stored separately for
+each Gmail user. Those message-level records, not Gmail labels or unread state,
+control duplicate prevention and retries. The overlapping recent search is
+intentional: it protects against approximate or temporarily missed trigger runs.
 
 Gmail thread labels are:
 
