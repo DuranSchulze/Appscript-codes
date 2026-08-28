@@ -154,6 +154,22 @@ processes newest messages first and forwards the original Gmail message with
 its attachments. All forwarding workers use the same per-user lock, so
 separate triggers cannot forward concurrently for one account.
 
+Matched mail is delivered using `CONFIG.DELIVERY_MODE`:
+
+- `"notify"` (default) — the script sends an authenticated copy from the
+  forwarding account itself: `From:` is the forwarding account, `Reply-To:`
+  is the original sender, the subject gets a `Fwd:` prefix, and the original
+  plain-text body and attachments are included. Because the copy genuinely
+  belongs to the sending account, it passes that account's SPF/DKIM/DMARC
+  and reaches internal and external recipients reliably instead of landing
+  in spam.
+- `"forward"` — Gmail's native forward, preserving the original sender in
+  `From:`. Receiving servers cannot verify the original domain's
+  authentication on re-sent mail, so recipients' spam filters frequently
+  classify these messages as spam. Use this mode only where recipients or
+  their Google Workspace administrators have allowlisted the forwarding
+  account or enabled a bypass for internally received mail.
+
 Successfully forwarded message IDs and retry state are stored separately for
 each Gmail user. Those message-level records, not Gmail labels or unread state,
 control duplicate prevention and retries. The overlapping recent search is
@@ -203,6 +219,7 @@ The spreadsheet owner is added automatically when Google exposes an owner addres
 - Each participating user must authorize the Apps Script personally.
 - Workspace administrators may block Gmail scopes, external forwarding, or recipient domains.
 - Time-based triggers are approximate; the daily summary runs sometime during the configured hour.
+- Native Gmail forwards cannot pass the original sender's SPF/DKIM/DMARC; `DELIVERY_MODE: "notify"` avoids that limitation by sending from the forwarding account, and Gmail's sending quotas still apply in both modes.
 - Gmail and Apps Script sending/runtime quotas still apply.
 
 ## Safe rollout

@@ -16,6 +16,9 @@ const context = vm.createContext({
 });
 vm.runInContext(source, context, {filename: "code.gs"});
 
+// Legacy blocks below exercise the native-forward delivery path.
+context.getDeliveryMode_ = () => "forward";
+
 function makeProperties(initial = {}) {
   const values = Object.assign({}, initial);
   return {
@@ -483,6 +486,115 @@ function makeProperties(initial = {}) {
     []
   );
   assert.equal(calls, 2);
+}
+
+{
+  // Notify delivery mode re-sends an authenticated copy from the forwarding
+  // account instead of Gmail's native forward.
+  const properties = makeProperties();
+  const sent = [];
+  const thread = {
+    addLabel() {},
+    getId() {
+      return "notify-thread";
+    }
+  };
+  const message = {
+    forward() {
+      throw new Error("native forward must not be used in notify mode");
+    },
+    getAttachments() {
+      return [{getSize() { return 1024; }}];
+    },
+    getDate() {
+      return new Date("2026-08-28T10:00:00Z");
+    },
+    getFrom() {
+      return "Bank <no-reply@bank.com>";
+    },
+    getId() {
+      return "notify-message";
+    },
+    getPlainBody() {
+      return "Your security code is 123456.";
+    },
+    getSubject() {
+      return "Security alert";
+    },
+    getThread() {
+      return thread;
+    }
+  };
+  context.GmailApp = {
+    sendEmail(recipients, subject, body, options) {
+      sent.push({recipients, subject, body, options});
+    }
+  };
+  context.getDeliveryMode_ = () => "notify";
+  context.findMatchingRule_ = () => ({
+    sender: "no-reply@bank.com",
+    recipients: ["recipient@example.com", "second@example.com"]
+  });
+
+  const result = context.processCandidateMessages_([message], properties, {
+    retryOnly: false
+  });
+  assert.equal(result.forwarded, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(sent.length, 1);
+  assert.equal(
+    sent[0].recipients,
+    "recipient@example.com,second@example.com"
+  );
+  assert.equal(sent[0].subject, "Fwd: Security alert");
+  assert.equal(sent[0].options.replyTo, "no-reply@bank.com");
+  assert.equal(sent[0].options.attachments.length, 1);
+  assert.ok(sent[0].body.includes("no-reply@bank.com"));
+  assert.ok(sent[0].body.includes("Your security code is 123456."));
+  assert.ok(properties.values["AF_FORWARDED_notify-message"]);
+
+  context.getDeliveryMode_ = () => "forward";
+}
+
+{
+  // Forward delivery mode keeps using Gmail's native forward.
+  const properties = makeProperties();
+  let nativeForwards = 0;
+  const thread = {
+    addLabel() {},
+    getId() {
+      return "native-thread";
+    }
+  };
+  const message = {
+    forward() {
+      nativeForwards++;
+    },
+    getDate() {
+      return new Date();
+    },
+    getId() {
+      return "native-message";
+    },
+    getSubject() {
+      return "Native subject";
+    },
+    getThread() {
+      return thread;
+    }
+  };
+  context.GmailApp = {
+    sendEmail() {
+      throw new Error("sendEmail must not be used in forward mode");
+    }
+  };
+  context.getDeliveryMode_ = () => "forward";
+
+  const result = context.processCandidateMessages_([message], properties, {
+    retryOnly: false
+  });
+  assert.equal(result.forwarded, 1);
+  assert.equal(nativeForwards, 1);
 }
 
 console.log("code.gs tests passed");

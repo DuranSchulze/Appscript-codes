@@ -48,6 +48,18 @@
  * records and forwards eligible messages the regular passes missed, so a
  * temporary failure does not leave a detected email permanently unsent.
  *
+ * DELIVERY MODE
+ * CONFIG.DELIVERY_MODE selects how matched mail is sent.
+ *   "notify" (default) re-sends an authenticated copy from the forwarding
+ *   account itself: From is the account, Reply-To is the original sender,
+ *   and the original plain body and attachments are preserved. Because the
+ *   copy genuinely belongs to the sending account, it passes that account's
+ *   SPF/DKIM/DMARC and reaches internal and external recipients alike.
+ *   "forward" uses Gmail's native forward, which keeps the original sender
+ *   in From but cannot pass the original domain's authentication, so
+ *   receiving servers often classify it as spam. Use "forward" only where
+ *   recipients or their administrators allowlist the mail.
+ *
  * OUTSIDE THIS SCRIPT'S CONTROL
  * Google Workspace administrators may block Gmail access or external
  * forwarding. Gmail and Apps Script quotas, maximum execution time, attachment
@@ -70,6 +82,12 @@ const CONFIG = {
   FORWARD_SOFT_DEADLINE_MS: 150000,
   RETAIN_PROCESSED_DAYS: 60,
   INCLUDE_SPAM: true,
+
+  // "notify" re-sends an authenticated copy from the forwarding account
+  // (passes SPF/DKIM/DMARC for internal and external recipients).
+  // "forward" uses Gmail's native forward, which preserves the original
+  // sender but is frequently classified as spam by receiving servers.
+  DELIVERY_MODE: "notify",
   MAX_RETRIES: 5,
   RETRY_DELAY_HOURS: 2,
   WATCHDOG_EVERY_HOURS: 6,
@@ -1444,10 +1462,16 @@ function processCandidateMessages_(messages, properties, options) {
       }
 
       Logger.log(
-        `Forwarding "${subject}" from ${rule.sender}. ` +
-        `Matched: ${matchedKeywords.join(", ") || "all messages"}`
+        `Sending "${subject}" from ${rule.sender} to ` +
+        `${rule.recipients.length} recipient(s). Matched: ` +
+        `${matchedKeywords.join(", ") || "all messages"}`
       );
-      message.forward(rule.recipients.join(","));
+
+      if (getDeliveryMode_() === "notify") {
+        sendAuthenticatedForward_(message, rule);
+      } else {
+        message.forward(rule.recipients.join(","));
+      }
 
       // Gmail accepted the forward request. Failures after this point must
       // never enqueue a duplicate forward for the same message.
@@ -1529,6 +1553,83 @@ function processCandidateMessages_(messages, properties, options) {
     failed,
     deferred: Math.max(0, entries.length - forwarded - failed)
   };
+}
+
+
+function getDeliveryMode_() {
+  return CONFIG.DELIVERY_MODE;
+}
+
+
+/**
+ * Re-sends a matched message as an authenticated copy from the forwarding
+ * account itself. Unlike message.forward(), the copy passes the account's
+ * own SPF/DKIM/DMARC, so internal and external recipients receive it in the
+ * inbox instead of spam. The original plain-text body and attachments are
+ * preserved, the subject keeps a Fwd: prefix, and replies are directed to
+ * the original sender.
+ */
+function sendAuthenticatedForward_(message, rule) {
+  const originalFrom = message.getFrom();
+  const originalSubject = message.getSubject() || "(no subject)";
+  const subjectPrefix = /^fwd:/i.test(originalSubject) ? "" : "Fwd: ";
+  const bodyLines = [
+    "---------- Forwarded by AutoForward ----------",
+    `From: ${originalFrom}`,
+    `Date: ${message.getDate().toUTCString()}`,
+    `Subject: ${originalSubject}`,
+    ""
+  ];
+  const options = {
+    name: "AutoForward",
+    replyTo: extractEmailAddress_(originalFrom)
+  };
+
+  try {
+    const attachments = message.getAttachments();
+    const totalBytes = attachments.reduce(
+      (sum, attachment) => sum + (attachment.getSize() || 0),
+      0
+    );
+
+    if (attachments.length > 0 && totalBytes <= 24 * 1024 * 1024) {
+      options.attachments = attachments;
+    } else if (attachments.length > 0) {
+      bodyLines.push(
+        "(The original attachments were omitted because the message " +
+        "exceeds Gmail's sending size limit.)",
+        ""
+      );
+    }
+  } catch (attachmentError) {
+    bodyLines.push(
+      `(The original attachments could not be read: ${attachmentError.message})`,
+      ""
+    );
+  }
+
+  let body = "";
+
+  try {
+    body = message.getPlainBody() || "(empty body)";
+  } catch (bodyError) {
+    body = `(The original body could not be read: ${bodyError.message})`;
+  }
+
+  bodyLines.push(
+    body,
+    "",
+    "--",
+    "Forwarded automatically by AutoForward. Replies go to the original " +
+    "sender shown above."
+  );
+
+  GmailApp.sendEmail(
+    rule.recipients.join(","),
+    subjectPrefix + originalSubject,
+    bodyLines.join("\n"),
+    options
+  );
 }
 
 
@@ -3391,6 +3492,12 @@ function validateConfiguration_() {
     throw new Error(
       "Processed-record retention must be at least as long as the Gmail " +
       "search lookback to prevent old messages from becoming eligible again."
+    );
+  }
+
+  if (!["forward", "notify"].includes(CONFIG.DELIVERY_MODE)) {
+    throw new Error(
+      'CONFIG.DELIVERY_MODE must be "forward" or "notify".'
     );
   }
 
