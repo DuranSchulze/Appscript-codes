@@ -53,9 +53,9 @@ Activation initially creates five installable triggers owned by the current Gmai
 - A self-repair watchdog every six hours.
 
 On first activation, the temporary worker scans the preceding 30 days in
-bounded pages. It processes unread inbox mail first, then read inbox mail, and
-then spam when spam processing is enabled. When the initial backfill completes,
-its trigger removes itself, leaving four ongoing
+bounded pages. It processes unread mail first (inbox and archived), then read
+mail, and then spam when spam processing is enabled. When the initial backfill
+completes, its trigger removes itself, leaving four ongoing
 triggers. Existing installations upgraded to this version are marked backfill
 complete so deploying code cannot unexpectedly forward historical mail; reset
 and reactivate only when an intentional new 30-day backfill is desired.
@@ -129,17 +129,30 @@ Do not activate the old and new script versions for the same Gmail account simul
 
 ## Gmail behavior
 
-The initial worker scans up to 30 days of inbox history using persistent
-pagination: unread first, then read, followed by optional spam. The ongoing
-monitor searches an overlapping two-day window, prioritizes unread messages,
-and then checks read messages. Spam is included when enabled in `CONFIG`. Sender rules are divided into batches so
-accounts with more than 50 configured senders are not silently truncated.
+The initial worker scans up to 30 days of history (inbox plus archived, then
+spam) using persistent pagination: unread first, then read, followed by
+optional spam. The ongoing monitor searches an overlapping two-day window
+across all mail except spam and trash, prioritizes unread messages, and then
+checks read messages. Spam is included when enabled in `CONFIG`. Sender rules
+are divided into batches so accounts with more than 50 configured senders are
+not silently truncated.
+
+Each message is evaluated inside its own error boundary, so a single
+unreadable email is logged and skipped instead of aborting the run. Every
+worker also stops gracefully before the Apps Script execution time limit and
+leaves unfinished messages eligible for the next run instead of dying
+mid-batch.
 
 The retry worker separately checks failed conversations without excluding
-conversations that also have the `Forwarded` label. Every worker processes
-newest messages first and forwards the original Gmail message with its
-attachments. All forwarding workers use the same per-user lock, so separate
-triggers cannot forward concurrently for one account.
+conversations that also have the `Forwarded` label, and then runs a
+reconciliation sweep over conversations labeled `AutoForward/Detected`. The
+sweep re-checks each message against the per-user records and forwards
+eligible messages the regular passes missed — for example deferred work that
+aged out of the two-day monitor window during an outage — so a temporary
+failure does not leave a detected email permanently unsent. Every worker
+processes newest messages first and forwards the original Gmail message with
+its attachments. All forwarding workers use the same per-user lock, so
+separate triggers cannot forward concurrently for one account.
 
 Successfully forwarded message IDs and retry state are stored separately for
 each Gmail user. Those message-level records, not Gmail labels or unread state,
@@ -157,7 +170,13 @@ Gmail labels apply to whole conversations. A conversation can therefore carry bo
 
 Forwarding and recording the processed message ID are separate Google service operations. A rare interruption after Gmail accepts the forward but before Apps Script saves the processed ID can cause the message to be retried and forwarded more than once.
 
-A message is marked processed only after forwarding succeeds. Failed messages remain eligible for retry. Processed IDs are retained for 60 days by default.
+A message is marked processed only after forwarding succeeds, and only a
+failure of the forward request itself is treated as a failure — bookkeeping
+errors after Gmail accepts a forward are logged as `CRITICAL` instead of
+enqueuing a duplicate send. Failed messages remain eligible for retry.
+Processed IDs are retained for 60 days by default. Resetting processed
+history also clears all four AutoForward labels, because the labels only
+summarize the now-deleted records; they are recreated on demand.
 
 ## Privacy and protection limitation
 

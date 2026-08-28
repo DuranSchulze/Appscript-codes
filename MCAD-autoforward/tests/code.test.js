@@ -11,7 +11,8 @@ const context = vm.createContext({
   Set,
   Date,
   JSON,
-  Math
+  Math,
+  Utilities: {sleep() {}}
 });
 vm.runInContext(source, context, {filename: "code.gs"});
 
@@ -256,6 +257,232 @@ function makeProperties(initial = {}) {
   assert.equal(retryWorker.forwarded, 1);
   assert.ok(properties.values["AF_FORWARDED_retry-message"]);
   assert.equal(properties.values["AF_FAILED_RETRY_retry-message"], undefined);
+}
+
+{
+  // A property-store failure after Gmail already accepted the forward must
+  // not be recorded as a forward failure, which would duplicate the send.
+  const properties = makeProperties();
+  const failingProperties = {
+    deleteProperty(key) {
+      properties.deleteProperty(key);
+    },
+    getProperties() {
+      return properties.getProperties();
+    },
+    getProperty(key) {
+      return properties.getProperty(key);
+    },
+    setProperty(key, value) {
+      if (key.startsWith("AF_FORWARDED_")) {
+        throw new Error("store unavailable");
+      }
+      properties.setProperty(key, value);
+    }
+  };
+  const thread = {
+    addLabel() {},
+    getId() {
+      return "bk-thread";
+    }
+  };
+  const message = {
+    forward() {},
+    getDate() {
+      return new Date();
+    },
+    getId() {
+      return "bk-message";
+    },
+    getSubject() {
+      return "Bookkeeping subject";
+    },
+    getThread() {
+      return thread;
+    }
+  };
+
+  const result = context.processCandidateMessages_(
+    [message],
+    failingProperties,
+    {retryOnly: false}
+  );
+  assert.equal(result.forwarded, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(properties.values["AF_FAILED_RETRY_bk-message"], undefined);
+}
+
+{
+  // An unreadable body after a rule already matched must not mark the
+  // message as failed; it is still forwarded.
+  const properties = makeProperties();
+  const thread = {
+    addLabel() {},
+    getId() {
+      return "kw-thread";
+    }
+  };
+  const message = {
+    forward() {},
+    getDate() {
+      return new Date();
+    },
+    getId() {
+      return "kw-message";
+    },
+    getSubject() {
+      return "Keyword subject";
+    },
+    getThread() {
+      return thread;
+    }
+  };
+  context.getMatchedKeywords_ = () => {
+    throw new Error("body unavailable");
+  };
+
+  const result = context.processCandidateMessages_([message], properties, {
+    retryOnly: false
+  });
+  assert.equal(result.forwarded, 1);
+  assert.equal(result.failed, 0);
+  assert.ok(properties.values["AF_FORWARDED_kw-message"]);
+  context.getMatchedKeywords_ = () => [];
+}
+
+{
+  // One unreadable message must not abort processing of the others.
+  const properties = makeProperties();
+  const thread = {
+    addLabel() {},
+    getId() {
+      return "poison-thread";
+    }
+  };
+  const makeMessage = id => ({
+    forward() {},
+    getDate() {
+      return new Date();
+    },
+    getId() {
+      return id;
+    },
+    getSubject() {
+      return `Subject ${id}`;
+    },
+    getThread() {
+      return thread;
+    }
+  });
+  const previousMatcher = context.findMatchingRule_;
+  context.findMatchingRule_ = message => {
+    if (message.getId() === "poison") {
+      throw new Error("getPlainBody failed");
+    }
+    return {
+      sender: "sender@example.com",
+      recipients: ["recipient@example.com"]
+    };
+  };
+
+  const result = context.processCandidateMessages_(
+    [makeMessage("poison"), makeMessage("healthy")],
+    properties,
+    {retryOnly: false}
+  );
+  assert.equal(result.detected, 1);
+  assert.equal(result.forwarded, 1);
+  assert.equal(result.failed, 0);
+  assert.ok(properties.values["AF_FORWARDED_healthy"]);
+  context.findMatchingRule_ = previousMatcher;
+}
+
+{
+  // An expired soft deadline defers everything instead of crashing.
+  const properties = makeProperties();
+  const result = context.processCandidateMessages_([], properties, {
+    retryOnly: false,
+    deadlineTimestamp: Date.now() - 1
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    detected: 0,
+    forwarded: 0,
+    failed: 0,
+    deferred: 0
+  });
+}
+
+{
+  // The reconciliation sweep targets Detected conversations and heals
+  // orphaned messages through the same record-based pipeline.
+  const properties = makeProperties();
+  const queries = [];
+  const thread = {
+    addLabel() {},
+    getId() {
+      return "reconcile-thread";
+    }
+  };
+  const message = {
+    forward() {},
+    getDate() {
+      return new Date();
+    },
+    getId() {
+      return "reconcile-message";
+    },
+    getSubject() {
+      return "Reconcile subject";
+    },
+    getThread() {
+      return thread;
+    },
+    isDraft() {
+      return false;
+    },
+    isInTrash() {
+      return false;
+    }
+  };
+  context.GmailApp = {
+    search(query) {
+      queries.push(query);
+      return [{
+        getMessages() {
+          return [message];
+        }
+      }];
+    }
+  };
+
+  const result = context.reconcileDetectedEmails_(
+    properties,
+    Date.now() + 60000
+  );
+  assert.ok(
+    queries.some(query => query.includes("label:AutoForward/Detected"))
+  );
+  assert.equal(result.forwarded, 1);
+  assert.ok(properties.values["AF_FORWARDED_reconcile-message"]);
+}
+
+{
+  // A transient Gmail search error is retried once before failing.
+  let calls = 0;
+  context.GmailApp = {
+    search() {
+      calls++;
+      if (calls === 1) {
+        throw new Error("backend error");
+      }
+      return [];
+    }
+  };
+  assert.deepEqual(
+    context.searchGmailPage_("q", 0, 10, "transient"),
+    []
+  );
+  assert.equal(calls, 2);
 }
 
 console.log("code.gs tests passed");

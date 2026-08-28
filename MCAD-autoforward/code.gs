@@ -39,6 +39,15 @@
  *    triggers are deleted or authorization is revoked, the user must choose
  *    Start or repair once; no script can restart itself with no execution path.
  *
+ * CONSISTENCY SAFEGUARDS
+ * Each message is evaluated inside its own error boundary, so one unreadable
+ * email can no longer abort an entire run. Forwarding stops gracefully before
+ * the Apps Script execution time limit and leaves unfinished work for later
+ * runs. A reconciliation sweep that runs with the retry worker re-checks
+ * every conversation labeled AutoForward/Detected against the per-message
+ * records and forwards eligible messages the regular passes missed, so a
+ * temporary failure does not leave a detected email permanently unsent.
+ *
  * OUTSIDE THIS SCRIPT'S CONTROL
  * Google Workspace administrators may block Gmail access or external
  * forwarding. Gmail and Apps Script quotas, maximum execution time, attachment
@@ -56,7 +65,9 @@ const CONFIG = {
   RETRY_EVERY_HOURS: 2,
   MAX_THREADS_PER_RUN: 500,
   BACKFILL_THREADS_PER_PAGE: 100,
+  RECONCILE_THREADS_PER_RUN: 200,
   BATCH_FORWARD_LIMIT: 25,
+  FORWARD_SOFT_DEADLINE_MS: 150000,
   RETAIN_PROCESSED_DAYS: 60,
   INCLUDE_SPAM: true,
   MAX_RETRIES: 5,
@@ -863,7 +874,14 @@ function monitorAndForwardSecEmails() {
       `Sheet: ${context.ruleSheet.getName()}`
     );
 
-    cleanupProcessedRecords_();
+    try {
+      cleanupProcessedRecords_();
+    } catch (cleanupError) {
+      // Cleanup is hygiene; it must never block this run's forwarding.
+      Logger.log(
+        "Processed-record cleanup failed this run: " + cleanupError.message
+      );
+    }
 
     const properties = getUserProperties_();
     const startedAt = Number(
@@ -956,9 +974,11 @@ function continueInitialBackfill() {
     const readStateQuery = spam
       ? ""
       : unread ? "is:unread " : "is:read ";
+    // The unread/read phases search all mail (inbox plus archived); only the
+    // spam phase is location-restricted.
     const query =
       `after:${formatGmailSearchDate_(backfillCutoff - 24 * 60 * 60 * 1000)} ` +
-      `${spam ? "in:spam" : "in:inbox"} ` +
+      `${spam ? "in:spam" : ""} ` +
       readStateQuery +
       `{${senderGroup}}`;
     const threads = searchGmailPage_(
@@ -972,7 +992,7 @@ function continueInitialBackfill() {
       (message, thread) =>
         spam
           ? thread.isInSpam()
-          : message.isInInbox() && message.isUnread() === unread
+          : message.isUnread() === unread
     ).sort(compareMessagesNewestFirst_);
     const result = processCandidateMessages_(messages, properties, {
       retryOnly: false,
@@ -1024,6 +1044,8 @@ function retryFailedAutoForwardEmails() {
     rulesCache_ = null;
     context = getAccountContext_();
     const properties = getUserProperties_();
+    // One shared soft deadline keeps both passes inside the execution limit.
+    const deadline = Date.now() + 4 * 60 * 1000;
     const query =
       `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
       `label:${CONFIG.FAILED_LABEL}`;
@@ -1034,17 +1056,51 @@ function retryFailedAutoForwardEmails() {
     );
     const messages = collectMessagesFromThreads_(threads)
       .sort(compareMessagesNewestFirst_);
-    const result = processCandidateMessages_(messages, properties, {
-      retryOnly: true
+    const retryResult = processCandidateMessages_(messages, properties, {
+      retryOnly: true,
+      deadlineTimestamp: deadline
     });
+    const reconcileResult = reconcileDetectedEmails_(properties, deadline);
 
-    Logger.log(JSON.stringify({worker: "retry", result}));
+    Logger.log(JSON.stringify({
+      worker: "retry",
+      retryResult,
+      reconcileResult
+    }));
   } catch (error) {
     recordCurrentAccountError_(error, context);
     throw error;
   } finally {
     lock.releaseLock();
   }
+}
+
+
+/**
+ * Heals "Detected but never forwarded" gaps caused by deferred work that
+ * aged out of the recent monitor window, crashed runs, or temporary Gmail
+ * errors. Gmail labels belong to whole threads, so every message in a
+ * Detected conversation is re-checked against the per-user records, which
+ * remain the duplicate-prevention source of truth. Messages already
+ * forwarded are skipped by their processed record; messages waiting on
+ * retry backoff remain owned by the retry pass above.
+ */
+function reconcileDetectedEmails_(properties, deadline) {
+  const query =
+    `newer_than:${CONFIG.SEARCH_LOOKBACK_DAYS}d ` +
+    `label:${CONFIG.DETECTED_LABEL}`;
+  const threads = searchGmailPages_(
+    query,
+    CONFIG.RECONCILE_THREADS_PER_RUN,
+    "detected reconciliation"
+  );
+  const messages = collectMessagesFromThreads_(threads)
+    .sort(compareMessagesNewestFirst_);
+
+  return processCandidateMessages_(messages, properties, {
+    retryOnly: false,
+    deadlineTimestamp: deadline
+  });
 }
 
 
@@ -1068,8 +1124,12 @@ function getRecentCandidateMessages_() {
 
   for (const unread of [true, false]) {
     for (const senderGroup of senderBatches) {
+      // No in:inbox restriction: Gmail search without a location covers all
+      // mail except spam and trash, so archived conversations from monitored
+      // senders are forwarded exactly like inbox conversations. Spam is
+      // collected separately below.
       const query =
-        `newer_than:${CONFIG.RECENT_LOOKBACK_DAYS}d in:inbox ` +
+        `newer_than:${CONFIG.RECENT_LOOKBACK_DAYS}d ` +
         `${unread ? "is:unread" : "is:read"} {${senderGroup}}`;
       const threads = searchGmailPages_(
         query,
@@ -1079,7 +1139,7 @@ function getRecentCandidateMessages_() {
       addUniqueMessages_(
         collectMessagesFromThreads_(
           threads,
-          message => message.isInInbox() && message.isUnread() === unread
+          message => message.isUnread() === unread
         ),
         messageMap,
         unread ? unreadMessages : readMessages
@@ -1145,11 +1205,23 @@ function getSenderBatches_() {
 function searchGmailPage_(query, start, amount, label) {
   Logger.log(`Searching Gmail [${label}]: ${query}; start=${start}`);
 
-  try {
-    return GmailApp.search(query, start, amount);
-  } catch (error) {
-    throw new Error(`Gmail search [${label}] failed: ${error.message}`);
+  let lastError = null;
+
+  // One retry absorbs transient Gmail service errors that would otherwise
+  // abort the whole run.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return GmailApp.search(query, start, amount);
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < 2) {
+        Utilities.sleep(2000);
+      }
+    }
   }
+
+  throw new Error(`Gmail search [${label}] failed: ${lastError.message}`);
 }
 
 
@@ -1227,13 +1299,37 @@ function processCandidateMessages_(messages, properties, options) {
   const entries = [];
   const detectedThreadIds = new Set();
   const now = Date.now();
+  const deadline = Number(settings.deadlineTimestamp) ||
+    (now + CONFIG.FORWARD_SOFT_DEADLINE_MS);
 
   for (const message of messages) {
-    const messageId = message.getId();
+    if (Date.now() > deadline) {
+      Logger.log(
+        "Stopping this pass early to remain within the Apps Script " +
+        "execution time limit. Remaining messages stay eligible for the " +
+        "next run."
+      );
+      break;
+    }
+
+    // Every message is evaluated inside its own error boundary so a single
+    // unreadable email can never abort the whole run.
+    let messageId = "";
+    let messageTime = 0;
+
+    try {
+      messageId = message.getId();
+      messageTime = message.getDate().getTime();
+    } catch (readError) {
+      Logger.log(
+        `Skipping a message that could not be read: ${readError.message}`
+      );
+      continue;
+    }
+
     const processedKey = CONFIG.PROCESSED_PREFIX + messageId;
     const retryKey = CONFIG.FAILED_RETRY_PREFIX + messageId;
-    const retryData = getRetryData_(properties, retryKey);
-    const messageTime = message.getDate().getTime();
+    const retryData = parseRetryRecord_(records[retryKey]);
 
     if (records[processedKey]) {
       continue;
@@ -1261,12 +1357,33 @@ function processCandidateMessages_(messages, properties, options) {
       continue;
     }
 
-    const rule = findMatchingRule_(message);
+    let rule = null;
+
+    try {
+      rule = findMatchingRule_(message);
+    } catch (matchError) {
+      Logger.log(
+        `Could not evaluate the rules against ${messageId}; it stays ` +
+        `eligible for the next run: ${matchError.message}`
+      );
+      continue;
+    }
+
     if (!rule) {
       continue;
     }
 
-    const thread = message.getThread();
+    let thread = null;
+
+    try {
+      thread = message.getThread();
+    } catch (threadError) {
+      Logger.log(
+        `Could not read the conversation of ${messageId}: ${threadError.message}`
+      );
+      continue;
+    }
+
     const threadId = thread.getId();
     if (!detectedThreadIds.has(threadId)) {
       try {
@@ -1295,6 +1412,10 @@ function processCandidateMessages_(messages, properties, options) {
   let failed = 0;
 
   for (const entry of forwardBatch) {
+    if (Date.now() > deadline) {
+      break;
+    }
+
     const {
       message,
       messageId,
@@ -1306,16 +1427,42 @@ function processCandidateMessages_(messages, properties, options) {
     } = entry;
 
     try {
-      const matchedKeywords = getMatchedKeywords_(message, rule);
+      // Reading the subject and keywords is logging support only. A message
+      // that already matched a rule must not be recorded as failed merely
+      // because its body cannot be re-read here.
+      let subject = "(no subject)";
+      let matchedKeywords = [];
+
+      try {
+        subject = message.getSubject() || "(no subject)";
+        matchedKeywords = getMatchedKeywords_(message, rule);
+      } catch (keywordError) {
+        Logger.log(
+          `Matched keywords could not be read for ${messageId}; the ` +
+          `message will still be forwarded: ${keywordError.message}`
+        );
+      }
+
       Logger.log(
-        `Forwarding "${message.getSubject()}" from ${rule.sender}. ` +
+        `Forwarding "${subject}" from ${rule.sender}. ` +
         `Matched: ${matchedKeywords.join(", ") || "all messages"}`
       );
       message.forward(rule.recipients.join(","));
 
+      // Gmail accepted the forward request. Failures after this point must
+      // never enqueue a duplicate forward for the same message.
       const processedAt = String(Date.now());
-      properties.setProperty(processedKey, processedAt);
-      properties.deleteProperty(retryKey);
+
+      try {
+        properties.setProperty(processedKey, processedAt);
+        properties.deleteProperty(retryKey);
+      } catch (bookkeepingError) {
+        Logger.log(
+          `CRITICAL: ${messageId} was forwarded, but its processed record ` +
+          `could not be saved, so it may be forwarded again on a later ` +
+          `run: ${bookkeepingError.message}`
+        );
+      }
       forwarded++;
 
       try {
@@ -1349,7 +1496,15 @@ function processCandidateMessages_(messages, properties, options) {
     } catch (error) {
       failed++;
       const newRetryCount = (retryData ? Number(retryData.count) : 0) + 1;
-      setRetryData_(properties, retryKey, newRetryCount);
+
+      try {
+        setRetryData_(properties, retryKey, newRetryCount);
+      } catch (retryWriteError) {
+        Logger.log(
+          `Could not save retry state for ${messageId}: ` +
+          retryWriteError.message
+        );
+      }
       Logger.log(`Failed forwarding ${messageId}: ${error.message}`);
 
       try {
@@ -1372,7 +1527,7 @@ function processCandidateMessages_(messages, properties, options) {
     detected: entries.length,
     forwarded,
     failed,
-    deferred: Math.max(0, entries.length - forwardBatch.length)
+    deferred: Math.max(0, entries.length - forwarded - failed)
   };
 }
 
@@ -1744,14 +1899,25 @@ function completeBackfill_(properties, context) {
 
 
 function getRetryData_(properties, retryKey) {
-  const raw = properties.getProperty(retryKey);
+  return parseRetryRecord_(properties.getProperty(retryKey));
+}
 
+
+/**
+ * Normalizes a stored retry record whether it arrives from a live property
+ * read or from a run's property snapshot.
+ */
+function parseRetryRecord_(raw) {
   if (!raw) {
     return null;
   }
 
   try {
-    return JSON.parse(raw);
+    const retryData = JSON.parse(raw);
+    return {
+      count: Number(retryData.count) || 0,
+      lastAttempt: Number(retryData.lastAttempt) || 0
+    };
   } catch (error) {
     return null;
   }
@@ -3228,6 +3394,24 @@ function validateConfiguration_() {
     );
   }
 
+  if (
+    !Number.isInteger(CONFIG.RECONCILE_THREADS_PER_RUN) ||
+    CONFIG.RECONCILE_THREADS_PER_RUN < 1
+  ) {
+    throw new Error(
+      "Reconciliation thread cap must be a positive whole number."
+    );
+  }
+
+  if (
+    !Number.isInteger(CONFIG.FORWARD_SOFT_DEADLINE_MS) ||
+    CONFIG.FORWARD_SOFT_DEADLINE_MS < 30000
+  ) {
+    throw new Error(
+      "The forward soft deadline must be at least 30000 milliseconds."
+    );
+  }
+
   getRules_();
 }
 
@@ -3366,7 +3550,7 @@ function resetSecEmailForwarding() {
       }
     }
 
-    clearRetryStateLabels_();
+    clearAutomationStateLabels_();
 
     updateAccountRegistration_(context.account, {
       status: "Reset — not activated",
@@ -3391,8 +3575,15 @@ function resetSecEmailForwarding() {
 }
 
 
-function clearRetryStateLabels_() {
+/**
+ * A reset empties the per-message records, so the thread labels that
+ * summarized them must not survive either; the reconciliation sweep relies
+ * on the records, not labels, and the labels are recreated on demand.
+ */
+function clearAutomationStateLabels_() {
   for (const labelName of [
+    CONFIG.DETECTED_LABEL,
+    CONFIG.FORWARDED_LABEL,
     CONFIG.FAILED_LABEL,
     CONFIG.RETRY_EXHAUSTED_LABEL
   ]) {
